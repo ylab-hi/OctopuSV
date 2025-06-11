@@ -21,35 +21,32 @@ class BNDPairToDUPConverter(Converter):
         """
         remaining_events = []
         converted_dup_events = []
-        event_dict = {}
-        processed_ids = set()
+        processed_events = set()
 
-        # Group events by base ID
-        for event in events:
-            base_id = self._extract_base_id(event.id)
-            if base_id not in event_dict:
-                event_dict[base_id] = []
-            event_dict[base_id].append(event)
+        # Use nested loop to check all pairs
+        for i, event1 in enumerate(events):
+            if id(event1) in processed_events:
+                continue
 
-        # Process each group
-        for base_id, event_group in event_dict.items():
-            if len(event_group) == 2 and base_id not in processed_ids:
-                # Check if this is a DUP pair
-                dup_event = self._check_and_convert_dup_pair(event_group[0], event_group[1])
+            for j, event2 in enumerate(events[i + 1:], i + 1):
+                if id(event2) in processed_events:
+                    continue
+
+                # Check if this pair forms a DUP
+                dup_event = self._check_and_convert_dup_pair(event1, event2)
                 if dup_event:
                     converted_dup_events.append(dup_event)
-                    processed_ids.add(base_id)
-                else:
-                    remaining_events.extend(event_group)
-            else:
-                remaining_events.extend(event_group)
+                    processed_events.add(id(event1))
+                    processed_events.add(id(event2))
+                    logging.debug(f"Converted BND pair {event1.id}-{event2.id} to DUP event")
+                    break
+
+        # Add unprocessed events to remaining
+        for event in events:
+            if id(event) not in processed_events:
+                remaining_events.append(event)
 
         return remaining_events, converted_dup_events
-
-    def _extract_base_id(self, event_id):
-        """Extract base ID from event ID (remove :1 or :2 suffix)."""
-        match = re.search(r'(\d+):', event_id)
-        return match.group(1) if match else event_id
 
     def _check_and_convert_dup_pair(self, event1, event2):
         """Check if two events form a DUP pair and convert them if so.
