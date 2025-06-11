@@ -4,9 +4,7 @@ from pathlib import Path
 import typer
 
 from octopusv.converter.base import get_alt_chrom_pos
-from octopusv.converter.bnd2dup import BND_to_DUP_Converter
 from octopusv.converter.bnd2inv import BND_to_INV_Converter
-from octopusv.converter.bnd2tra_forward import BND_to_TRA_Forward_Converter
 from octopusv.converter.bnd2tra_reverse import BND_to_TRA_Reverse_Converter
 from octopusv.converter.mpi2tra import MatePairIndependentToTRAConverter
 from octopusv.converter.mpm2tra import MatePairMergeToTRAConverter
@@ -89,8 +87,6 @@ def correct(
     same_chr_bnd_transformer = SameChrBNDTransformer(
         [
             BND_to_INV_Converter(),
-            BND_to_DUP_Converter(),
-            BND_to_TRA_Forward_Converter(),
             BND_to_TRA_Reverse_Converter(),
         ]
     )
