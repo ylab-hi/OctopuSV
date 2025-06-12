@@ -4,7 +4,6 @@ from pathlib import Path
 import typer
 
 from octopusv.converter.base import get_alt_chrom_pos
-from octopusv.converter.bnd2inv import BND_to_INV_Converter
 from octopusv.converter.bnd2tra_reverse import BND_to_TRA_Reverse_Converter
 from octopusv.converter.mpi2tra import MatePairIndependentToTRAConverter
 from octopusv.converter.mpm2tra import MatePairMergeToTRAConverter
@@ -15,7 +14,7 @@ from octopusv.converter.snmd_dndpr_tra2tra import SpecialNoMateDiffBNDPairRecipr
 from octopusv.converter.stra2tra import SingleTRAToTRAConverter
 from octopusv.transformer.mp_bnd import MatePairBNDTransformer
 from octopusv.transformer.no_bnd import NonBNDTransformer
-from octopusv.transformer.same_chr_dnd import SameChrBNDTransformer
+from octopusv.transformer.same_chr_sv import SameChrSVTransformer
 from octopusv.transformer.snmd_bndp import SpecialNoMateDiffBNDPairTransformer
 from octopusv.transformer.stra import SingleTRATransformer
 from octopusv.utils.normal_vcf_parser import parse_vcf
@@ -84,9 +83,8 @@ def correct(
     )
 
     # Initialize the EventTransformer with a list of transform strategies for each type of events
-    same_chr_bnd_transformer = SameChrBNDTransformer(
+    same_chr_sv_transformer = SameChrSVTransformer(
         [
-            BND_to_INV_Converter(),
             BND_to_TRA_Reverse_Converter(),
         ]
     )
@@ -110,7 +108,7 @@ def correct(
     non_bnd_transformer = NonBNDTransformer([NonBNDConverter()])
 
     # Apply all transformation strategies to the events
-    same_chr_bnd_transformed_events = same_chr_bnd_transformer.apply_transforms(same_chr_bnd_events)
+    same_chr_sv_transformed_events = same_chr_sv_transformer.apply_transforms(same_chr_bnd_events)
     mate_pair_transformed_events = mate_bnd_pair_transformer.apply_transforms(mate_bnd_pairs)
     special_no_mate_diff_bnd_pair_transformed_events = special_no_mate_diff_bnd_pair_transformer.apply_transforms(
         special_no_mate_diff_bnd_pairs
@@ -120,7 +118,7 @@ def correct(
 
     # Merge all transformed events
     all_transformed_events = (
-        same_chr_bnd_transformed_events
+        same_chr_sv_transformed_events
         + mate_pair_transformed_events
         + special_no_mate_diff_bnd_pair_transformed_events
         + single_TRA_transformed_events
