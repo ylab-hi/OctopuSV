@@ -9,7 +9,7 @@ class SameChrSVTransformer(EventTransformer):
 
     This transformer handles:
     1. BND pair merging (DEL, DUP, INV)
-    2. Single BND event conversion (TRA, etc.)
+    2. Remaining BND events are kept as BND (not forced to TRA)
     """
 
     def apply_transforms(self, events):

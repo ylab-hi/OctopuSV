@@ -1,4 +1,4 @@
-# OctopusV: Advanced Structural Variant Analysis Toolkit 🐙
+# OctopuSV: Advanced structural variant analysis toolkit 🐙
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/octopusV_logo.png" width="50%" height="50%">
@@ -7,7 +7,7 @@
 [![PyPI version](https://badge.fury.io/py/octopusv.svg)](https://badge.fury.io/py/octopusv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-OctopusV is a comprehensive toolkit for analyzing, comparing, and integrating structural variant (SV) calls from multiple platforms and callers. It addresses key challenges in SV analysis by standardizing ambiguous breakend (BND) annotations, providing flexible Boolean-based merging operations, and offering an integrated framework for SV benchmarking and visualization.
+OctopuSV is a comprehensive toolkit for analyzing, comparing, and integrating structural variant (SV) calls from multiple platforms and callers. It addresses key challenges in SV analysis by standardizing ambiguous breakend (BND) annotations, providing flexible Boolean-based merging operations, and offering an integrated framework for SV benchmarking and visualization.
 
 ## Key Features
 
@@ -184,7 +184,7 @@ OctopusV has been designed to address critical challenges in SV analysis, partic
 - Automating complex SV analysis workflows for large-scale studies
 - Improving precision and recall in multi-platform, multi-caller SV analysis
 
-For more details, see our publication: [OctopusV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis](https://github.com/ylab-hi/octopusV).
+For more details, see our publication: [OctopusV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis](https://github.com/ylab-hi/OctopuSV).
 
 ## Contributing
 
@@ -193,7 +193,7 @@ We welcome contributions! Here's how you can help:
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/ylab-hi/octopusV.git
+   git clone https://github.com/ylab-hi/OctopuSV.git
    ```
 
 2. Create a feature branch:
@@ -231,7 +231,7 @@ For questions and feedback:
 
 ## 📄 Citation
 
-If you use **OctopusV** or **TentacleSV**, please cite:
+If you use **OctopuSV** or **TentacleSV**, please cite:
 
 > Guo Q, Li Y, Wang T, Ramakrishnan A, Yang R. *OctopusV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis*. bioRxiv. 2025. doi: [10.1101/2025.03.24.645012](https://doi.org/10.1101/2025.03.24.645012)
 
@@ -239,7 +239,7 @@ If you use **OctopusV** or **TentacleSV**, please cite:
 
 ```bibtex
 @article{guo2025octopusv,
-  title={OctopusV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis},
+  title={OctopuSV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis},
   author={Guo, Qingxiang and Li, Yangyang and Wang, Tingyou and Ramakrishnan, Abhi and Yang, Rendong},
   journal={bioRxiv},
   year={2025},

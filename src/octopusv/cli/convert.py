@@ -4,7 +4,7 @@ from pathlib import Path
 import typer
 
 from octopusv.converter.base import get_alt_chrom_pos
-from octopusv.converter.bnd2tra_reverse import BND_to_TRA_Reverse_Converter
+from octopusv.converter.bnd_keeping import BNDKeepingConverter
 from octopusv.converter.mpi2tra import MatePairIndependentToTRAConverter
 from octopusv.converter.mpm2tra import MatePairMergeToTRAConverter
 from octopusv.converter.mprtra2tra import MatePairReciprocalTranslocationToTRAConverter
@@ -85,7 +85,7 @@ def correct(
     # Initialize the EventTransformer with a list of transform strategies for each type of events
     same_chr_sv_transformer = SameChrSVTransformer(
         [
-            BND_to_TRA_Reverse_Converter(),
+            BNDKeepingConverter(),
         ]
     )
 
