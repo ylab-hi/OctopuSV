@@ -1,7 +1,7 @@
 # OctopuSV: Advanced structural variant analysis toolkit 🐙
 
 <p align="center">
-  <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/octopusV_logo.png" width="50%" height="50%">
+  <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/logo.png" width="50%" height="50%">
 </p>
 
 [![PyPI version](https://badge.fury.io/py/octopusv.svg)](https://badge.fury.io/py/octopusv)

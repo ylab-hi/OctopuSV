@@ -117,7 +117,7 @@ class BNDPairToDELConverter(Converter):
         del_event.info["END"] = end_pos
         del_event.info["SVLEN"] = abs(end_pos - start_pos)
         del_event.info["CHR2"] = del_event.chrom
-        del_event.info["SVMETHOD"] = "octopusV"
+        del_event.info["SVMETHOD"] = "OctopuSV"
 
         return del_event
 

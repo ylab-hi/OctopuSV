@@ -34,8 +34,7 @@ class NonBNDConverter(Converter):
         if "CHR2" not in event.info:
             event.info["CHR2"] = event.chrom
 
-        # Set SVMETHOD to "octopusV"
-        event.info["SVMETHOD"] = "octopusV"
+        event.info["SVMETHOD"] = "OctopuSV"
 
         # Calculate SVLEN if not present and event is not TRA
         if "SVLEN" not in event.info and svtype in ["DEL", "DUP", "INV"]:

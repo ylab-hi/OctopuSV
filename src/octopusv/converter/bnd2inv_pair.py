@@ -105,7 +105,7 @@ class BNDPairToINVConverter(Converter):
         inv_event.info["END"] = end_pos
         inv_event.info["SVLEN"] = abs(end_pos - start_pos)
         inv_event.info["CHR2"] = inv_event.chrom
-        inv_event.info["SVMETHOD"] = "octopusV"
+        inv_event.info["SVMETHOD"] = "OctopuSV"
 
         return inv_event
 

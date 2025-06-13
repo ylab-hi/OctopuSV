@@ -10,4 +10,4 @@ class SingleTRAToTRAConverter(Converter):
         chrom_alt, pos_alt = get_alt_chrom_pos(event.alt)
         event.info["END"] = pos_alt
         event.info["CHR2"] = chrom_alt
-        event.info["SVMETHOD"] = "octopusV"
+        event.info["SVMETHOD"] = "OctopuSV"

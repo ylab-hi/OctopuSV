@@ -35,4 +35,4 @@ class BNDKeepingConverter(Converter):
         # Keep SVTYPE as BND (don't change it)
         event.info["SVTYPE"] = "BND"
         event.info["SVLEN"] = "."  # BND events don't have meaningful SVLEN
-        event.info["SVMETHOD"] = "octopusV"
+        event.info["SVMETHOD"] = "OctopuSV"

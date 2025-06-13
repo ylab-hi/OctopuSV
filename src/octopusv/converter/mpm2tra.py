@@ -22,7 +22,7 @@ class MatePairMergeToTRAConverter(Converter):
             chrom_alt, pos_alt = get_alt_chrom_pos(retained_event.alt)
             retained_event.info["END"] = pos_alt
             retained_event.info["CHR2"] = chrom_alt
-            retained_event.info["SVMETHOD"] = "octopusV"
+            retained_event.info["SVMETHOD"] = "OctopuSV"
 
             # Return the retained event only
             return [retained_event]

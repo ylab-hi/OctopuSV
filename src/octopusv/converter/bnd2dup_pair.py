@@ -117,7 +117,7 @@ class BNDPairToDUPConverter(Converter):
         dup_event.info["END"] = end_pos
         dup_event.info["SVLEN"] = abs(end_pos - start_pos)
         dup_event.info["CHR2"] = dup_event.chrom
-        dup_event.info["SVMETHOD"] = "octopusV"
+        dup_event.info["SVMETHOD"] = "OctopuSV"
 
         return dup_event
 

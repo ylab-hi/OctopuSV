@@ -22,12 +22,12 @@ class MatePairIndependentToTRAConverter(Converter):
         chrom_alt, pos_alt = get_alt_chrom_pos(event1.alt)
         event1.info["END"] = pos_alt
         event1.info["CHR2"] = chrom_alt
-        event1.info["SVMETHOD"] = "octopusV"
+        event1.info["SVMETHOD"] = "OctopuSV"
         # Modify event2
         event2.info["SVTYPE"] = "TRA"
         event2.info["SVLEN"] = "."
         chrom_alt, pos_alt = get_alt_chrom_pos(event2.alt)
         event2.info["END"] = pos_alt
         event2.info["CHR2"] = chrom_alt
-        event2.info["SVMETHOD"] = "octopusV"
+        event2.info["SVMETHOD"] = "OctopuSV"
         # No need to return anything as the states of event1 and event2 are modified in-place

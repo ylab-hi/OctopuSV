@@ -26,7 +26,7 @@ class SpecialNoMateDiffBNDPairReciprocalTranslocationToTRAConverter(Converter):
         event1.info["CHR2"] = chrom_alt
         event1.info["RTID"] = event2.id
         event1.info["SVLEN"] = "."
-        event1.info["SVMETHOD"] = "octopusV"
+        event1.info["SVMETHOD"] = "OctopuSV"
         # Modify event2
         event2.info["SVTYPE"] = "TRA"
         chrom_alt, pos_alt = get_alt_chrom_pos(event2.alt)
@@ -34,4 +34,4 @@ class SpecialNoMateDiffBNDPairReciprocalTranslocationToTRAConverter(Converter):
         event2.info["CHR2"] = chrom_alt
         event2.info["RTID"] = event1.id
         event2.info["SVLEN"] = "."
-        event2.info["SVMETHOD"] = "octopusV"
+        event2.info["SVMETHOD"] = "OctopuSV"

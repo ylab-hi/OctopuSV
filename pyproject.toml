@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "octopusv"
+name = "OctopuSV"
 version = "0.1.0"
-description = "OctopusV: Advanced Structural Variant Analysis Toolkit"
+description = "OctopuSV: Advanced Structural Variant Analysis Toolkit"
 authors = [
     "Qingxiang Guo <qingxiang.guo@northwestern.edu>",
     "Yangyang Li <yangyang.li@northwestern.edu>",
