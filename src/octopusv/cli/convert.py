@@ -22,24 +22,60 @@ from octopusv.utils.svcf_utils import write_sv_vcf
 
 
 def correct(
-    input_vcf: Path | None = typer.Argument(
-        None, exists=True, dir_okay=False, resolve_path=True, help="Input VCF file to correct."
-    ),
-    output: Path | None = typer.Argument(None, dir_okay=False, resolve_path=True, help="Output file path."),
-    input_option: Path | None = typer.Option(
-        None, "--input-file", "-i", exists=True, dir_okay=False, resolve_path=True, help="Input VCF file to correct."
-    ),
-    output_option: Path | None = typer.Option(
-        None, "--output-file", "-o", dir_okay=False, resolve_path=True, help="Output file path."
-    ),
-    pos_tolerance: int = typer.Option(
-        3,
-        "--pos-tolerance",
-        "-pt",
-        help="Position tolerance for identifying mate BND events, default=3, recommend not to set larger than 5",
-    ),
+        input_vcf: Path | None = typer.Argument(
+            None, exists=True, dir_okay=False, resolve_path=True, help="Input VCF file to correct."
+        ),
+        output: Path | None = typer.Argument(None, dir_okay=False, resolve_path=True, help="Output file path."),
+        input_option: Path | None = typer.Option(
+            None, "--input-file", "-i", exists=True, dir_okay=False, resolve_path=True,
+            help="Input VCF file to correct."
+        ),
+        output_option: Path | None = typer.Option(
+            None, "--output-file", "-o", dir_okay=False, resolve_path=True, help="Output file path."
+        ),
+        pos_tolerance: int = typer.Option(
+            3,
+            "--pos-tolerance",
+            "-pt",
+            help="Position tolerance for identifying mate BND events, default=3, recommend not to set larger than 5",
+        ),
+        # Quality filtering parameters
+        min_qual: float | None = typer.Option(
+            None, "--min-qual", help="Minimum QUAL score to keep variants"
+        ),
+        max_qual: float | None = typer.Option(
+            None, "--max-qual", help="Maximum QUAL score to keep variants"
+        ),
+        min_support: int | None = typer.Option(
+            None, "--min-support", help="Minimum supporting reads to keep variants"
+        ),
+        max_support: int | None = typer.Option(
+            None, "--max-support", help="Maximum supporting reads to keep variants"
+        ),
+        min_depth: int | None = typer.Option(
+            None, "--min-depth", help="Minimum total depth to keep variants"
+        ),
+        max_depth: int | None = typer.Option(
+            None, "--max-depth", help="Maximum total depth to keep variants"
+        ),
+        min_gq: int | None = typer.Option(
+            None, "--min-gq", help="Minimum genotype quality to keep variants"
+        ),
+        min_svlen: int | None = typer.Option(
+            None, "--min-svlen", help="Minimum SV length to keep variants"
+        ),
+        max_svlen: int | None = typer.Option(
+            None, "--max-svlen", help="Maximum SV length to keep variants"
+        ),
+        filter_pass: bool = typer.Option(
+            False, "--filter-pass", help="Only keep variants with FILTER=PASS"
+        ),
+        exclude_nocall: bool = typer.Option(
+            False, "--exclude-nocall", help="Exclude variants with ./. genotype"
+        ),
 ):
-    """Correct SV events."""
+    """Correct SV events with optional quality filtering."""
+
     # Determine input file
     if input_vcf and input_option:
         typer.echo(
@@ -71,6 +107,49 @@ def correct(
     # Parse the input VCF file
     # non_bnd_events means DEL, INV, INS, DUP
     contig_lines, same_chr_bnd_events, diff_chr_bnd_events, non_bnd_events = parse_vcf(input_file)
+
+    # Initialize quality filter if any filtering parameters are provided
+    filter_params = [min_qual, max_qual, min_support, max_support, min_depth, max_depth,
+                     min_gq, min_svlen, max_svlen, filter_pass, exclude_nocall]
+    has_quality_filters = any([
+        min_qual is not None, max_qual is not None,
+        min_support is not None, max_support is not None,
+        min_depth is not None, max_depth is not None,
+        min_gq is not None, min_svlen is not None, max_svlen is not None,
+        filter_pass, exclude_nocall
+    ])
+
+    if has_quality_filters:
+        # Import QualityFilter only when needed
+        from octopusv.filter import QualityFilter
+
+        quality_filter = QualityFilter(
+            min_qual=min_qual,
+            max_qual=max_qual,
+            min_support=min_support,
+            max_support=max_support,
+            min_depth=min_depth,
+            max_depth=max_depth,
+            min_gq=min_gq,
+            min_svlen=min_svlen,
+            max_svlen=max_svlen,
+            filter_pass=filter_pass,
+            exclude_nocall=exclude_nocall
+        )
+
+        # Apply quality filtering to all event types
+        def apply_quality_filter(events):
+            """Apply quality filter to a list of events."""
+            return [event for event in events if quality_filter.filter_event(event)]
+
+        # Filter all event categories
+        same_chr_bnd_events = apply_quality_filter(same_chr_bnd_events)
+        diff_chr_bnd_events = apply_quality_filter(diff_chr_bnd_events)
+        non_bnd_events = apply_quality_filter(non_bnd_events)
+
+        # Print filtering statistics
+        quality_filter.print_stats()
+        typer.echo(f"Quality filtering completed.")
 
     # Extract mate BND and no mate events, they are all with different chromosomes
     mate_bnd_pairs = find_mate_bnd_events(diff_chr_bnd_events, pos_tolerance=pos_tolerance)
@@ -118,11 +197,11 @@ def correct(
 
     # Merge all transformed events
     all_transformed_events = (
-        same_chr_sv_transformed_events
-        + mate_pair_transformed_events
-        + special_no_mate_diff_bnd_pair_transformed_events
-        + single_TRA_transformed_events
-        + non_bnd_transformed_events
+            same_chr_sv_transformed_events
+            + mate_pair_transformed_events
+            + special_no_mate_diff_bnd_pair_transformed_events
+            + single_TRA_transformed_events
+            + non_bnd_transformed_events
     )
 
     # Write the transformed events to the output file
