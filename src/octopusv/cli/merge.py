@@ -75,6 +75,9 @@ def merge(
     tra_strand_consistency: bool = typer.Option(
         True, "--tra-strand-consistency", help="Whether to require strand consistency for TRA events."
     ),
+    bnd_delta: int = typer.Option(
+        50, "--bnd-delta", help="Position uncertainty threshold for BND events (in base pairs)."
+    ),
     upsetr: bool = typer.Option(
         False, "--upsetr", help="Generate UpSet plot visualization of input file intersections."
     ),
@@ -119,6 +122,7 @@ def merge(
         max_distance=max_distance,
         max_length_ratio=max_length_ratio,
         min_jaccard=min_jaccard,
+        bnd_delta=bnd_delta,
     )
     sv_merger.merge()
 

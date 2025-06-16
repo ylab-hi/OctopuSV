@@ -5,19 +5,21 @@ import re
 from .sv_merge_logic import should_merge
 from .sv_selector import select_representative_sv
 from .tra_merger import TRAMerger
+from .bnd_merger import BNDMerger
 
 
 class SVMerger:
     def __init__(
-        self,
-        classified_events,
-        all_input_files,
-        tra_delta=50,
-        tra_min_overlap_ratio=0.5,
-        tra_strand_consistency=True,
-        max_distance=50,
-        max_length_ratio=1.3,
-        min_jaccard=0.7,
+            self,
+            classified_events,
+            all_input_files,
+            tra_delta=50,
+            tra_min_overlap_ratio=0.5,
+            tra_strand_consistency=True,
+            max_distance=50,
+            max_length_ratio=1.3,
+            min_jaccard=0.7,
+            bnd_delta=50,  # Add BND-specific delta parameter
     ):
         """Initialize SVMerger with the given parameters and events.
 
@@ -30,12 +32,14 @@ class SVMerger:
             max_distance: Maximum allowed distance between start or end positions
             max_length_ratio: Maximum allowed ratio between event lengths
             min_jaccard: Minimum required Jaccard index for overlap
+            bnd_delta: Position uncertainty threshold for BND events (default: 50)
         """
         self.classified_events = classified_events
         self.all_input_files = [str(file) for file in all_input_files]
         self.merged_events: dict[str, dict[str, list]] = {}
         self.event_groups: dict[str, dict[str, list[list]]] = {}
         self.tra_merger = TRAMerger(tra_delta, tra_min_overlap_ratio, tra_strand_consistency)
+        self.bnd_merger = BNDMerger(bnd_delta)  # Add BND merger
         self.max_distance = max_distance
         self.max_length_ratio = max_length_ratio
         self.min_jaccard = min_jaccard
@@ -47,6 +51,11 @@ class SVMerger:
                 for (_chr1, _chr2), events in chromosomes.items():
                     for event in events:
                         self.tra_merger.add_event(event)
+            elif sv_type == "BND":
+                # BND events are classified by single chromosome, not chromosome pairs
+                for chromosome, events in chromosomes.items():
+                    for event in events:
+                        self.bnd_merger.add_event(event)
             else:
                 if sv_type not in self.merged_events:
                     self.merged_events[sv_type] = {}
@@ -73,6 +82,8 @@ class SVMerger:
         """Get events of given type within the specified region."""
         if sv_type == "TRA":
             return self.tra_merger.get_merged_events()
+        elif sv_type == "BND":
+            return self.bnd_merger.get_merged_events()
         if sv_type in self.event_groups and chromosome in self.event_groups[sv_type]:
             events = []
             for sv_group in self.event_groups[sv_type][chromosome]:
@@ -85,6 +96,14 @@ class SVMerger:
     def get_all_merged_events(self):
         """Get all merged events across all types and chromosomes."""
         merged_events = []
+
+        # Add TRA events
+        merged_events.extend(self.tra_merger.get_merged_events())
+
+        # Add BND events
+        merged_events.extend(self.bnd_merger.get_merged_events())
+
+        # Add other SV types (DEL, DUP, INV, INS)
         for sv_type in self.event_groups:
             for chromosome in self.event_groups[sv_type]:
                 for sv_group in self.event_groups[sv_type][chromosome]:
@@ -100,7 +119,11 @@ class SVMerger:
             operation: One of "union", "intersection", or "specific"
         """
         tra_events = self.tra_merger.get_merged_events()
+        bnd_events = self.bnd_merger.get_merged_events()  # Add BND events
         other_events = self.get_all_merged_events()
+
+        # Remove TRA and BND events from other_events to avoid duplication
+        other_events = [e for e in other_events if e.sv_type not in ["TRA", "BND"]]
 
         # Normalize sources to basenames
         sources_set = {os.path.basename(source) for source in sources}
@@ -109,6 +132,11 @@ class SVMerger:
             tra_filtered = [
                 event
                 for event in tra_events
+                if sources_set.intersection({os.path.basename(s) for s in event.source_file.split(",")})
+            ]
+            bnd_filtered = [
+                event
+                for event in bnd_events
                 if sources_set.intersection({os.path.basename(s) for s in event.source_file.split(",")})
             ]
             other_filtered = [
@@ -120,6 +148,11 @@ class SVMerger:
             tra_filtered = [
                 event
                 for event in tra_events
+                if sources_set.issubset({os.path.basename(s) for s in event.source_file.split(",")})
+            ]
+            bnd_filtered = [
+                event
+                for event in bnd_events
                 if sources_set.issubset({os.path.basename(s) for s in event.source_file.split(",")})
             ]
             other_filtered = [
@@ -135,16 +168,21 @@ class SVMerger:
             tra_filtered = [
                 event
                 for event in tra_events
-                if source_file in [os.path.basename(s) for s in event.source_file.split(",")]
-                and not any(
+                if source_file in [os.path.basename(s) for s in event.source_file.split(",")] and not any(
+                    other in [os.path.basename(s) for s in event.source_file.split(",")] for other in other_files
+                )
+            ]
+            bnd_filtered = [
+                event
+                for event in bnd_events
+                if source_file in [os.path.basename(s) for s in event.source_file.split(",")] and not any(
                     other in [os.path.basename(s) for s in event.source_file.split(",")] for other in other_files
                 )
             ]
             other_filtered = [
                 event
                 for event in other_events
-                if source_file in [os.path.basename(s) for s in event.source_file.split(",")]
-                and not any(
+                if source_file in [os.path.basename(s) for s in event.source_file.split(",")] and not any(
                     other in [os.path.basename(s) for s in event.source_file.split(",")] for other in other_files
                 )
             ]
@@ -152,21 +190,30 @@ class SVMerger:
             msg = f"Unsupported operation: {operation}"
             raise ValueError(msg)
 
-        return other_filtered + tra_filtered
+        return other_filtered + tra_filtered + bnd_filtered
 
     def get_events_by_exact_support(self, exact_support):
         """Get events supported by exactly N files."""
         tra_events = self.tra_merger.get_merged_events()
+        bnd_events = self.bnd_merger.get_merged_events()  # Add BND events
         other_events = self.get_all_merged_events()
 
+        # Remove TRA and BND events from other_events to avoid duplication
+        other_events = [e for e in other_events if e.sv_type not in ["TRA", "BND"]]
+
         tra_filtered = [event for event in tra_events if len(set(event.source_file.split(","))) == exact_support]
+        bnd_filtered = [event for event in bnd_events if len(set(event.source_file.split(","))) == exact_support]
         other_filtered = [event for event in other_events if len(set(event.source_file.split(","))) == exact_support]
-        return other_filtered + tra_filtered
+        return other_filtered + tra_filtered + bnd_filtered
 
     def get_events_by_support_range(self, min_support=None, max_support=None):
         """Get events supported by a range of files."""
         tra_events = self.tra_merger.get_merged_events()
+        bnd_events = self.bnd_merger.get_merged_events()  # Add BND events
         other_events = self.get_all_merged_events()
+
+        # Remove TRA and BND events from other_events to avoid duplication
+        other_events = [e for e in other_events if e.sv_type not in ["TRA", "BND"]]
 
         def within_range(event):
             support_count = len(set(event.source_file.split(",")))
@@ -175,8 +222,35 @@ class SVMerger:
             return not (max_support is not None and support_count > max_support)
 
         tra_filtered = [event for event in tra_events if within_range(event)]
+        bnd_filtered = [event for event in bnd_events if within_range(event)]
         other_filtered = [event for event in other_events if within_range(event)]
-        return other_filtered + tra_filtered
+        return other_filtered + tra_filtered + bnd_filtered
+
+    def get_events_by_expression(self, expression):
+        """Get events that satisfy a logical expression."""
+        tra_events = self.tra_merger.get_merged_events()
+        bnd_events = self.bnd_merger.get_merged_events()  # Add BND events
+        other_events = self.get_all_merged_events()
+
+        # Remove TRA and BND events from other_events to avoid duplication
+        other_events = [e for e in other_events if e.sv_type not in ["TRA", "BND"]]
+
+        tra_filtered = [
+            event
+            for event in tra_events
+            if self.evaluate_expression(expression, [os.path.basename(s) for s in event.source_file.split(",")])
+        ]
+        bnd_filtered = [
+            event
+            for event in bnd_events
+            if self.evaluate_expression(expression, [os.path.basename(s) for s in event.source_file.split(",")])
+        ]
+        other_filtered = [
+            event
+            for event in other_events
+            if self.evaluate_expression(expression, [os.path.basename(s) for s in event.source_file.split(",")])
+        ]
+        return other_filtered + tra_filtered + bnd_filtered
 
     def evaluate_expression(self, expression, event_sources):
         """Evaluate a logical expression against event sources."""
@@ -215,23 +289,6 @@ class SVMerger:
         except Exception as e:
             msg = f"Invalid expression: {e}"
             raise ValueError(msg)
-
-    def get_events_by_expression(self, expression):
-        """Get events that satisfy a logical expression."""
-        tra_events = self.tra_merger.get_merged_events()
-        other_events = self.get_all_merged_events()
-
-        tra_filtered = [
-            event
-            for event in tra_events
-            if self.evaluate_expression(expression, [os.path.basename(s) for s in event.source_file.split(",")])
-        ]
-        other_filtered = [
-            event
-            for event in other_events
-            if self.evaluate_expression(expression, [os.path.basename(s) for s in event.source_file.split(",")])
-        ]
-        return other_filtered + tra_filtered
 
     def format_sample_values(self, format_keys, sample_dict):
         """Format sample values according to the FORMAT field."""

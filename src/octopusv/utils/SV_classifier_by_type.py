@@ -8,12 +8,13 @@ class SVClassifierByType:
 
     def __init__(self, events):
         self.events = events
-        # Predefine categories with empty lists
-        self.classified_events = {"INS": [], "DEL": [], "DUP": [], "INV": [], "TRA": []}
-        self.valid_types = {"INS", "DEL", "DUP", "INV", "TRA"}  # Defined valid SV types
+        # Predefine categories with empty lists - now includes BND
+        self.classified_events = {"INS": [], "DEL": [], "DUP": [], "INV": [], "TRA": [], "BND": []}
+        self.valid_types = {"INS", "DEL", "DUP", "INV", "TRA", "BND"}  # Added BND to valid types
 
     def classify(self):
         """Classifies events based on their SV type. Only includes events whose types are in the valid_types set.
+
         Raises an error if an event has an undefined or invalid SV type.
         """
         for event in self.events:
