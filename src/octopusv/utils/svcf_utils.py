@@ -5,9 +5,9 @@ def generate_sv_header(contig_lines):
     """Generates SVCF file header lines according to SVCF specification, including original contig lines."""
     current_time_str = datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|%Z")
     return [
-        "##fileformat=SVCFv1.0",
+        "##fileformat=VCFv4.2",
         f"##fileDate={current_time_str}",  # Use current time
-        "##source=octopusV",
+        "##source=OctopuSV",
         *contig_lines,  # Include original ##contig lines
         '##ALT=<ID=DEL,Description="Deletion">',
         '##ALT=<ID=INV,Description="Inversion">',
