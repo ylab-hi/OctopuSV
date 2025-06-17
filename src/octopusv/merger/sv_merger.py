@@ -307,96 +307,116 @@ class SVMerger:
             result = result[:-4]
         return result
 
-    def write_results(self, output_file, events, contigs):
+    def write_results(self, output_file, events, contigs, mode="caller", name_mapper=None):
         """Write merged results to output file."""
-        with open(output_file, "w") as f:
-            # Write VCF header
-            f.write("##fileformat=SVCFv1.0\n")
-            file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
-            f.write(f"##fileDate={file_date}\n")
-            f.write("##source=octopusV\n")
+        if name_mapper and mode == "sample":
+            # Use new multi-sample writer
+            from .multi_sample_writer import MultiSampleWriter
+            writer = MultiSampleWriter(name_mapper)
+            writer.write_results(output_file, events, contigs, self)
+        else:
+            # Use existing logic for caller mode (keep all current code unchanged)
+            with open(output_file, "w") as f:
+                # Write VCF header
+                f.write("##fileformat=VCFv4.2\n")
+                file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
+                f.write(f"##fileDate={file_date}\n")
+                f.write("##source=OctopuSV\n")
 
-            # Write contig information
-            for contig_id, contig_length in contigs.items():
-                f.write(f"##contig=<ID={contig_id},length={contig_length}>\n")
+                # Write contig information
+                for contig_id, contig_length in contigs.items():
+                    f.write(f"##contig=<ID={contig_id},length={contig_length}>\n")
 
-            # Write column headers
-            if events:
-                sample_names = ["SAMPLE"]  # We'll use a single column for all samples
-            else:
-                sample_names = ["SAMPLE"]
-
-            header_line = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(sample_names) + "\n"
-            f.write(header_line)
-
-            for event in events:
-                # Prepare INFO field
-                info_field = ";".join([f"{k}={v}" for k, v in event.info.items()])
-                if "SOURCES" not in info_field:
-                    info_field += f";SOURCES={event.source_file}"
-
-                # Get the FORMAT field from the representative event
-                format_field = event.format
-                format_keys = format_field.split(":")
-
-                # Prepare sample values
-                merged_samples = getattr(event, "merged_samples", [])
-                if merged_samples:
-                    # Find the representative sample and other samples
-                    rep_sample_data = None
-                    other_samples = []
-                    for sample_name, sample_format, sample_data in merged_samples:
-                        if isinstance(sample_data, dict) and sample_data.get("ID") == event.sv_id:
-                            rep_sample_data = (sample_name, sample_format, sample_data)
-                        else:
-                            other_samples.append((sample_name, sample_format, sample_data))
-
-                    # Format samples in the correct order (representative first, then others)
-                    sample_strings = []
-
-                    # Add representative sample first
-                    if rep_sample_data:
-                        _, _, sample_data = rep_sample_data
-                        if isinstance(sample_data, dict):
-                            values = []
-                            for key in format_keys:
-                                value = sample_data.get(key, ".")
-                                values.append(str(value))
-                            sample_str = ":".join(values)
-                            if sample_str.endswith(":.:."):
-                                sample_str = sample_str[:-4]
-                            sample_strings.append(sample_str)
-                        else:
-                            if str(sample_data).endswith(":.:."):
-                                sample_data = str(sample_data)[:-4]
-                            sample_strings.append(str(sample_data))
-
-                    # Add other samples
-                    for _, _, sample_data in other_samples:
-                        if isinstance(sample_data, dict):
-                            values = []
-                            for key in format_keys:
-                                value = sample_data.get(key, ".")
-                                values.append(str(value))
-                            sample_str = ":".join(values)
-                            if sample_str.endswith(":.:."):
-                                sample_str = sample_str[:-4]
-                            sample_strings.append(sample_str)
-                        else:
-                            if str(sample_data).endswith(":.:."):
-                                sample_data = str(sample_data)[:-4]
-                            sample_strings.append(str(sample_data))
-
-                    sample_part = "\t".join(sample_strings)
-                elif hasattr(event, "sample"):
-                    formatted_values = self.format_sample_values(format_keys, event.sample)
-                    if formatted_values.endswith(":.:."):
-                        formatted_values = formatted_values[:-4]
-                    sample_part = formatted_values
+                # Write column headers - apply name mapping for caller mode if provided
+                if events:
+                    sample_names = ["SAMPLE"]  # We'll use a single column for all samples
                 else:
-                    sample_part = "./."
+                    sample_names = ["SAMPLE"]
 
-                # Write the record
-                record_part1 = f"{event.chrom}\t{event.pos}\t{event.sv_id}\t{event.ref}\t{event.alt}\t"
-                record_part2 = f"{event.quality}\t{event.filter}\t{info_field}\t{format_field}\t"
-                f.write(record_part1 + record_part2 + sample_part + "\n")
+                header_line = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(sample_names) + "\n"
+                f.write(header_line)
+
+                for event in events:
+                    # Prepare INFO field - apply name mapping if provided
+                    info_items = []
+                    for k, v in event.info.items():
+                        if k == "SOURCES" and name_mapper:
+                            # Convert file paths to display names
+                            display_sources = name_mapper.convert_source_string(v)
+                            info_items.append(f"SOURCES={display_sources}")
+                        else:
+                            info_items.append(f"{k}={v}")
+
+                    info_field = ";".join(info_items)
+                    if "SOURCES" not in info_field:
+                        if name_mapper:
+                            display_sources = name_mapper.convert_source_string(event.source_file)
+                            info_field += f";SOURCES={display_sources}"
+                        else:
+                            info_field += f";SOURCES={event.source_file}"
+
+                    # Get the FORMAT field from the representative event
+                    format_field = event.format
+                    format_keys = format_field.split(":")
+
+                    # Prepare sample values
+                    merged_samples = getattr(event, "merged_samples", [])
+                    if merged_samples:
+                        # Find the representative sample and other samples
+                        rep_sample_data = None
+                        other_samples = []
+                        for sample_name, sample_format, sample_data in merged_samples:
+                            if isinstance(sample_data, dict) and sample_data.get("ID") == event.sv_id:
+                                rep_sample_data = (sample_name, sample_format, sample_data)
+                            else:
+                                other_samples.append((sample_name, sample_format, sample_data))
+
+                        # Format samples in the correct order (representative first, then others)
+                        sample_strings = []
+
+                        # Add representative sample first
+                        if rep_sample_data:
+                            _, _, sample_data = rep_sample_data
+                            if isinstance(sample_data, dict):
+                                values = []
+                                for key in format_keys:
+                                    value = sample_data.get(key, ".")
+                                    values.append(str(value))
+                                sample_str = ":".join(values)
+                                if sample_str.endswith(":.:."):
+                                    sample_str = sample_str[:-4]
+                                sample_strings.append(sample_str)
+                            else:
+                                if str(sample_data).endswith(":.:."):
+                                    sample_data = str(sample_data)[:-4]
+                                sample_strings.append(str(sample_data))
+
+                        # Add other samples
+                        for _, _, sample_data in other_samples:
+                            if isinstance(sample_data, dict):
+                                values = []
+                                for key in format_keys:
+                                    value = sample_data.get(key, ".")
+                                    values.append(str(value))
+                                sample_str = ":".join(values)
+                                if sample_str.endswith(":.:."):
+                                    sample_str = sample_str[:-4]
+                                sample_strings.append(sample_str)
+                            else:
+                                if str(sample_data).endswith(":.:."):
+                                    sample_data = str(sample_data)[:-4]
+                                sample_strings.append(str(sample_data))
+
+                        sample_part = "\t".join(sample_strings)
+                    elif hasattr(event, "sample"):
+                        formatted_values = self.format_sample_values(format_keys, event.sample)
+                        if formatted_values.endswith(":.:."):
+                            formatted_values = formatted_values[:-4]
+                        sample_part = formatted_values
+                    else:
+                        sample_part = "./."
+
+                    # Write the record
+                    record_part1 = f"{event.chrom}\t{event.pos}\t{event.sv_id}\t{event.ref}\t{event.alt}\t"
+                    record_part2 = f"{event.quality}\t{event.filter}\t{info_field}\t{format_field}\t"
+                    f.write(record_part1 + record_part2 + sample_part + "\n")
