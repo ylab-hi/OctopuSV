@@ -48,7 +48,7 @@ jobs:
           fetch-depth: 1
 
       - name: Cache pip packages
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ matrix.python }}-${{ hashFiles('**/requirements.txt') }}
@@ -57,7 +57,7 @@ jobs:
             ${{ runner.os }}-pip-
 
       - name: Cache Poetry virtual environment
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: .venv
           key: ${{ runner.os }}-poetry-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
@@ -92,7 +92,7 @@ jobs:
 
       - name: Cache macOS dependencies
         if: matrix.os == 'macos-latest'
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/brew-cache
           key: macos-brew-${{ hashFiles('**/Dockerfile') }}
@@ -164,7 +164,7 @@ jobs:
           print("::set-output name=result::{}".format(result))
 
       - name: Restore pre-commit cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         if: matrix.session == 'pre-commit'
         with:
           path: ~/.cache/pre-commit
