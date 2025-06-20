@@ -1,10 +1,11 @@
+import sys
 from pathlib import Path
 
 import typer
 
 from octopusv.merger.sv_merger import SVMerger
-from octopusv.merger.upset_plotter import UpSetPlotter  # Import UpSetPlotter
-from octopusv.merger.name_mapper import NameMapper  # New import
+from octopusv.merger.upset_plotter import UpSetPlotter
+from octopusv.merger.name_mapper import NameMapper
 from octopusv.utils.SV_classifier_by_chromosome import SVClassifiedByChromosome
 from octopusv.utils.SV_classifier_by_type import SVClassifierByType
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
@@ -48,13 +49,13 @@ def merge(
         input_option: list[Path] = typer.Option(None, "--input-file", "-i", help="Input SVCF files to merge."),
         output_file: Path = typer.Option(..., "--output-file", "-o", help="Output file for merged SV data."),
 
-        # New mode parameters
+        # Mode parameters with enhanced validation
         mode: str = typer.Option("caller", "--mode",
                                  help="Merge mode: 'caller' for same sample different callers, 'sample' for different samples."),
         caller_names: str = typer.Option(None, "--caller-names",
-                                         help="Comma-separated caller names (only for caller mode)."),
+                                         help="Comma-separated caller names (only for caller mode). Must match input file count."),
         sample_names: str = typer.Option(None, "--sample-names",
-                                         help="Comma-separated sample names (only for sample mode)."),
+                                         help="Comma-separated sample names (only for sample mode). Must match input file count."),
 
         # Existing merge strategy parameters
         intersect: bool = typer.Option(False, "--intersect", help="Apply intersection strategy for merging."),
@@ -104,7 +105,7 @@ def merge(
             help="Output path for UpSet plot. If not provided, will use output_file basename with _upset.png suffix.",
         ),
 ):
-    """Merge multiple SVCF files based on specified strategy."""
+    """Merge multiple SVCF files based on specified strategy with consistent SOURCES and SAMPLE ordering."""
 
     # Validate mode parameter
     if mode not in ["caller", "sample"]:
@@ -120,8 +121,32 @@ def merge(
         typer.echo("Error: --caller-names can only be used with --mode caller.", err=True)
         raise typer.Exit(code=1)
 
-    # Combine input files from arguments and options
-    all_input_files = (input_files or []) + (input_option or [])
+    # Handle input files - fix the order issue
+    all_input_files = []
+
+    # Debug: show what typer gives us
+    typer.echo(f"Debug: input_files from arguments: {input_files}")
+    typer.echo(f"Debug: input_option from -i: {input_option}")
+
+    # Check if user intended to use -i by looking at the command line
+    using_i_option = '-i' in sys.argv or '--input-file' in sys.argv
+
+    if using_i_option:
+        # User used -i, so combine input_option first, then any positional args
+        # This preserves the intended order: -i file1 file2 file3 file4
+        if input_option:
+            all_input_files.extend(input_option)
+        if input_files:
+            all_input_files.extend(input_files)
+    else:
+        # User used positional arguments only
+        if input_files:
+            all_input_files.extend(input_files)
+        if input_option:
+            all_input_files.extend(input_option)
+
+    # Final debug output
+    typer.echo(f"Debug: Final file order: {[str(f) for f in all_input_files]}")
 
     if not all_input_files:
         typer.echo("Error: No input files provided.", err=True)
@@ -133,18 +158,30 @@ def merge(
         typer.echo("Error: --min-support must be a positive integer.", err=True)
         raise typer.Exit(code=1)
 
-    # Process name mapping based on mode
+    # Enhanced name mapping with better validation
     name_mapper = None
     try:
         if mode == "caller" and caller_names:
             # Caller mode with custom caller names
             names = [name.strip() for name in caller_names.split(",")]
+            if len(names) != len(all_input_files):
+                typer.echo(
+                    f"Error: Number of caller names ({len(names)}) must match number of input files ({len(all_input_files)}).",
+                    err=True
+                )
+                raise typer.Exit(code=1)
             name_mapper = NameMapper(all_input_files, mode="caller", custom_names=names)
         elif mode == "sample":
             # Sample mode (with or without custom sample names)
             names = None
             if sample_names:
                 names = [name.strip() for name in sample_names.split(",")]
+                if len(names) != len(all_input_files):
+                    typer.echo(
+                        f"Error: Number of sample names ({len(names)}) must match number of input files ({len(all_input_files)}).",
+                        err=True
+                    )
+                    raise typer.Exit(code=1)
             name_mapper = NameMapper(all_input_files, mode="sample", custom_names=names)
         elif mode == "caller":
             # Caller mode with default file name extraction
@@ -153,19 +190,23 @@ def merge(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
 
-    # Display mode information to user
+    # Display informative messages about the merging configuration
     if mode == "sample":
         sample_names_list = name_mapper.get_all_display_names() if name_mapper else []
         typer.echo(
             f"Info: Running in sample mode. Output will have {len(sample_names_list)} sample columns: {', '.join(sample_names_list)}")
+        typer.echo(f"Info: Input file order: {[str(f) for f in all_input_files]}")
     else:
+        caller_names_list = name_mapper.get_all_display_names() if name_mapper else []
         typer.echo("Info: Running in caller mode. Output will have single SAMPLE column.")
+        typer.echo(f"Info: Caller order: {', '.join(caller_names_list)}")
+        typer.echo(f"Info: Input file order: {[str(f) for f in all_input_files]}")
 
     # Get contig information from input files
     input_filenames = [str(file) for file in all_input_files]
     contigs = get_contigs_from_svcf(input_filenames)
 
-    # Process SV events (existing logic unchanged)
+    # Process SV events - maintain input file order throughout
     sv_event_creator = SVCFFileEventCreator(input_filenames)
     sv_event_creator.parse()
     classifier = SVClassifierByType(sv_event_creator.events)
@@ -173,10 +214,10 @@ def merge(
     chromosome_classifier = SVClassifiedByChromosome(classifier.get_classified_events())
     chromosome_classifier.classify()
 
-    # Initialize SVMerger (existing logic unchanged)
+    # Initialize SVMerger with preserved file order
     sv_merger = SVMerger(
         chromosome_classifier.get_classified_events(),
-        all_input_files=input_filenames,
+        all_input_files=input_filenames,  # Maintain original order
         tra_delta=tra_delta,
         tra_min_overlap_ratio=tra_min_overlap_ratio,
         tra_strand_consistency=tra_strand_consistency,
@@ -187,7 +228,7 @@ def merge(
     )
     sv_merger.merge()
 
-    # Apply merge strategies (existing logic unchanged)
+    # Apply merge strategies (existing logic preserved)
     if expression:
         results = sv_merger.get_events_by_expression(expression)
     elif intersect:
@@ -207,11 +248,16 @@ def merge(
             "--min-support, --exact-support, --max-support, or --expression."
         )
 
-    # Write results with new mode support
+    # Write results with enhanced ordering consistency
     sv_merger.write_results(output_file, results, contigs, mode, name_mapper)
-    typer.echo(f"Merged results written to {output_file}")
 
-    # Generate UpSet plot if requested (existing logic unchanged)
+    # Provide detailed success message
+    typer.echo(f"Successfully merged {len(results)} events from {len(all_input_files)} input files.")
+    typer.echo(f"Merged results written to {output_file}")
+    if name_mapper:
+        typer.echo(f"SOURCES field and SAMPLE data are ordered consistently according to input file sequence.")
+
+    # Generate UpSet plot if requested
     if upsetr:
         try:
             plot_file = str(upsetr_output) if upsetr_output else str(output_file).rsplit(".", 1)[0] + "_upset.png"
