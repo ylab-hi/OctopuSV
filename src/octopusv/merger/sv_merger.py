@@ -246,84 +246,6 @@ class SVMerger:
             msg = f"Invalid expression: {e}"
             raise ValueError(msg)
 
-    def _get_ordered_sources_for_event(self, event):
-        """Get source files for an event ordered according to input file order.
-
-        Args:
-            event: The SV event object
-
-        Returns:
-            list: List of source file paths ordered by input file order
-        """
-        # Get source files from the event
-        source_files = event.source_file.split(",")
-        source_files = [f.strip() for f in source_files]
-
-        # Order them according to the input file order
-        ordered_sources = []
-        for input_file in self.all_input_files:
-            input_basename = os.path.basename(input_file)
-            # Check if this input file is among the event's sources
-            for source_file in source_files:
-                source_basename = os.path.basename(source_file)
-                if input_basename == source_basename:
-                    ordered_sources.append(source_file)
-                    break
-
-        return ordered_sources
-
-    def _reorder_merged_samples(self, event, ordered_sources):
-        """Reorder merged_samples to match the ordered_sources sequence.
-
-        Args:
-            event: The SV event object
-            ordered_sources: List of source files in correct order
-
-        Returns:
-            list: Reordered merged_samples list
-        """
-        merged_samples = getattr(event, "merged_samples", [])
-        if not merged_samples:
-            return []
-
-        # Create ordered source basenames for easier matching
-        ordered_basenames = [os.path.splitext(os.path.basename(src))[0].lower() for src in ordered_sources]
-
-        # Group samples by potential source - allow multiple samples per source
-        samples_by_source = {basename: [] for basename in ordered_basenames}
-        unmatched_samples = []
-
-        for sample_name, sample_format, sample_data in merged_samples:
-            matched = False
-            sample_str = str(sample_data).lower()
-
-            # Try to match each ordered source with multiple criteria
-            for basename in ordered_basenames:
-                # Check multiple matching criteria
-                if (basename in sample_str or
-                        basename in sample_name.lower() or
-                        (isinstance(sample_data, dict) and
-                         (basename in str(sample_data.get('ID', '')).lower() or
-                          basename in str(sample_data.get('SC', '')).lower() or
-                          basename in str(sample_data.get('source_file', '')).lower()))):
-                    samples_by_source[basename].append((sample_name, sample_format, sample_data))
-                    matched = True
-                    break
-
-            # If still not matched, add to unmatched list to prevent data loss
-            if not matched:
-                unmatched_samples.append((sample_name, sample_format, sample_data))
-
-        # Build reordered list maintaining input file order
-        reordered_samples = []
-        for basename in ordered_basenames:
-            reordered_samples.extend(samples_by_source[basename])
-
-        # Add any unmatched samples at the end to prevent data loss
-        reordered_samples.extend(unmatched_samples)
-
-        return reordered_samples
-
     def format_sample_values(self, format_keys, sample_dict):
         """Format sample values according to the FORMAT field."""
         values = []
@@ -341,14 +263,14 @@ class SVMerger:
         return result
 
     def write_results(self, output_file, events, contigs, mode="caller", name_mapper=None):
-        """Write merged results to output file with consistent SOURCES and SAMPLE ordering."""
+        """Write merged results to output file with SOURCES and SAMPLE ordering by input file order."""
         if name_mapper and mode == "sample":
             # Use multi-sample writer for sample mode
             from .multi_sample_writer import MultiSampleWriter
             writer = MultiSampleWriter(name_mapper)
             writer.write_results(output_file, events, contigs, self)
         else:
-            # Enhanced caller mode with consistent ordering
+            # Enhanced caller mode with simple input file order-based logic
             with open(output_file, "w") as f:
                 # Write VCF header
                 f.write("##fileformat=VCFv4.2\n")
@@ -366,22 +288,70 @@ class SVMerger:
                 f.write(header_line)
 
                 for event in events:
-                    # Step 1: Get ordered sources according to input file order
-                    ordered_sources = self._get_ordered_sources_for_event(event)
+                    # Step 1: Find which input files contributed to this event
+                    event_source_files = event.source_file.split(",")
+                    event_source_basenames = {os.path.basename(f.strip()) for f in event_source_files}
 
-                    # Step 2: Generate SOURCES field with consistent ordering
-                    if name_mapper:
-                        # Apply name mapping to get display names
-                        display_sources = ",".join([name_mapper.get_display_name(f) for f in ordered_sources])
-                    else:
-                        # Use basename without name mapping
-                        display_sources = ",".join([os.path.splitext(os.path.basename(f))[0] for f in ordered_sources])
+                    # Step 2: Build SOURCES and samples in input file order
+                    sources_in_order = []
+                    samples_in_order = []
+                    merged_samples = getattr(event, "merged_samples", [])
 
-                    # Step 3: Prepare INFO field with ordered SOURCES
+                    # Create a mapping from source basename to sample data
+                    source_to_sample = {}
+                    for sample_name, sample_format, sample_data in merged_samples:
+                        # Try to determine which source file this sample came from
+                        sample_assigned = False
+                        for input_file in self.all_input_files:
+                            input_basename = os.path.basename(input_file)
+
+                            # Check multiple ways to match sample to source
+                            if isinstance(sample_data, dict):
+                                # Method 1: Check source_file field
+                                source_file_field = sample_data.get('source_file', '')
+                                if input_basename in source_file_field or input_file in source_file_field:
+                                    source_to_sample[input_basename] = (sample_name, sample_format, sample_data)
+                                    sample_assigned = True
+                                    break
+
+                                # Method 2: Check if input file appears in sample data
+                                sample_str = str(sample_data)
+                                input_name = os.path.splitext(input_basename)[0]
+                                if input_name.lower() in sample_str.lower():
+                                    source_to_sample[input_basename] = (sample_name, sample_format, sample_data)
+                                    sample_assigned = True
+                                    break
+
+                        # If no specific match found, assign to first available input file
+                        if not sample_assigned:
+                            for input_file in self.all_input_files:
+                                input_basename = os.path.basename(input_file)
+                                if input_basename not in source_to_sample and input_basename in event_source_basenames:
+                                    source_to_sample[input_basename] = (sample_name, sample_format, sample_data)
+                                    break
+
+                    # Step 3: Generate SOURCES and samples in input file order
+                    for input_file in self.all_input_files:
+                        input_basename = os.path.basename(input_file)
+                        if input_basename in event_source_basenames:
+                            # This input file contributed to this event
+                            if name_mapper:
+                                display_name = name_mapper.get_display_name(input_file)
+                            else:
+                                display_name = os.path.splitext(input_basename)[0]
+                            sources_in_order.append(display_name)
+
+                            # Get corresponding sample data
+                            if input_basename in source_to_sample:
+                                samples_in_order.append(source_to_sample[input_basename])
+
+                    # Step 4: Generate SOURCES field
+                    display_sources = ",".join(sources_in_order)
+
+                    # Step 5: Prepare INFO field with ordered SOURCES
                     info_items = []
                     for k, v in event.info.items():
                         if k == "SOURCES":
-                            # Replace with our ordered sources
                             info_items.append(f"SOURCES={display_sources}")
                         else:
                             info_items.append(f"{k}={v}")
@@ -390,19 +360,14 @@ class SVMerger:
                     if "SOURCES" not in info_field:
                         info_field += f";SOURCES={display_sources}"
 
-                    # Step 4: Get FORMAT field
+                    # Step 6: Get FORMAT field
                     format_field = event.format
                     format_keys = format_field.split(":")
 
-                    # Step 5: Reorder sample data to match ordered_sources
-                    merged_samples = getattr(event, "merged_samples", [])
-                    if merged_samples:
-                        # Reorder merged_samples to match ordered_sources
-                        reordered_samples = self._reorder_merged_samples(event, ordered_sources)
-
-                        # Format sample strings in the correct order
+                    # Step 7: Generate sample data in input file order
+                    if samples_in_order:
                         sample_strings = []
-                        for _, _, sample_data in reordered_samples:
+                        for _, _, sample_data in samples_in_order:
                             if isinstance(sample_data, dict):
                                 values = []
                                 for key in format_keys:
@@ -428,7 +393,7 @@ class SVMerger:
                     else:
                         sample_part = "./."
 
-                    # Step 6: Write the complete record
+                    # Step 8: Write the complete record
                     record_part1 = f"{event.chrom}\t{event.pos}\t{event.sv_id}\t{event.ref}\t{event.alt}\t"
                     record_part2 = f"{event.quality}\t{event.filter}\t{info_field}\t{format_field}\t"
                     f.write(record_part1 + record_part2 + sample_part + "\n")

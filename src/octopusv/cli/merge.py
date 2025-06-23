@@ -124,10 +124,6 @@ def merge(
     # Handle input files - fix the order issue
     all_input_files = []
 
-    # Debug: show what typer gives us
-    typer.echo(f"Debug: input_files from arguments: {input_files}")
-    typer.echo(f"Debug: input_option from -i: {input_option}")
-
     # Check if user intended to use -i by looking at the command line
     using_i_option = '-i' in sys.argv or '--input-file' in sys.argv
 
@@ -144,9 +140,6 @@ def merge(
             all_input_files.extend(input_files)
         if input_option:
             all_input_files.extend(input_option)
-
-    # Final debug output
-    typer.echo(f"Debug: Final file order: {[str(f) for f in all_input_files]}")
 
     if not all_input_files:
         typer.echo("Error: No input files provided.", err=True)
