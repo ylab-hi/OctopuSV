@@ -63,7 +63,7 @@ class SVMerger:
                     if chromosome not in self.merged_events[sv_type]:
                         self.merged_events[sv_type][chromosome] = []
                         self.event_groups[sv_type][chromosome] = []
-                    for event in events:
+                    for event in sorted(events, key=lambda e: (e.start_pos, e.end_pos, e.sv_id)):
                         self.add_and_merge_event(sv_type, chromosome, event)
 
     def add_and_merge_event(self, sv_type, chromosome, new_event):
