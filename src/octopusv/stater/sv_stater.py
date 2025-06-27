@@ -55,7 +55,7 @@ class SVStater:
         result['sv_types'] = {}
         for line in self.results["type"].strip().split("\n")[1:]:
             if ":" in line:
-                key, value = line.split(":")
+                key, value = line.split(":", 1)
                 parts = value.strip().split()
                 if len(parts) >= 2 and "(" in parts[1]:
                     try:
@@ -88,7 +88,7 @@ class SVStater:
         for line in lines[8:]:
             if ":" in line:
                 try:
-                    key, value = line.split(":")
+                    key, value = line.split(":", 1)
                     result["size_distribution"][key.strip()] = int(value.strip())
                 except (ValueError, IndexError):
                     continue
@@ -175,24 +175,80 @@ class SVStater:
         else:
             result['avg_read_support'] = 0.0
 
-        # Parse genotype distribution
+        # Parse genotype distribution (enhanced for multi-sample support)
         lines = self.results['genotype'].strip().split("\n")
         result["genotype_dist"] = {}
+        result["sample_genotypes"] = {}  # For per-sample genotypes
+        result["population_genotypes"] = {}  # For population-level genotypes
 
-        for line in lines[1:]:
+        current_sample = None
+        is_population = False
+        is_in_genotype_section = False
+
+        for line in lines:
+            line = line.strip()
+
+            # Skip empty lines
+            if not line:
+                continue
+
+            # Check for main header
+            if line == "Genotype Distribution:":
+                is_in_genotype_section = True
+                continue
+
+            if not is_in_genotype_section:
+                continue
+
+            # Check for sample-specific genotype sections
+            if " Genotypes:" in line and not line.startswith("Overall"):
+                current_sample = line.split(" Genotypes:")[0].strip()
+                result["sample_genotypes"][current_sample] = {}
+                is_population = False
+                continue
+            elif line.startswith("Overall:"):
+                current_sample = None
+                is_population = True
+                continue
+
+            # Parse genotype data lines
             if ":" in line:
                 try:
-                    key, value = line.split(":")
+                    key, value = line.split(":", 1)
                     key = key.strip()
                     value = value.strip()
 
+                    # Remove leading spaces for indented lines
+                    if key.startswith("  "):
+                        key = key[2:]
+
+                    # Parse value (count and percentage)
                     if " " in value and "(" in value:
                         parts = value.split()
                         count = int(parts[0])
-                        percent = float(parts[1][1:-2])  # Remove parentheses and percentage sign
-                        result["genotype_dist"][key] = (count, percent)
+                        percent_str = parts[1]
+                        if percent_str.startswith("(") and percent_str.endswith("%)"):
+                            percent = float(percent_str[1:-2])  # Remove (%) wrapper
+                        else:
+                            percent = 0.0
+                        genotype_data = (count, percent)
                     else:
-                        result["genotype_dist"][key] = (int(value), 0.0)
+                        try:
+                            genotype_data = (int(value), 0.0)
+                        except ValueError:
+                            continue
+
+                    # Store in appropriate location
+                    if current_sample:
+                        # Sample-specific genotype
+                        result["sample_genotypes"][current_sample][key] = genotype_data
+                    elif is_population:
+                        # Population-level genotype
+                        result["population_genotypes"][key] = genotype_data
+                    else:
+                        # Legacy single-sample format (caller mode)
+                        result["genotype_dist"][key] = genotype_data
+
                 except (ValueError, IndexError):
                     continue
 
