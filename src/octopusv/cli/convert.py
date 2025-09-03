@@ -214,6 +214,12 @@ def correct(
     typer.echo("")
     typer.echo("SVCF format contains additional fields for internal processing.")
     typer.echo("Standard VCF tools may not recognize these custom fields.")
+    typer.echo("")
+    typer.echo("NOTE: Some BND events may remain unconverted - this is intentional.")
+    typer.echo("OctopuSV only converts breakends with high confidence to avoid misclassification.")
+    typer.echo("Remaining BNDs likely represent complex structural variations that require")
+    typer.echo("specialized analysis beyond simple SV type conversion.")
+    typer.echo("If not critical for your analysis, these remained BNDs can be filtered out downstream.")
 
 
 def find_mate_bnd_events(events, pos_tolerance=3):

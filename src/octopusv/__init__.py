@@ -1,4 +1,4 @@
-"""Top-level package for OctopusV."""
+"""Top-level package for OctopuSV."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 __PACKAGE_NAME__ = "octopusv"
