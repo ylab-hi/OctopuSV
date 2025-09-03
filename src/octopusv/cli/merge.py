@@ -242,13 +242,21 @@ def merge(
         )
 
     # Write results with enhanced ordering consistency
-    sv_merger.write_results(output_file, results, contigs, mode, name_mapper)
+    sv_merger.write_results(output_file, results, contigs, mode, name_mapper, input_filenames)
 
     # Provide detailed success message
     typer.echo(f"Successfully merged {len(results)} events from {len(all_input_files)} input files.")
     typer.echo(f"Merged results written to {output_file}")
     if name_mapper:
         typer.echo(f"SOURCES field and SAMPLE data are ordered consistently according to input file sequence.")
+
+    typer.echo("")
+    typer.echo("IMPORTANT: The output is in SVCF format (OctopuSV intermediate format).")
+    typer.echo("For downstream analysis with bcftools/vcftools, please convert first:")
+    typer.echo(f"  octopusv svcf2vcf -i {output_file} -o {output_file.with_suffix('.vcf')}")
+    typer.echo("")
+    typer.echo("SVCF format contains additional fields for internal processing.")
+    typer.echo("Standard VCF tools may not recognize these custom fields.")
 
     # Generate UpSet plot if requested
     if upsetr:
