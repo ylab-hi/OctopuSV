@@ -9,8 +9,42 @@ class SVCFtoVCFConverter:
             vcf_content += self._convert_event_to_vcf(event)
         return vcf_content
 
+    def _extract_original_definitions_from_svcf(self):
+        """Extract original header definitions from SVCF file"""
+        header_definitions = {
+            'filter_lines': [],
+            'info_lines': [],
+            'format_lines': [],
+            'other_lines': []
+        }
+
+        with open(self.input_svcf_file) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("#CHROM") or not line.startswith('##'):
+                    break
+
+                if line.startswith('##FILTER=') and 'PASS' not in line:
+                    # Skip OctopuSV default PASS filter, keep original filters
+                    header_definitions['filter_lines'].append(line)
+                elif line.startswith('##INFO=') and not any(x in line for x in
+                                                            ['SVTYPE', 'END', 'SVLEN', 'CHR2', 'SUPPORT', 'SVMETHOD',
+                                                             'STRAND', 'RNAMES', 'RTID', 'AF']):
+                    # Keep original INFO fields, skip OctopuSV defaults
+                    header_definitions['info_lines'].append(line)
+                elif line.startswith('##FORMAT=') and not any(
+                        x in line for x in ['GT', 'AD', 'DP', 'LN', 'ST', 'QV', 'TY', 'ID', 'SC', 'REF', 'ALT', 'CO']):
+                    # Keep original FORMAT fields, skip our defaults
+                    header_definitions['format_lines'].append(line)
+
+        return header_definitions
+
     def _generate_vcf_header(self):
-        # read contig info from SVCF
+        """Generate VCF header with original definitions from SVCF"""
+        # Extract original definitions from SVCF
+        original_defs = self._extract_original_definitions_from_svcf()
+
+        # Read contig info from SVCF
         contig_lines = ""
         with open(self.input_svcf_file) as f:
             for line in f:
@@ -19,8 +53,24 @@ class SVCFtoVCFConverter:
                 elif line.startswith("#CHROM"):
                     break
 
-        return f"""##fileformat=VCFv4.2
-{contig_lines}##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
+        # Build header with original definitions
+        header = f"""##fileformat=VCFv4.2
+{contig_lines}"""
+
+        # Add original FILTER definitions first
+        for filter_line in original_defs['filter_lines']:
+            header += filter_line + "\n"
+
+        # Add standard FILTER if not already present
+        if not any('PASS' in line for line in original_defs['filter_lines']):
+            header += "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+
+        # Add original INFO definitions
+        for info_line in original_defs['info_lines']:
+            header += info_line + "\n"
+
+        # Add our standard INFO definitions
+        header += """##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
 ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
 ##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Difference in length between REF and ALT alleles">
 ##INFO=<ID=CHR2,Number=1,Type=String,Description="Chromosome for end coordinate">
@@ -32,11 +82,21 @@ class SVCFtoVCFConverter:
 ##ALT=<ID=DUP,Description="Duplication">
 ##ALT=<ID=INS,Description="Insertion">
 ##ALT=<ID=TRA,Description="Translocation">
-##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##ALT=<ID=BND,Description="Breakend">
+"""
+
+        # Add original FORMAT definitions
+        for format_line in original_defs['format_lines']:
+            header += format_line + "\n"
+
+        # Add our standard FORMAT definitions
+        header += """##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">
 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate read depth">
 ##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample\n"""
+
+        return header
 
     def _convert_event_to_vcf(self, event):
         chrom = event.chrom
@@ -47,13 +107,32 @@ class SVCFtoVCFConverter:
         qual = event.quality if hasattr(event, "quality") else "."
         filter = event.filter if hasattr(event, "filter") else "PASS"
 
-        # 调整插入的 END
-        end_pos = event.pos if event.sv_type == "INS" else event.end_pos
+        # Start with SVTYPE
+        info_fields = [f"SVTYPE={event.sv_type}"]
 
-        info_fields = [f"SVTYPE={event.sv_type}", f"END={end_pos}"]
+        # Handle END field - avoid END < POS coordinate issues
+        if event.sv_type in ["BND"]:
+            # BND events don't use END field, coordinates are in ALT field
+            pass
+        elif event.sv_type == "INS":
+            # For insertions, END should equal POS
+            end_pos = event.pos
+            info_fields.append(f"END={end_pos}")
+        elif event.sv_type in ["TRA"]:
+            # For translocation events, check if END would cause coordinate issues
+            if hasattr(event, 'end_pos') and event.end_pos < pos:
+                # Skip END field when END < POS to avoid bcftools warnings
+                # Translocation coordinates are already in ALT field anyway
+                pass
+            else:
+                info_fields.append(f"END={event.end_pos}")
+        else:
+            # For DEL, DUP, INV - use actual end position
+            end_pos = event.end_pos
+            info_fields.append(f"END={end_pos}")
 
-        # 调整删除和插入的 SVLEN
-        if "SVLEN" in event.info:
+        # Handle SVLEN calculation
+        if "SVLEN" in event.info and event.info["SVLEN"] != ".":
             svlen_str = event.info["SVLEN"]
             try:
                 svlen = int(svlen_str.strip())
@@ -61,17 +140,27 @@ class SVCFtoVCFConverter:
                     svlen = -abs(svlen)
                 elif event.sv_type == "INS":
                     svlen = abs(svlen)
-                info_fields.append(f"SVLEN={svlen}")
-            except ValueError:
-                pass  # 如果 SVLEN 不是有效的整数，跳过
+                elif event.sv_type == "BND":
+                    # BND events typically don't have meaningful SVLEN
+                    pass  # Don't add SVLEN for BND
+                else:
+                    # DUP, INV, TRA keep original value
+                    pass
 
-        if "CHR2" in event.info:
+                # Only add SVLEN for non-BND events
+                if event.sv_type != "BND":
+                    info_fields.append(f"SVLEN={svlen}")
+            except ValueError:
+                pass  # Skip invalid SVLEN values
+
+        # Add other INFO fields only if they have meaningful values
+        if "CHR2" in event.info and event.info["CHR2"] != "." and event.info["CHR2"]:
             info_fields.append(f"CHR2={event.info['CHR2']}")
-        if "SUPPORT" in event.info:
+        if "SUPPORT" in event.info and event.info["SUPPORT"] != "." and event.info["SUPPORT"]:
             info_fields.append(f"SUPPORT={event.info['SUPPORT']}")
-        if "SVMETHOD" in event.info:
+        if "SVMETHOD" in event.info and event.info["SVMETHOD"] != "." and event.info["SVMETHOD"]:
             info_fields.append(f"SVMETHOD={event.info['SVMETHOD']}")
-        if "STRAND" in event.info:
+        if "STRAND" in event.info and event.info["STRAND"] != "." and event.info["STRAND"]:
             info_fields.append(f"STRAND={event.info['STRAND']}")
 
         info = ";".join(info_fields)
