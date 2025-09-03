@@ -205,8 +205,15 @@ def correct(
     )
 
     # Write the transformed events to the output file
-    write_sv_vcf(contig_lines, all_transformed_events, output_file)
+    write_sv_vcf(contig_lines, all_transformed_events, output_file, str(input_file))
     typer.echo(f"Corrected SV events written to {output_file}")
+    typer.echo("")
+    typer.echo("IMPORTANT: The output is in SVCF format (OctopuSV intermediate format).")
+    typer.echo("For downstream analysis with bcftools/vcftools, please convert first:")
+    typer.echo(f"  octopusv svcf2vcf -i {output_file} -o {output_file.with_suffix('.vcf')}")
+    typer.echo("")
+    typer.echo("SVCF format contains additional fields for internal processing.")
+    typer.echo("Standard VCF tools may not recognize these custom fields.")
 
 
 def find_mate_bnd_events(events, pos_tolerance=3):
