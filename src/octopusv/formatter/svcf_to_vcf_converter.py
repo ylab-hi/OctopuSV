@@ -11,31 +11,28 @@ class SVCFtoVCFConverter:
 
     def _extract_original_definitions_from_svcf(self):
         """Extract original header definitions from SVCF file"""
-        header_definitions = {
-            'filter_lines': [],
-            'info_lines': [],
-            'format_lines': [],
-            'other_lines': []
-        }
+        header_definitions = {"filter_lines": [], "info_lines": [], "format_lines": [], "other_lines": []}
 
         with open(self.input_svcf_file) as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("#CHROM") or not line.startswith('##'):
+                if line.startswith("#CHROM") or not line.startswith("##"):
                     break
 
-                if line.startswith('##FILTER=') and 'PASS' not in line:
+                if line.startswith("##FILTER=") and "PASS" not in line:
                     # Skip OctopuSV default PASS filter, keep original filters
-                    header_definitions['filter_lines'].append(line)
-                elif line.startswith('##INFO=') and not any(x in line for x in
-                                                            ['SVTYPE', 'END', 'SVLEN', 'CHR2', 'SUPPORT', 'SVMETHOD',
-                                                             'STRAND', 'RNAMES', 'RTID', 'AF']):
+                    header_definitions["filter_lines"].append(line)
+                elif line.startswith("##INFO=") and not any(
+                    x in line
+                    for x in ["SVTYPE", "END", "SVLEN", "CHR2", "SUPPORT", "SVMETHOD", "STRAND", "RNAMES", "RTID", "AF"]
+                ):
                     # Keep original INFO fields, skip OctopuSV defaults
-                    header_definitions['info_lines'].append(line)
-                elif line.startswith('##FORMAT=') and not any(
-                        x in line for x in ['GT', 'AD', 'DP', 'LN', 'ST', 'QV', 'TY', 'ID', 'SC', 'REF', 'ALT', 'CO']):
+                    header_definitions["info_lines"].append(line)
+                elif line.startswith("##FORMAT=") and not any(
+                    x in line for x in ["GT", "AD", "DP", "LN", "ST", "QV", "TY", "ID", "SC", "REF", "ALT", "CO"]
+                ):
                     # Keep original FORMAT fields, skip our defaults
-                    header_definitions['format_lines'].append(line)
+                    header_definitions["format_lines"].append(line)
 
         return header_definitions
 
@@ -58,15 +55,15 @@ class SVCFtoVCFConverter:
 {contig_lines}"""
 
         # Add original FILTER definitions first
-        for filter_line in original_defs['filter_lines']:
+        for filter_line in original_defs["filter_lines"]:
             header += filter_line + "\n"
 
         # Add standard FILTER if not already present
-        if not any('PASS' in line for line in original_defs['filter_lines']):
-            header += "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+        if not any("PASS" in line for line in original_defs["filter_lines"]):
+            header += '##FILTER=<ID=PASS,Description="All filters passed">\n'
 
         # Add original INFO definitions
-        for info_line in original_defs['info_lines']:
+        for info_line in original_defs["info_lines"]:
             header += info_line + "\n"
 
         # Add our standard INFO definitions
@@ -86,7 +83,7 @@ class SVCFtoVCFConverter:
 """
 
         # Add original FORMAT definitions
-        for format_line in original_defs['format_lines']:
+        for format_line in original_defs["format_lines"]:
             header += format_line + "\n"
 
         # Add our standard FORMAT definitions
@@ -120,7 +117,7 @@ class SVCFtoVCFConverter:
             info_fields.append(f"END={end_pos}")
         elif event.sv_type in ["TRA"]:
             # For translocation events, always include END if it exists
-            if hasattr(event, 'end_pos') and event.end_pos is not None:
+            if hasattr(event, "end_pos") and event.end_pos is not None:
                 info_fields.append(f"END={event.end_pos}")
         else:
             # For DEL, DUP, INV - use actual end position

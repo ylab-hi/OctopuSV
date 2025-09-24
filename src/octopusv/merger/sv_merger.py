@@ -345,7 +345,25 @@ class SVMerger:
                     # Step 4: Generate SOURCES field
                     display_sources = ",".join(sources_in_order)
 
-                    # Step 5: Prepare INFO field with ordered SOURCES
+                    # Step 5: Collect original IDs for SOURCE_IDS field
+                    source_ids_in_order = []
+                    for input_file in self.all_input_files:
+                        input_basename = os.path.basename(input_file)
+                        if input_basename in event_source_basenames:
+                            # Get corresponding sample data to extract original ID
+                            if input_basename in source_to_sample:
+                                _, _, sample_data = source_to_sample[input_basename]
+                                if isinstance(sample_data, dict):
+                                    original_id = sample_data.get('ID', 'unknown')
+                                else:
+                                    original_id = 'unknown'
+                            else:
+                                original_id = 'unknown'
+                            source_ids_in_order.append(original_id)
+
+                    display_source_ids = ",".join(source_ids_in_order)
+
+                    # Prepare INFO field with ordered SOURCES and SOURCE_IDS
                     info_items = []
                     for k, v in event.info.items():
                         if k == "SOURCES":
@@ -356,6 +374,9 @@ class SVMerger:
                     info_field = ";".join(info_items)
                     if "SOURCES" not in info_field:
                         info_field += f";SOURCES={display_sources}"
+
+                    # Add SOURCE_IDS field
+                    info_field += f";SOURCE_IDS={display_source_ids}"
 
                     # Step 6: Get FORMAT field
                     format_field = event.format
@@ -437,6 +458,10 @@ class SVMerger:
             # Add SOURCES field definition for merged results
             file_handle.write(
                 '##INFO=<ID=SOURCES,Number=.,Type=String,Description="List of input files that support this variant">\n')
+
+            # Add SOURCE_IDS field definition for merged results
+            file_handle.write(
+                '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers">\n')
 
             # Write the column header line
             sample_names = ["SAMPLE"]

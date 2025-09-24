@@ -62,7 +62,8 @@ def get_octopus_default_definitions():
             '##INFO=<ID=RTID,Number=1,Type=String,Description="Associated ID for reciprocal translocations if available">',
             '##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">',
             '##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">',
-            '##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">'
+            '##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">' ,
+            '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers">'
         ],
         'format_lines': [
             '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
