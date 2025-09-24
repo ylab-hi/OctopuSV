@@ -7,16 +7,22 @@
 [![PyPI version](https://badge.fury.io/py/octopusv.svg)](https://badge.fury.io/py/octopusv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**OctopuSV** is a high-performance structural variant (SV) analysis toolkit designed to standardize ambiguous SV annotations (e.g., BNDs), flexibly integrate multiple callers across samples or platforms, and benchmark results against trusted truth sets. With support for both **single-sample** and **multi-sample** workflows, OctopuSV enables robust and scalable SV comparison, correction, and visualization in real or simulated genomic datasets.
+**OctopuSV** solves three critical problems in structural variant (SV) analysis:
+
+1. **Smart BND standardization** - Converts paired BND records into standard SV types (DEL/INV/DUP/TRA), while preserving potential complex rearrangements as BNDs
+2. **Multi-caller integration** - Merge SVs from different tools (Manta, Sniffles, PBSV, etc.) with flexible logic 
+3. **Somatic variant calling** - Extract tumor-specific SVs by comparing tumor vs normal samples
+
+Whether you're analyzing single samples, cohorts, or tumor/normal pairs, OctopuSV standardizes your workflow from raw calls to publication-ready results.
 
 ## Key Features
 
-* **BND Correction**: Converts ambiguous breakend (BND) records into canonical SV types (DEL, INV, DUP, TRA), with translocation subtype classification
-* **Flexible Multi-sample Merging**: Boolean logic-based merge of SVs across multiple samples or callers
-* **Multi-caller & Multi-platform Integration**: Works seamlessly across Illumina, PacBio, ONT callers like Manta, LUMPY, SvABA, DELLY, PBSV, Sniffles, etc.
-* **Benchmarking**: Compare SVs to truth sets with precision/recall/F1 metrics using GIAB-style evaluation
-* **Statistical Summaries**: Profile SV distribution, quality, and size
-* **Publication-ready Visualizations**: Output interactive HTML reports and static plots
+* **One-command somatic calling**: Extract tumor-specific SVs with `octopusv somatic`
+* **Flexible SV merging**: Boolean logic, intersection, union, or custom expressions across samples/callers
+* **BND standardization**: Converts complex breakend notation to standard SV types
+* **Cross-platform support**: Works with Illumina, PacBio, ONT data from 10+ popular callers
+* **Built-in benchmarking**: Compare against truth sets with precision/recall metrics
+* **Rich visualizations**: Interactive HTML reports and publication-ready plots
 
 ## Installation
 
@@ -44,27 +50,52 @@ octopusv correct -i input.vcf -o output.vcf --min-svlen 50 --max-svlen 100000 --
 ### 2. Merge SV Calls (Multi-caller or Multi-sample)
 
 ```bash
-# Merge across callers from same sample
-octopusv merge -i manta.svcf lumpy.svcf -o merged.svcf --mode caller --caller-names Manta,LUMPY --intersect
+# Basic intersection: SVs found by ALL callers
+octopusv merge -i manta.svcf sniffles.svcf pbsv.svcf -o intersection.svcf --intersect
 
-# Merge across samples
+# Union: SVs found by ANY caller  
+octopusv merge -i caller1.svcf caller2.svcf caller3.svcf -o union.svcf --union
+
+# Specific caller: SVs unique to one caller
+octopusv merge -i manta.svcf sniffles.svcf -o manta_specific.svcf --specific manta.svcf
+
+# Minimum support: SVs supported by at least N callers
+octopusv merge -i a.svcf b.svcf c.svcf d.svcf -o supported.svcf --min-support 3
+
+# Complex Boolean logic: (A AND B) but NOT (C OR D)
+octopusv merge -i A.svcf B.svcf C.svcf D.svcf \
+  --expression "(A AND B) AND NOT (C OR D)" -o filtered.svcf
+
+# Multi-sample mode with custom names
 octopusv merge -i sample1.svcf sample2.svcf sample3.svcf \
-  --mode sample --sample-names HG001,HG002,HG003 \
-  --min-support 2 -o shared.svcf
+  --mode sample --sample-names Patient1,Patient2,Patient3 \
+  --min-support 2 -o cohort.svcf
 
-# Complex logic: A AND B but not C
-octopusv merge -i A.svcf B.svcf C.svcf \
-  --expression "(A AND B) AND NOT C" -o result.svcf
-
-# Generate UpSet plot
-octopusv merge -i a.svcf b.svcf c.svcf -o merged.svcf --intersect --upsetr --upsetr-output intersection.png
+# Generate intersection plot
+octopusv merge -i a.svcf b.svcf c.svcf -o merged.svcf --intersect \
+  --upsetr --upsetr-output venn_diagram.png
 ```
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/up_upset.png" width="70%" height="70%">
 </p>
 
-### 3. Benchmark Against Truth Sets
+### 3. Somatic SV Calling (NEW!)
+
+Extract tumor-specific structural variants by comparing tumor and normal samples:
+```bash
+# Basic somatic calling
+octopusv somatic -t tumor.svcf -n normal.svcf -o somatic.svcf
+
+# With custom matching parameters
+octopusv somatic -t tumor.svcf -n normal.svcf -o somatic.svcf \
+  --max-distance 100 --min-jaccard 0.8
+
+# Convert to standard VCF for downstream analysis
+octopusv svcf2vcf -i somatic.svcf -o somatic.vcf
+```
+
+### 4. Benchmark Against Truth Sets
 
 ```bash
 octopusv benchmark truth.vcf calls.svcf \
@@ -75,7 +106,7 @@ octopusv benchmark truth.vcf calls.svcf \
   --size-min 50 --size-max 50000
 ```
 
-### 4. Generate Statistics and Visualizations
+### 5. Generate Statistics and Visualizations
 
 ```bash
 # Basic stat collection
@@ -99,7 +130,7 @@ The `--report` flag outputs an interactive HTML report:
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/html_example.png" width="70%" height="70%">
 </p>
 
-### 5. Format Conversion
+### 6. Format Conversion
 
 ```bash
 # To BED
@@ -137,16 +168,6 @@ OctopusV generates publication-ready visualizations:
 </p>
 
 ---
-
-## Application Scenarios
-
-OctopuSV was developed to address several practical needs in SV research:
-
-* Standardizing SVs with ambiguous BND notations
-* Enabling precise cohort-level comparisons (multi-sample mode)
-* Supporting accurate benchmarking with real/simulated truth sets
-* Integrating and comparing SVs across platforms (e.g., Illumina + ONT)
-* Automating large-scale SV analysis workflows (via TentacleSV)
 
 See the companion pipeline: [TentacleSV](https://github.com/ylab-hi/TentacleSV)
 
