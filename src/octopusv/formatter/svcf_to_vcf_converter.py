@@ -119,12 +119,8 @@ class SVCFtoVCFConverter:
             end_pos = event.pos
             info_fields.append(f"END={end_pos}")
         elif event.sv_type in ["TRA"]:
-            # For translocation events, check if END would cause coordinate issues
-            if hasattr(event, 'end_pos') and event.end_pos < pos:
-                # Skip END field when END < POS to avoid bcftools warnings
-                # Translocation coordinates are already in ALT field anyway
-                pass
-            else:
+            # For translocation events, always include END if it exists
+            if hasattr(event, 'end_pos') and event.end_pos is not None:
                 info_fields.append(f"END={event.end_pos}")
         else:
             # For DEL, DUP, INV - use actual end position
