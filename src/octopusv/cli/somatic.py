@@ -1,6 +1,5 @@
 from pathlib import Path
 import typer
-from octopusv.cli.merge import merge
 
 
 def somatic(
@@ -16,9 +15,13 @@ def somatic(
 ):
     """Extract somatic SVs by finding tumor-specific variants (tumor - normal intersection)."""
 
+    # Import merge function and call it directly
+    from octopusv.cli.merge import merge
+
     # Call merge with specific logic: extract SVs only present in tumor
     merge(
         input_files=[tumor_file, normal_file],
+        input_option=None,  # Set to None explicitly
         output_file=output_file,
         mode="sample",
         sample_names="tumor,normal",
