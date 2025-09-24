@@ -1,4 +1,6 @@
 .mypy_cache/
+test_env/
+venv/
 /.coverage
 /.coverage.*
 /.nox/
