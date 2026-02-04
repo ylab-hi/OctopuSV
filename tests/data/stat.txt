@@ -1,0 +1,304 @@
+OctopusV report
+----------------------------------------
+
+>>>>>>> Input
+
+input file = cutesv.svcf
+output file = stat.txt
+
+>>>>>>> Type Analysis
+
+SV Type Analysis               = 
+TRA                            = 2156 (0.40%)
+INV                            = 526686 (97.11%)
+INS                            = 4609 (0.85%)
+DEL                            = 7088 (1.31%)
+DUP                            = 1816 (0.33%)
+
+
+>>>>>>> Size Analysis
+
+Total SVs analyzed             = 542355
+Minimum size                   = 50 bp
+Maximum size                   = 245707056 bp
+Mean size                      = 280538.64 bp
+Median size                    = 449 bp
+Standard deviation             = 5827013.71 bp
+
+Size distribution              = 
+>10 kb                         = 4503
+1 kb-10 kb                     = 74926
+101-500 bp                     = 294801
+51-100 bp                      = 11539
+501-1 kb                       = 156338
+0-50 bp                        = 248
+
+
+>>>>>>> Chromosome Analysis
+
+Chromosome Distribution        = 
+chr1                           = 44053 SVs (Density: 440.53 SVs/Mb)
+GL000008.2                     = 29 SVs (Density: 29000000.00 SVs/Mb)
+GL000009.2                     = 115 SVs (Density: 115000000.00 SVs/Mb)
+GL000194.1                     = 9 SVs (Density: 9000000.00 SVs/Mb)
+GL000214.1                     = 28 SVs (Density: 28000000.00 SVs/Mb)
+GL000216.2                     = 40 SVs (Density: 40000000.00 SVs/Mb)
+GL000218.1                     = 118 SVs (Density: 118000000.00 SVs/Mb)
+GL000219.1                     = 27 SVs (Density: 27000000.00 SVs/Mb)
+GL000220.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+GL000221.1                     = 25 SVs (Density: 25000000.00 SVs/Mb)
+GL000224.1                     = 47 SVs (Density: 47000000.00 SVs/Mb)
+GL000225.1                     = 92 SVs (Density: 92000000.00 SVs/Mb)
+GL000253.2                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL339449.2                     = 6 SVs (Density: 6000000.00 SVs/Mb)
+GL383530.1                     = 10 SVs (Density: 10000000.00 SVs/Mb)
+GL383549.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+GL383566.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270330.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270336.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270337.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270435.1                     = 6 SVs (Density: 6000000.00 SVs/Mb)
+KI270442.1                     = 212 SVs (Density: 212000000.00 SVs/Mb)
+KI270466.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270467.1                     = 19 SVs (Density: 19000000.00 SVs/Mb)
+KI270538.1                     = 14 SVs (Density: 14000000.00 SVs/Mb)
+KI270591.1                     = 11 SVs (Density: 11000000.00 SVs/Mb)
+KI270709.1                     = 21 SVs (Density: 21000000.00 SVs/Mb)
+KI270711.1                     = 17 SVs (Density: 17000000.00 SVs/Mb)
+KI270713.1                     = 33 SVs (Density: 33000000.00 SVs/Mb)
+KI270718.1                     = 20 SVs (Density: 20000000.00 SVs/Mb)
+KI270719.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270720.1                     = 11 SVs (Density: 11000000.00 SVs/Mb)
+KI270722.1                     = 17 SVs (Density: 17000000.00 SVs/Mb)
+KI270723.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270724.1                     = 8 SVs (Density: 8000000.00 SVs/Mb)
+KI270728.1                     = 9 SVs (Density: 9000000.00 SVs/Mb)
+KI270729.1                     = 12 SVs (Density: 12000000.00 SVs/Mb)
+KI270733.1                     = 13 SVs (Density: 13000000.00 SVs/Mb)
+KI270743.1                     = 92 SVs (Density: 92000000.00 SVs/Mb)
+KI270744.1                     = 30 SVs (Density: 30000000.00 SVs/Mb)
+KI270750.1                     = 44 SVs (Density: 44000000.00 SVs/Mb)
+KI270751.1                     = 76 SVs (Density: 76000000.00 SVs/Mb)
+KI270753.1                     = 7 SVs (Density: 7000000.00 SVs/Mb)
+KI270776.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+KI270779.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270787.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270789.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270792.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270804.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270807.1                     = 27 SVs (Density: 27000000.00 SVs/Mb)
+KI270810.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270846.1                     = 19 SVs (Density: 19000000.00 SVs/Mb)
+KI270847.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270852.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270853.1                     = 10 SVs (Density: 10000000.00 SVs/Mb)
+KI270857.1                     = 14 SVs (Density: 14000000.00 SVs/Mb)
+KI270858.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270860.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270871.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270877.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270905.1                     = 20 SVs (Density: 20000000.00 SVs/Mb)
+KI270908.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+KN196475.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KN196487.1                     = 14 SVs (Density: 14000000.00 SVs/Mb)
+KN538362.1                     = 17 SVs (Density: 17000000.00 SVs/Mb)
+KN538364.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KN538370.1                     = 7 SVs (Density: 7000000.00 SVs/Mb)
+KN538372.1                     = 30 SVs (Density: 30000000.00 SVs/Mb)
+KQ031388.1                     = 28 SVs (Density: 28000000.00 SVs/Mb)
+KQ090020.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+KQ458386.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KQ983257.1                     = 25 SVs (Density: 25000000.00 SVs/Mb)
+KV575244.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KV880764.1                     = 25 SVs (Density: 25000000.00 SVs/Mb)
+KV880765.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KZ208909.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KZ208912.1                     = 12 SVs (Density: 12000000.00 SVs/Mb)
+KZ208919.1                     = 14 SVs (Density: 14000000.00 SVs/Mb)
+KZ208920.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KZ559101.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KZ559115.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KZ559116.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+ML143341.1                     = 29 SVs (Density: 29000000.00 SVs/Mb)
+ML143347.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+ML143348.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+ML143350.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+ML143353.1                     = 25 SVs (Density: 25000000.00 SVs/Mb)
+ML143354.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+ML143355.1                     = 28 SVs (Density: 28000000.00 SVs/Mb)
+ML143358.1                     = 62 SVs (Density: 62000000.00 SVs/Mb)
+ML143360.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+ML143370.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+ML143371.1                     = 34 SVs (Density: 34000000.00 SVs/Mb)
+ML143375.1                     = 9 SVs (Density: 9000000.00 SVs/Mb)
+ML143379.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+ML143380.1                     = 28 SVs (Density: 28000000.00 SVs/Mb)
+ML143381.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+chr10                          = 35956 SVs (Density: 359.56 SVs/Mb)
+chr11                          = 26341 SVs (Density: 263.41 SVs/Mb)
+chr12                          = 21545 SVs (Density: 215.45 SVs/Mb)
+chr13                          = 8666 SVs (Density: 86.66 SVs/Mb)
+chr14                          = 26813 SVs (Density: 268.13 SVs/Mb)
+chr15                          = 12140 SVs (Density: 121.40 SVs/Mb)
+chr16                          = 10821 SVs (Density: 108.21 SVs/Mb)
+chr17                          = 26807 SVs (Density: 268.07 SVs/Mb)
+chr18                          = 14429 SVs (Density: 144.29 SVs/Mb)
+chr19                          = 18214 SVs (Density: 182.14 SVs/Mb)
+chr2                           = 25844 SVs (Density: 258.44 SVs/Mb)
+chr20                          = 15228 SVs (Density: 152.28 SVs/Mb)
+chr21                          = 6430 SVs (Density: 64.30 SVs/Mb)
+chr22                          = 3064 SVs (Density: 30.64 SVs/Mb)
+chr3                           = 32391 SVs (Density: 323.91 SVs/Mb)
+chr4                           = 20486 SVs (Density: 204.86 SVs/Mb)
+chr5                           = 32599 SVs (Density: 325.99 SVs/Mb)
+chr6                           = 30486 SVs (Density: 304.86 SVs/Mb)
+chr7                           = 53628 SVs (Density: 536.28 SVs/Mb)
+chr8                           = 39754 SVs (Density: 397.54 SVs/Mb)
+chr9                           = 18733 SVs (Density: 187.33 SVs/Mb)
+chrM                           = 4778 SVs (Density: 4778000000.00 SVs/Mb)
+chrX                           = 10645 SVs (Density: 106.45 SVs/Mb)
+GL000208.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+GL000251.2                     = 7 SVs (Density: 7000000.00 SVs/Mb)
+GL000252.2                     = 8 SVs (Density: 8000000.00 SVs/Mb)
+GL000255.2                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL000256.2                     = 12 SVs (Density: 12000000.00 SVs/Mb)
+GL000257.2                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL383531.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL383542.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL383576.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+GL383577.2                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL383578.2                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL383580.2                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL877875.1                     = 18 SVs (Density: 18000000.00 SVs/Mb)
+GL949742.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+GL949746.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL949752.1                     = 6 SVs (Density: 6000000.00 SVs/Mb)
+JH159137.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270320.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270333.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270438.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270519.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+KI270580.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270584.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270588.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270589.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270590.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270706.1                     = 92 SVs (Density: 92000000.00 SVs/Mb)
+KI270707.1                     = 22 SVs (Density: 22000000.00 SVs/Mb)
+KI270708.1                     = 25 SVs (Density: 25000000.00 SVs/Mb)
+KI270710.1                     = 18 SVs (Density: 18000000.00 SVs/Mb)
+KI270712.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270714.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270725.1                     = 6 SVs (Density: 6000000.00 SVs/Mb)
+KI270726.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270731.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270732.1                     = 13 SVs (Density: 13000000.00 SVs/Mb)
+KI270735.1                     = 42 SVs (Density: 42000000.00 SVs/Mb)
+KI270736.1                     = 13 SVs (Density: 13000000.00 SVs/Mb)
+KI270742.1                     = 34 SVs (Density: 34000000.00 SVs/Mb)
+KI270745.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270746.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+KI270749.1                     = 14 SVs (Density: 14000000.00 SVs/Mb)
+KI270754.1                     = 7 SVs (Density: 7000000.00 SVs/Mb)
+KI270757.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+KI270764.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270766.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270771.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270772.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270777.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270781.1                     = 7 SVs (Density: 7000000.00 SVs/Mb)
+KI270782.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270795.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270797.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270803.1                     = 19 SVs (Density: 19000000.00 SVs/Mb)
+KI270805.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+KI270808.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270815.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270816.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270817.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270827.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+KI270830.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270832.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+KI270841.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270844.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270854.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270867.1                     = 9 SVs (Density: 9000000.00 SVs/Mb)
+KI270870.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270902.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270903.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KI270904.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270924.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270927.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270937.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+KI270938.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KN196472.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KN196477.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KN196478.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KN196479.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KN196482.1                     = 7 SVs (Density: 7000000.00 SVs/Mb)
+KN538361.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KN538363.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KN538367.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KQ031389.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+KQ090014.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KQ090017.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KQ090019.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KQ090024.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KQ983255.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KV766193.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KV766197.1                     = 13 SVs (Density: 13000000.00 SVs/Mb)
+KV766198.1                     = 12 SVs (Density: 12000000.00 SVs/Mb)
+KV880766.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+KV880767.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KV880768.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+KZ208913.1                     = 20 SVs (Density: 20000000.00 SVs/Mb)
+KZ208915.1                     = 6 SVs (Density: 6000000.00 SVs/Mb)
+KZ208921.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KZ208922.1                     = 6 SVs (Density: 6000000.00 SVs/Mb)
+KZ559109.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KZ559111.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+ML143344.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+ML143345.1                     = 3 SVs (Density: 3000000.00 SVs/Mb)
+ML143364.1                     = 32 SVs (Density: 32000000.00 SVs/Mb)
+ML143365.1                     = 4 SVs (Density: 4000000.00 SVs/Mb)
+ML143366.1                     = 13 SVs (Density: 13000000.00 SVs/Mb)
+ML143372.1                     = 14 SVs (Density: 14000000.00 SVs/Mb)
+ML143373.1                     = 5 SVs (Density: 5000000.00 SVs/Mb)
+ML143377.1                     = 21 SVs (Density: 21000000.00 SVs/Mb)
+chrY                           = 51 SVs (Density: 1.02 SVs/Mb)
+
+
+>>>>>>> Qc Analysis
+
+Quality Score (QUAL) Statistics = 
+Number of variants with QUAL   = 250866
+Average QUAL                   = 10.37
+Median QUAL                    = 3.30
+Min QUAL                       = 0.10
+Max QUAL                       = 954.20
+Q1 QUAL                        = 0.50
+Q3 QUAL                        = 11.10
+
+Filter Status                  = 
+PASS                           = 104539 (19.28%)
+q5                             = 437816 (80.72%)
+
+Read Support Statistics        = 
+Number of variants with support info = 542355
+Average Read Support           = 4.90
+Median Read Support            = 4.00
+Min Read Support               = 2.00
+Max Read Support               = 71404.00
+Q1 Read Support                = 3.00
+Q3 Read Support                = 5.00
+
+
+>>>>>>> Genotype Analysis
+
+Genotype Distribution          = 
+1/1                            = 12016 (2.22%)
+0/0                            = 412003 (75.97%)
+0/1                            = 118256 (21.80%)
+./.                            = 80 (0.01%)
+
+

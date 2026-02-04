@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OctopuSV Analysis Report</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e74c3c;
+            --success-color: #38a169;
+            --warning-color: #ed8936;
+            --background-color: #f8f9fa;
+            --surface-color: #ffffff;
+            --text-primary: #2c3e50;
+            --text-secondary: #718096;
+            --border-color: #e2e8f0;
+            --card-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            --card-shadow-hover: 0 20px 40px rgba(0, 0, 0, 0.15);
+            --gradient-primary: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            --gradient-secondary: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            --gradient-accent: linear-gradient(135deg, #3498db 0%, #5dade2 100%);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background: var(--background-color);
+            color: var(--text-primary);
+            font-weight: 400;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 3rem 2rem;
+            background: var(--gradient-primary);
+            color: white;
+            border-radius: 20px;
+            box-shadow: var(--card-shadow);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(255, 255, 255, 0.1) 0%, transparent 100%);
+            pointer-events: none;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1.5rem;
+            border-radius: 50%;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .logo:hover {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        .header h1 {
+            margin: 0 0 1rem 0;
+            font-size: 3rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+            margin: 0.5rem 0;
+            font-weight: 300;
+        }
+
+        .section {
+            background: var(--surface-color);
+            margin-bottom: 2.5rem;
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: var(--card-shadow);
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--gradient-accent);
+        }
+
+        .section:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--card-shadow-hover);
+        }
+
+        .section h2 {
+            color: var(--primary-color);
+            border-bottom: none;
+            padding-bottom: 0;
+            margin: 0 0 2rem 0;
+            font-size: 1.8rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            letter-spacing: -0.01em;
+        }
+
+        .section h2::before {
+            content: '';
+            width: 6px;
+            height: 24px;
+            background: var(--gradient-accent);
+            border-radius: 3px;
+            margin-right: 12px;
+        }
+
+        .section h3 {
+            color: var(--text-primary);
+            margin: 2.5rem 0 1.5rem 0;
+            font-size: 1.4rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+
+        .section h3::before {
+            content: '';
+            width: 4px;
+            height: 18px;
+            background: var(--secondary-color);
+            border-radius: 2px;
+            margin-right: 10px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .stat-card {
+            background: var(--surface-color);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            border: 1px solid var(--border-color);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gradient-secondary);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover::before {
+            transform: translateX(0);
+        }
+
+        .stat-card:hover {
+            transform: translateY(-6px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+            border-color: var(--secondary-color);
+        }
+
+        .stat-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--secondary-color);
+            margin: 1rem 0;
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #f1f5f9;
+            border-radius: 3px;
+            margin: 1rem 0 0.5rem 0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            background: var(--gradient-accent);
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .sample-section {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 1.5rem 0;
+            border-left: 5px solid var(--secondary-color);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        }
+
+        .sample-section:hover {
+            transform: translateX(5px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .sample-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .sample-title::before {
+            content: '👤';
+            margin-right: 8px;
+            font-size: 1.1rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin: 20px 0;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            border: 1px solid var(--border-color);
+        }
+
+        th, td {
+            padding: 16px 20px;
+            text-align: left;
+        }
+
+        th {
+            background: var(--gradient-primary);
+            color: white;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.2s ease;
+        }
+
+        tr:nth-child(even) td {
+            background-color: #f8fafc;
+        }
+
+        tr:hover td {
+            background-color: #e6fffa;
+        }
+
+        .metric-table td:last-child {
+            text-align: right;
+            font-weight: 600;
+            color: var(--secondary-color);
+        }
+
+        .figure-container {
+            margin: 3rem 0;
+            text-align: center;
+            background: var(--surface-color);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--border-color);
+        }
+
+        .figure-container img {
+            max-width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .figure-container img:hover {
+            transform: scale(1.02);
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.15);
+        }
+
+        .figure-caption {
+            margin-top: 1.5rem;
+            font-style: italic;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+            font-style: italic;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 2px dashed var(--border-color);
+        }
+
+        .no-data::before {
+            content: '📊';
+            display: block;
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .info-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background: var(--gradient-accent);
+            color: white;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-left: 1rem;
+        }
+
+        .percentage-badge {
+            background: var(--success-color);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-top: 0.5rem;
+            display: inline-block;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .section {
+                padding: 1.5rem;
+                margin-bottom: 1.5rem;
+            }
+
+            .header {
+                padding: 2rem 1rem;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+
+            .stat-card {
+                padding: 1.5rem;
+            }
+
+            table {
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stat-value {
+                font-size: 1.8rem;
+            }
+        }
+
+        /* Smooth scroll behavior */
+        html {
+            scroll-behavior: smooth;
+        }
+
+        /* Loading animation for progress bars */
+        .progress-fill[style*="width: 0"] {
+            animation: loadProgress 1s ease-out forwards;
+        }
+
+        @keyframes loadProgress {
+            from { width: 0%; }
+        }
+
+        /* Enhanced hover states */
+        .section h2:hover {
+            color: var(--secondary-color);
+            transition: color 0.3s ease;
+        }
+
+        /* Accessibility improvements */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <img src="{{logo_path}}" alt="OctopuSV Logo" class="logo" />
+            <h1>OctopuSV Analysis Report</h1>
+            <p>Generated on: {{ generation_date }}</p>
+            <p>Sample ID: {{ sample_id }}</p>
+        </div>
+
+        <div class="section">
+            <h2>Input Information</h2>
+            <div class="metric-table">
+                <table>
+                    <tr>
+                        <td>Input File</td>
+                        <td>{{ input_file }}</td>
+                    </tr>
+                    <tr>
+                        <td>Output File</td>
+                        <td>{{ output_file }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>SV Type Distribution</h2>
+            <div class="stats-grid">
+                {% for type, (count, percentage) in sv_types.items() %}
+                <div class="stat-card">
+                    <div class="stat-label">{{ type }}</div>
+                    <div class="stat-value">{{ count }}</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {{ percentage }}%"></div>
+                    </div>
+                    <div class="percentage-badge">{{ "%.2f"|format(percentage) }}%</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Size Statistics</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total SVs</div>
+                    <div class="stat-value">{{ total_svs }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Size Range</div>
+                    <div class="stat-value">{{ min_size }} - {{ max_size }} bp</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Mean Size</div>
+                    <div class="stat-value">{{ "%.2f"|format(mean_size) }} bp</div>
+                </div>
+            </div>
+
+            <h3>Size Distribution</h3>
+            <div class="stats-grid">
+                {% for range, count in size_distribution.items() %}
+                <div class="stat-card">
+                    <div class="stat-label">{{ range }}</div>
+                    <div class="stat-value">{{ count }}</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Quality Metrics</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Average QUAL</div>
+                    <div class="stat-value">{{ "%.2f"|format(avg_qual) }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Average Read Support</div>
+                    <div class="stat-value">{{ "%.2f"|format(avg_read_support) }}</div>
+                </div>
+            </div>
+
+            <h3>Filter Status</h3>
+            <div class="stats-grid">
+                {% for status, (count, percentage) in filter_status.items() %}
+                <div class="stat-card">
+                    <div class="stat-label">{{ status }}</div>
+                    <div class="stat-value">{{ count }}</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {{ percentage }}%"></div>
+                    </div>
+                    <div class="percentage-badge">{{ "%.2f"|format(percentage) }}%</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Genotype Distribution</h2>
+
+            {% if sample_genotypes %}
+                {% for sample_name, genotypes in sample_genotypes.items() %}
+                <div class="sample-section">
+                    <div class="sample-title">{{ sample_name }} Genotypes</div>
+                    <div class="stats-grid">
+                        {% for genotype, (count, percentage) in genotypes.items() %}
+                        <div class="stat-card">
+                            <div class="stat-label">{{ genotype }}</div>
+                            <div class="stat-value">{{ count }}</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: {{ percentage }}%"></div>
+                            </div>
+                            <div class="percentage-badge">{{ "%.2f"|format(percentage) }}%</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+
+                {% if population_genotypes %}
+                <h3>Overall Population</h3>
+                <div class="stats-grid">
+                    {% for genotype, (count, percentage) in population_genotypes.items() %}
+                    <div class="stat-card">
+                        <div class="stat-label">{{ genotype }}</div>
+                        <div class="stat-value">{{ count }}</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: {{ percentage }}%"></div>
+                        </div>
+                        <div class="percentage-badge">{{ "%.2f"|format(percentage) }}%</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+            {% elif genotype_dist %}
+                <div class="stats-grid">
+                    {% for genotype, (count, percentage) in genotype_dist.items() %}
+                    <div class="stat-card">
+                        <div class="stat-label">{{ genotype }}</div>
+                        <div class="stat-value">{{ count }}</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: {{ percentage }}%"></div>
+                        </div>
+                        <div class="percentage-badge">{{ "%.2f"|format(percentage) }}%</div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+            {% else %}
+                <div class="no-data">
+                    <div>No genotype data available</div>
+                </div>
+            {% endif %}
+        </div>
+
+        {% if sv_distribution_plot_base64 %}
+        <div class="section">
+            <h2>Structural Variant Distribution</h2>
+            <div class="figure-container">
+                <img src="data:image/png;base64,{{ sv_distribution_plot_base64 }}" alt="SV Distribution Plot" />
+                <p class="figure-caption">Distribution of structural variants by type</p>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if chromosome_coverage_plot_base64 %}
+        <div class="section">
+            <h2>Chromosome Coverage</h2>
+            <div class="figure-container">
+                <img src="data:image/png;base64,{{ chromosome_coverage_plot_base64 }}" alt="Chromosome Coverage Plot" />
+                <p class="figure-caption">Coverage distribution across chromosomes</p>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if size_distribution_plot_base64 %}
+        <div class="section">
+            <h2>Size Distribution</h2>
+            <div class="figure-container">
+                <img src="data:image/png;base64,{{ size_distribution_plot_base64 }}" alt="Size Distribution Plot" />
+                <p class="figure-caption">Size distribution of detected structural variants</p>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if additional_plots %}
+        <div class="section">
+            <h2>Additional Analysis</h2>
+            {% for plot in additional_plots %}
+            <div class="figure-container">
+                <img src="data:image/png;base64,{{ plot.base64_data }}" alt="{{ plot.title }}" />
+                <p class="figure-caption">{{ plot.description }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,186 @@
+[tool.poetry]
+name = "OctopuSV"
+version = "0.2.3"
+description = "OctopuSV: Advanced Structural Variant Analysis Toolkit"
+authors = [
+    "Qingxiang Guo <qingxiang.guo@northwestern.edu>",
+    "Yangyang Li <yangyang.li@northwestern.edu>",
+]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+typer = "^0.12.3"
+click = ">=8.0,<8.1"
+loguru = "^0.7.2"
+rich = "^13.7.1"
+natsort = "^8.4.0"
+pytest-cov = "^4.1.0"
+matplotlib = "^3.9.2"
+seaborn = "^0.13.2"
+jinja2 = "^3.1.5"
+
+
+[tool.poetry.scripts]
+octopusv = "octopusv.cli.cli:app"
+
+[tool.poetry.group.dev.dependencies]
+pytest-sugar = "^1.0.0"
+pytest = "^8.0.2"
+ruff = "^0.7.0"
+ipdb = "^0.13.13"
+mypy = "^1.10.0"
+
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+fix = true
+exclude = [
+    "tasks.py",
+    "tests/*",
+    "build.py",
+    "scripts/*",
+    "noxfile.py",
+    "docs/conf.py",
+
+
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+]
+
+[tool.ruff.lint]
+select = [
+    "ANN",
+    "D",
+    "A",
+    "F",
+    "E",
+    "W",
+    "C90",
+    "I",
+    "UP",
+    "N",
+    "YTT",
+    "TID",
+    "S",
+    "BLE",
+    "FBT",
+    "PLR",
+    "B",
+    "B9",
+    "A",
+    "C4",
+    "T10",
+    "EM",
+    "ICN",
+    "T20",
+    "Q",
+    "RET",
+    "SIM",
+    "ARG",
+    "DTZ",
+    "ERA",
+    "PD",
+    "PGH",
+    "PLC",
+    "PLE",
+    "PLW",
+    "RUF",
+    "PL",
+    "TD",
+    "FIX",
+    "PTH",
+    "TCH",
+    "SLOT",
+    "PT",
+    "PYI",
+    "PIE",
+    "ISC",
+    "FA",
+    "EXE",
+    # "CPY",
+    "COM",
+    "SIM",
+]
+ignore = [
+    "E501",
+    "D203",
+    "D100",
+    "D401",
+    "ANN101",
+    "ANN102",
+    "ANN001",
+    "ANN002",
+    "ANN003",
+    "ANN201",
+    "ANN202",
+    "ANN204",
+    "ANN205",
+    "ANN206",
+    "PGH003",
+    "N802",
+    "N803",
+    "N806",
+    "N815",
+    "EM101",
+    # formater conflict
+    'COM812',
+    'COM819',
+    'D206',
+    'ISC001',
+    'Q000',
+    'Q001',
+    'Q002',
+    'Q003',
+    'W191',
+]
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+# magic-trailing-comma = "respect"
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["chr", "typer.Argument", "typer.Option"]
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = true
+
+[tool.ruff.lint.per-file-ignores]
+
+[tool.ruff.lint.pydocstyle]
+convention = 'google'
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

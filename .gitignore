@@ -1,0 +1,55 @@
+.mypy_cache/
+test_env/
+venv/
+/.coverage
+/.coverage.*
+/.nox/
+/.python-version
+/.pytype/
+/dist/
+/data/
+/build/
+/docs/_build/
+/src/*.egg-info/
+__pycache__/
+
+# editor
+profile/
+.idea/
+.run/
+
+#cmake
+/cmake-build*/
+# jupyter notebook
+*.ipynb
+# bam
+*.sam
+# debug report
+/debuglog/
+.DS*
+
+# profile file
+*.pstat
+
+
+# c++
+*.o
+*.so
+main.cpp
+.vscode
+
+kent
+bin
+compile_commands.json
+.cache
+*.a
+stubs
+*.psl
+test_server/
+bugs/
+docs/apidocs/*
+docs/api/*
+!PxBLAT.ipynb
+.ltex
+.vscode
+.cursorignore

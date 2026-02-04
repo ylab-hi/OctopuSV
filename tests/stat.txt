@@ -1,0 +1,115 @@
+OctopusV report
+----------------------------------------
+
+>>>>>>> Input
+
+input file = test_svim.svcf
+output file = stat.txt
+
+>>>>>>> Type Analysis
+
+SV Type Analysis               = 
+TRA                            = 3 (0.15%)
+DUP                            = 53 (2.65%)
+INV                            = 7 (0.35%)
+DEL                            = 1191 (59.55%)
+INS                            = 746 (37.30%)
+
+
+>>>>>>> Size Analysis
+
+Total SVs analyzed             = 1988
+Minimum size                   = 50 bp
+Maximum size                   = 21350797 bp
+Mean size                      = 12320.49 bp
+Median size                    = 107.0 bp
+Standard deviation             = 479196.39 bp
+
+Size distribution              = 
+>10 kb                         = 31
+51-100 bp                      = 937
+101-500 bp                     = 649
+1 kb-10 kb                     = 196
+501-1 kb                       = 157
+0-50 bp                        = 18
+
+
+>>>>>>> Chromosome Analysis
+
+Chromosome Distribution        = 
+chr1                           = 123 SVs (Density: 1.23 SVs/Mb)
+chr4                           = 154 SVs (Density: 1.54 SVs/Mb)
+chr10                          = 130 SVs (Density: 1.30 SVs/Mb)
+chr12                          = 102 SVs (Density: 1.02 SVs/Mb)
+chr14                          = 64 SVs (Density: 0.64 SVs/Mb)
+chr20                          = 73 SVs (Density: 0.73 SVs/Mb)
+GL000194.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+GL383574.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270519.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270579.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270712.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270725.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270729.1                     = 2 SVs (Density: 2000000.00 SVs/Mb)
+KI270732.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270743.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270750.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270781.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270841.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KI270905.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KQ031387.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KQ759760.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+KZ208921.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+ML143350.1                     = 1 SVs (Density: 1000000.00 SVs/Mb)
+chr2                           = 186 SVs (Density: 1.86 SVs/Mb)
+chr3                           = 128 SVs (Density: 1.28 SVs/Mb)
+chr5                           = 125 SVs (Density: 1.25 SVs/Mb)
+chr6                           = 133 SVs (Density: 1.33 SVs/Mb)
+chr7                           = 54 SVs (Density: 0.54 SVs/Mb)
+chr8                           = 99 SVs (Density: 0.99 SVs/Mb)
+chr9                           = 78 SVs (Density: 0.78 SVs/Mb)
+chr11                          = 61 SVs (Density: 0.61 SVs/Mb)
+chr13                          = 84 SVs (Density: 0.84 SVs/Mb)
+chr15                          = 42 SVs (Density: 0.42 SVs/Mb)
+chr16                          = 48 SVs (Density: 0.48 SVs/Mb)
+chr17                          = 74 SVs (Density: 0.74 SVs/Mb)
+chr18                          = 68 SVs (Density: 0.68 SVs/Mb)
+chr19                          = 85 SVs (Density: 0.85 SVs/Mb)
+chr21                          = 51 SVs (Density: 0.51 SVs/Mb)
+chr22                          = 20 SVs (Density: 0.20 SVs/Mb)
+
+
+>>>>>>> Qc Analysis
+
+Quality Score (QUAL) Statistics = 
+Number of variants with QUAL   = 2000
+Average QUAL                   = 24.83
+Median QUAL                    = 21.00
+Min QUAL                       = 10.00
+Max QUAL                       = 94.00
+Q1 QUAL                        = 15.00
+Q3 QUAL                        = 31.00
+
+Filter Status                  = 
+PASS                           = 1985 (99.25%)
+hom_ref                        = 14 (0.70%)
+not_fully_covered              = 1 (0.05%)
+
+Read Support Statistics        = 
+Number of variants with support info = 2000
+Average Read Support           = 20.70
+Median Read Support            = 18.00
+Min Read Support               = 8.00
+Max Read Support               = 76.00
+Q1 Read Support                = 13.00
+Q3 Read Support                = 26.00
+
+
+>>>>>>> Genotype Analysis
+
+Genotype Distribution          = 
+./.                            = 57 (2.85%)
+0/1                            = 1271 (63.55%)
+1/1                            = 658 (32.90%)
+0/0                            = 14 (0.70%)
+
+
