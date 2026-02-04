@@ -7,6 +7,14 @@
 [![PyPI version](https://badge.fury.io/py/octopusv.svg)](https://badge.fury.io/py/octopusv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> [!IMPORTANT]
+> **OctopuSV is currently rapidly evolving.** 🚀
+> We frequently release updates with critical bug fixes and new features. To ensure stability and access the latest capabilities, please always use the newest version:
+>
+> ```bash
+> pip install --upgrade octopusv
+> ```
+
 **OctopuSV** addresses four key challenges in structural variant (SV) analysis:
 
 1. **Smart BND standardization** - Converts paired BND records into standard SV types (DEL/INV/DUP/TRA), while preserving potential complex rearrangements as BNDs
