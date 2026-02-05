@@ -67,24 +67,24 @@ class SVEvent:
         self.info[key] = value
 
     def is_duplication(self):
-        # Whether is duplication
-        return self.info["SVTYPE"] == "DUP"
+        """Check if this is a duplication. Returns False if SVTYPE is missing."""
+        return self.info.get("SVTYPE", "") == "DUP"
 
     def is_inversion(self):
-        # Whether is inversion
-        return self.info["SVTYPE"] == "INV"
+        """Check if this is an inversion. Returns False if SVTYPE is missing."""
+        return self.info.get("SVTYPE", "") == "INV"
 
     def is_insertion(self):
-        #  Whether is insertion
-        return self.info["SVTYPE"] == "INS"
+        """Check if this is an insertion. Returns False if SVTYPE is missing."""
+        return self.info.get("SVTYPE", "") == "INS"
 
     def is_TRA(self):
-        #  Whether is TRA
-        return self.info["SVTYPE"] == "TRA"
+        """Check if this is a translocation. Returns False if SVTYPE is missing."""
+        return self.info.get("SVTYPE", "") == "TRA"
 
     def is_BND(self):
-        #  Whether is BND
-        return self.info["SVTYPE"] == "BND"
+        """Check if this is a BND event. Returns False if SVTYPE is missing."""
+        return self.info.get("SVTYPE", "") == "BND"
 
     def __str__(self):
         """Convert the SVEvent to a string in SVCF format."""

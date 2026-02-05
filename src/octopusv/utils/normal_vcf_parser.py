@@ -115,6 +115,37 @@ def parse_vcf(vcf_file_path):
                 event = SVEvent(*adjusted_fields)  # Unpack fields and send to SVEvent class
                 event.source = source_info  # Add source dynamically
 
+                # Skip non-variant records (e.g., Dragen REF regions without SVTYPE)
+                if 'SVTYPE' not in event.info:
+                    continue
+
+                # Convert generic CNV to specific DEL/DUP based on ALT and ID fields
+                if event.info.get('SVTYPE') == 'CNV':
+                    # Method 1: Infer from ALT field
+                    if '<DEL>' in event.alt.upper():
+                        event.info['SVTYPE'] = 'DEL'
+                    elif '<DUP>' in event.alt.upper():
+                        event.info['SVTYPE'] = 'DUP'
+                    # Method 2: Infer from ID field (Dragen uses LOSS/GAIN in ID)
+                    elif 'LOSS' in event.id.upper():
+                        event.info['SVTYPE'] = 'DEL'
+                    elif 'GAIN' in event.id.upper():
+                        event.info['SVTYPE'] = 'DUP'
+                    # Method 3: Infer from SVLEN (negative=deletion, positive=duplication)
+                    elif 'SVLEN' in event.info:
+                        try:
+                            svlen = int(event.info['SVLEN'])
+                            if svlen < 0:
+                                event.info['SVTYPE'] = 'DEL'
+                            elif svlen > 0:
+                                event.info['SVTYPE'] = 'DUP'
+                        except ValueError:
+                            pass
+                    # If still CNV after all methods, log warning and skip
+                    if event.info.get('SVTYPE') == 'CNV':
+                        logging.warning(f"Could not determine specific type for CNV event {event.id}, skipping")
+                        continue
+
                 if event.is_BND():
                     if is_same_chr_bnd(event):  # Check if the event is same chromosome
                         same_chr_bnd_events.append(event)
