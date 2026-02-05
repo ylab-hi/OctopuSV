@@ -381,8 +381,9 @@ class SVMerger:
                     samples_in_order = []
                     merged_samples = getattr(event, "merged_samples", [])
 
-                    # Create a mapping from source basename to sample data
-                    source_to_sample = {}
+                    # Create a mapping from source basename to list of sample data
+                    # (one source file can contribute multiple merged events)
+                    source_to_samples = {}
                     for sample_name, sample_format, sample_data in merged_samples:
                         # Try to determine which source file this sample came from
                         sample_assigned = False
@@ -394,7 +395,9 @@ class SVMerger:
                                 # Method 1: Check source_file field
                                 source_file_field = sample_data.get('source_file', '')
                                 if input_basename in source_file_field or input_file in source_file_field:
-                                    source_to_sample[input_basename] = (sample_name, sample_format, sample_data)
+                                    if input_basename not in source_to_samples:
+                                        source_to_samples[input_basename] = []
+                                    source_to_samples[input_basename].append((sample_name, sample_format, sample_data))
                                     sample_assigned = True
                                     break
 
@@ -402,7 +405,9 @@ class SVMerger:
                                 sample_str = str(sample_data)
                                 input_name = os.path.splitext(input_basename)[0]
                                 if input_name.lower() in sample_str.lower():
-                                    source_to_sample[input_basename] = (sample_name, sample_format, sample_data)
+                                    if input_basename not in source_to_samples:
+                                        source_to_samples[input_basename] = []
+                                    source_to_samples[input_basename].append((sample_name, sample_format, sample_data))
                                     sample_assigned = True
                                     break
 
@@ -410,8 +415,10 @@ class SVMerger:
                         if not sample_assigned:
                             for input_file in self.all_input_files:
                                 input_basename = os.path.basename(input_file)
-                                if input_basename not in source_to_sample and input_basename in event_source_basenames:
-                                    source_to_sample[input_basename] = (sample_name, sample_format, sample_data)
+                                if input_basename not in source_to_samples and input_basename in event_source_basenames:
+                                    if input_basename not in source_to_samples:
+                                        source_to_samples[input_basename] = []
+                                    source_to_samples[input_basename].append((sample_name, sample_format, sample_data))
                                     break
 
                     # Step 3: Generate SOURCES and samples in input file order
@@ -425,28 +432,35 @@ class SVMerger:
                                 display_name = os.path.splitext(input_basename)[0]
                             sources_in_order.append(display_name)
 
-                            # Get corresponding sample data
-                            if input_basename in source_to_sample:
-                                samples_in_order.append(source_to_sample[input_basename])
+                            # Get corresponding sample data (use first one for sample column display)
+                            if input_basename in source_to_samples:
+                                samples_in_order.append(source_to_samples[input_basename][0])
 
                     # Step 4: Generate SOURCES field
                     display_sources = ",".join(sources_in_order)
 
-                    # Step 5: Collect original IDs for SOURCE_IDS field
+                    # Step 5: Collect original IDs for SOURCE_IDS field (supports multiple IDs per source)
                     source_ids_in_order = []
                     for input_file in self.all_input_files:
                         input_basename = os.path.basename(input_file)
                         if input_basename in event_source_basenames:
-                            # Get corresponding sample data to extract original ID
-                            if input_basename in source_to_sample:
-                                _, _, sample_data = source_to_sample[input_basename]
-                                if isinstance(sample_data, dict):
-                                    original_id = sample_data.get('ID', 'unknown')
+                            if input_basename in source_to_samples:
+                                # Collect ALL IDs from this source file
+                                ids_from_this_source = []
+                                for _, _, sample_data in source_to_samples[input_basename]:
+                                    if isinstance(sample_data, dict):
+                                        # Use original_id field which preserves complete IDs with colons
+                                        original_id = sample_data.get('original_id', sample_data.get('ID', 'unknown'))
+                                        if original_id and original_id != 'unknown':
+                                            ids_from_this_source.append(original_id)
+
+                                # Join multiple IDs from same source with semicolon
+                                if ids_from_this_source:
+                                    source_ids_in_order.append(";".join(ids_from_this_source))
                                 else:
-                                    original_id = 'unknown'
+                                    source_ids_in_order.append('unknown')
                             else:
-                                original_id = 'unknown'
-                            source_ids_in_order.append(original_id)
+                                source_ids_in_order.append('unknown')
 
                     display_source_ids = ",".join(source_ids_in_order)
 

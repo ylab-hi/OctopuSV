@@ -112,6 +112,9 @@ class SVCFEvent:
             # If there are no special fields, handle them in the usual way
             result = dict(zip(format_keys, sample_parts, strict=False))
 
+        # Store the complete original event ID to preserve IDs with colons (e.g., Manta IDs)
+        result['original_id'] = self.sv_id
+
         return result
 
     def _parse_coordinates(self):
