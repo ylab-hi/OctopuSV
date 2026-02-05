@@ -1,7 +1,34 @@
+import logging
+import re
+
+logging.basicConfig(level=logging.INFO)
+
+
 class SVCFtoVCFConverter:
     def __init__(self, events, input_svcf_file):
         self.events = events
         self.input_svcf_file = input_svcf_file
+        self.mode, self.sample_names = self._detect_mode_and_samples()
+
+    def _detect_mode_and_samples(self):
+        """Detect if SVCF is multi-sample mode and extract sample names from header."""
+        mode = "single"
+        sample_names = ["Sample"]
+
+        with open(self.input_svcf_file) as f:
+            for line in f:
+                if line.startswith("##OctopuSV_mode="):
+                    mode_value = line.split("=")[1].strip()
+                    if mode_value == "multi":
+                        mode = "multi"
+                elif line.startswith("#CHROM"):
+                    # Extract all sample column names from header
+                    parts = line.strip().split("\t")
+                    if len(parts) > 9:
+                        sample_names = parts[9:]
+                    break
+
+        return mode, sample_names
 
     def convert(self):
         vcf_content = self._generate_vcf_header()
@@ -23,13 +50,14 @@ class SVCFtoVCFConverter:
                     # Skip OctopuSV default PASS filter, keep original filters
                     header_definitions["filter_lines"].append(line)
                 elif line.startswith("##INFO=") and not any(
-                    x in line
-                    for x in ["SVTYPE", "END", "SVLEN", "CHR2", "SUPPORT", "SVMETHOD", "STRAND", "RNAMES", "RTID", "AF"]
+                        x in line
+                        for x in
+                        ["SVTYPE", "END", "SVLEN", "CHR2", "SUPPORT", "SVMETHOD", "STRAND", "RNAMES", "RTID", "AF"]
                 ):
                     # Keep original INFO fields, skip OctopuSV defaults
                     header_definitions["info_lines"].append(line)
                 elif line.startswith("##FORMAT=") and not any(
-                    x in line for x in ["GT", "AD", "DP", "LN", "ST", "QV", "TY", "ID", "SC", "REF", "ALT", "CO"]
+                        x in line for x in ["GT", "AD", "DP", "LN", "ST", "QV", "TY", "ID", "SC", "REF", "ALT", "CO"]
                 ):
                     # Keep original FORMAT fields, skip our defaults
                     header_definitions["format_lines"].append(line)
@@ -86,12 +114,13 @@ class SVCFtoVCFConverter:
         for format_line in original_defs["format_lines"]:
             header += format_line + "\n"
 
-        # Add our standard FORMAT definitions
-        header += """##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        # Add our standard FORMAT definitions and column header with dynamic sample names
+        sample_header = "\t".join(self.sample_names)
+        header += f"""##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">
 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate read depth">
 ##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">
-#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample\n"""
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{sample_header}\n"""
 
         return header
 
@@ -159,14 +188,60 @@ class SVCFtoVCFConverter:
         info = ";".join(info_fields)
 
         format = "GT:AD:DP:LN"
-        gt = event.sample.get("GT", "./.")
-        ad = event.sample.get("AD", ".,.")
-        dp = self._calculate_dp(ad)
-        ln = event.sample.get("LN", ".")
 
-        sample = f"{gt}:{ad}:{dp}:{ln}"
+        # Handle multi-sample vs single-sample mode
+        if self.mode == "multi":
+            sample_columns = self._extract_multi_sample_data(event)
+        else:
+            # Single sample mode - use original logic
+            gt = event.sample.get("GT", "./.")
+            ad = event.sample.get("AD", ".,.")
+            dp = self._calculate_dp(ad)
+            ln = event.sample.get("LN", ".")
+            sample_columns = [f"{gt}:{ad}:{dp}:{ln}"]
+
+        sample = "\t".join(sample_columns)
 
         return f"{chrom}\t{pos}\t{id}\t{ref}\t{alt}\t{qual}\t{filter}\t{info}\t{format}\t{sample}\n"
+
+    def _extract_multi_sample_data(self, event):
+        """Extract all sample columns from original SVCF file for this event."""
+        with open(self.input_svcf_file) as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                parts = line.strip().split("\t")
+                # Match by chromosome, position, and ID
+                if (parts[0] == event.chrom and
+                        parts[1] == str(event.pos) and
+                        parts[2] == event.sv_id):
+                    # Extract all sample columns (from column 9 onwards)
+                    if len(parts) > 9:
+                        svcf_samples = parts[9:]
+                        # Convert each SVCF sample format to VCF format
+                        vcf_samples = [self._convert_svcf_sample_to_vcf(s) for s in svcf_samples]
+                        return vcf_samples
+                    break
+
+        # Fallback: return missing data for all samples
+        return ["./.:.,.:0:."] * len(self.sample_names)
+
+    def _convert_svcf_sample_to_vcf(self, svcf_sample):
+        """Convert SVCF sample format (GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO) to VCF format (GT:AD:DP:LN)."""
+        parts = svcf_sample.split(":")
+
+        if len(parts) < 3:
+            return "./.:.,.:0:."
+
+        # Extract relevant fields from SVCF format
+        gt = parts[0] if parts[0] else "./."
+        ad = parts[1] if len(parts) > 1 else ".,."
+        ln = parts[2] if len(parts) > 2 else "."
+
+        # Calculate DP from AD
+        dp = self._calculate_dp(ad)
+
+        return f"{gt}:{ad}:{dp}:{ln}"
 
     def _get_alt(self, event):
         if event.alt and event.alt not in ("N", "."):
