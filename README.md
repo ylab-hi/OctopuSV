@@ -68,8 +68,24 @@ octopusv svcf2vcf -i merged.svcf -o final_results.vcf
 
 ## Installation
 
+### Bioconda (recommended)
+```bash
+conda install bioconda::octopusv
+```
+
+Or with mamba for faster dependency resolution:
+```bash
+mamba install bioconda::octopusv
+```
+
+### PyPI
 ```bash
 pip install octopusv
+```
+
+### Docker
+```bash
+docker pull quay.io/biocontainers/octopusv:0.3.0--pyhdfd78af_0
 ```
 
 ---
