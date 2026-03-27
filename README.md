@@ -5,100 +5,118 @@
 </p>
 
 [![PyPI version](https://badge.fury.io/py/octopusv.svg)](https://badge.fury.io/py/octopusv)
+[![Bioconda](https://img.shields.io/conda/vn/bioconda/octopusv.svg)](https://bioconda.github.io/recipes/octopusv/README.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > [!IMPORTANT]
-> **OctopuSV is currently rapidly evolving.** 🚀
-> We frequently release updates with critical bug fixes and new features. To ensure stability and access the latest capabilities, please always use the newest version:
+> **Always use the latest version for best results.**
 >
 > ```bash
-> pip install --upgrade octopusv
+> conda install bioconda::octopusv
 > ```
+
+> [!NOTE]
+> **Native GRIDSS support** (v0.3.1+): OctopuSV directly processes GRIDSS VCF output
+> through `octopusv correct`. Paired BND records are resolved to standard SV types
+> (DEL/DUP/INV/INS/TRA) using the same logic as GRIDSS's official
+> `simple-event-annotation.R` — including automatic INS detection from BND pairs
+> with inserted sequences. Single breakends are safely skipped.
+> No pre-processing with StructuralVariantAnnotation or other external tools required.
+
+---
 
 **OctopuSV** addresses four key challenges in structural variant (SV) analysis:
 
-1. **Smart BND standardization** - Converts paired BND records into standard SV types (DEL/INV/DUP/TRA), while preserving potential complex rearrangements as BNDs
-2. **Multi-caller integration** - Merge SVs from different tools (Manta, Sniffles, PBSV, etc.) with flexible logic 
-3. **Multi-sample integration** - Compare and analyze SVs across cohorts with customizable sample-level merging
-4. **Somatic variant calling** - Extract tumor-specific SVs by comparing tumor vs normal samples
+1. **Smart BND standardization** — Converts paired BND records into standard SV types (DEL/INV/DUP/INS/TRA), while preserving potential complex rearrangements as BNDs. Works out of the box with BND-heavy callers like GRIDSS and SvABA.
+2. **Multi-caller integration** — Merge SVs from different tools (Manta, Sniffles, GRIDSS, PBSV, etc.) with flexible Boolean logic.
+3. **Multi-sample integration** — Compare and analyze SVs across cohorts with customizable sample-level merging.
+4. **Somatic variant calling** — Extract tumor-specific SVs by comparing tumor vs normal samples. Works with any SV caller, even those not designed for cancer analysis.
 
 Whether you're analyzing single samples, cohorts, or tumor/normal pairs, OctopuSV standardizes your workflow from raw calls to publication-ready results.
 
+---
+
 ## How OctopuSV Works
 
-**OctopuSV uses a standardized workflow to handle VCF inconsistencies across different SV callers:**
+OctopuSV uses a standardized workflow to handle VCF inconsistencies across different SV callers:
 
-1. **Standardization**: Convert any SV caller output to SVCF format using `octopusv correct`
-2. **Analysis**: Perform merging, comparison, or somatic calling on standardized SVCF files  
-3. **Output**: Convert results back to standard VCF using `octopusv svcf2vcf`
+1. **Standardize**: Convert any SV caller output to SVCF format using `octopusv correct`
+2. **Analyze**: Perform merging, comparison, or somatic calling on standardized SVCF files
+3. **Export**: Convert results back to standard VCF using `octopusv svcf2vcf`
 
-**Why SVCF?** While VCF has standard specifications, different SV callers often implement them inconsistently (varying field names, BND notations, coordinate systems). SVCF eliminates these compatibility issues by providing a unified intermediate format.
+**Why SVCF?** Different SV callers implement VCF inconsistently — varying field names, BND notations, coordinate systems. SVCF eliminates these compatibility issues by providing a unified intermediate format.
 
 ```bash
 # Step 1: Standardize caller outputs
 octopusv correct manta_output.vcf manta.svcf
+octopusv correct gridss_output.vcf gridss.svcf
 octopusv correct sniffles_output.vcf sniffles.svcf
 
 # Step 2: Analyze with consistent format
-octopusv merge -i manta.svcf sniffles.svcf -o merged.svcf --intersect
+octopusv merge -i manta.svcf gridss.svcf sniffles.svcf -o merged.svcf --intersect
 octopusv somatic -t tumor.svcf -n normal.svcf -o somatic.svcf
 
 # Step 3: Convert back to standard VCF
 octopusv svcf2vcf -i merged.svcf -o final_results.vcf
 ```
 
-**📋 SVCF Format Details**: See our [SVCF specification document](https://github.com/ylab-hi/OctopuSV/blob/main/docs/SVCF_specifications.md) for technical details.
+📋 **SVCF Format Details**: See our [SVCF specification document](https://github.com/ylab-hi/OctopuSV/blob/main/docs/SVCF_specifications.md) for technical details.
 
-## Key Features
-
-* **One-command somatic calling**: Extract tumor-specific SVs with `octopusv somatic`
-* **Flexible SV merging**: Boolean logic, intersection, union, or custom expressions across samples/callers
-* **BND standardization**: Converts complex breakend notation to standard SV types
-* **Cross-platform support**: Works with Illumina, PacBio, ONT data from 10+ popular callers
-* **Built-in benchmarking**: Compare against truth sets with precision/recall metrics
-* **Rich visualizations**: Interactive HTML reports and publication-ready plots
+---
 
 ## Supported SV Callers
 
 **Long-read**: Sniffles, Severus, SVDSS, DeBreak, SVIM, CuteSV, PBSV, nanomonsv
 
-**Short-read**: Manta, Delly, Lumpy, SvABA, Octopus, CLEVER
+**Short-read**: Manta, Delly, GRIDSS, Lumpy, SvABA, Octopus, CLEVER
 
-*Continuously expanding support for additional callers.*
+**CNV callers**: Dragen CNV (automatic conversion of CNV to DEL/DUP)
+
+Continuously expanding support for additional callers.
+
+---
 
 ## Installation
 
 ### Bioconda (recommended)
+
 ```bash
 conda install bioconda::octopusv
 ```
 
 Or with mamba for faster dependency resolution:
+
 ```bash
 mamba install bioconda::octopusv
 ```
 
 ### PyPI
+
 ```bash
 pip install octopusv
 ```
 
 ### Docker
+
 ```bash
-docker pull quay.io/biocontainers/octopusv:0.3.0--pyhdfd78af_0
+docker pull quay.io/biocontainers/octopusv:<tag>
 ```
+
+See [octopusv/tags](https://quay.io/repository/biocontainers/octopusv?tab=tags) for valid values.
 
 ---
 
 ## Quick Start
 
-### 1. Correct Ambiguous BND Annotations
+### 1. Correct and Standardize BND Annotations
+
+`octopusv correct` converts raw SV caller output into standardized SVCF format. This includes resolving paired BND records into concrete SV types and detecting insertions from BND pairs with long inserted sequences (e.g., from GRIDSS).
 
 ```bash
 # Basic correction
 octopusv correct input.vcf output.svcf
 
-# With position tolerance control
+# With position tolerance control (for BND pairing)
 octopusv correct -i input.vcf -o output.svcf --pos-tolerance 5
 
 # Apply quality filters
@@ -108,10 +126,10 @@ octopusv correct -i input.vcf -o output.svcf --min-svlen 50 --max-svlen 100000 -
 ### 2. Merge SV Calls (Multi-caller or Multi-sample)
 
 ```bash
-# Basic intersection: SVs found by ALL callers
+# Intersection: SVs found by ALL callers
 octopusv merge -i manta.svcf sniffles.svcf pbsv.svcf -o intersection.svcf --intersect
 
-# Union: SVs found by ANY caller  
+# Union: SVs found by ANY caller
 octopusv merge -i caller1.svcf caller2.svcf caller3.svcf -o union.svcf --union
 
 # Specific caller: SVs unique to one caller
@@ -138,11 +156,10 @@ octopusv merge -i a.svcf b.svcf c.svcf -o merged.svcf --intersect \
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/up_upset.png" width="70%" height="70%">
 </p>
 
-### 3. Somatic SV Calling (NEW!)
+### 3. Somatic SV Calling
 
-**Flexible workflow**: Use any SV caller to analyze tumor and normal samples separately, then let OctopuSV find somatic variants. Works even with callers not designed for cancer analysis.
+Use any SV caller to analyze tumor and normal samples separately, then let OctopuSV find somatic variants. Works even with callers not designed for cancer analysis.
 
-Extract tumor-specific structural variants by comparing tumor and normal samples:
 ```bash
 # Basic somatic calling
 octopusv somatic -t tumor.svcf -n normal.svcf -o somatic.svcf
@@ -153,6 +170,19 @@ octopusv somatic -t tumor.svcf -n normal.svcf -o somatic.svcf \
 
 # Convert to standard VCF for downstream analysis
 octopusv svcf2vcf -i somatic.svcf -o somatic.vcf
+```
+
+**Example multi-caller somatic workflow** (e.g., with 3 callers on a tumor-normal pair):
+
+```bash
+# Run each caller separately on the tumor-normal pair, then standardize
+octopusv correct manta_tumor.vcf manta_tumor.svcf
+octopusv correct delly_tumor.vcf delly_tumor.svcf
+octopusv correct gridss_tumor.vcf gridss_tumor.svcf
+
+# Keep SVs supported by at least 2 out of 3 callers
+octopusv merge -i manta_tumor.svcf delly_tumor.svcf gridss_tumor.svcf \
+  -o high_confidence_somatic.svcf --min-support 2
 ```
 
 ### 4. Benchmark Against Truth Sets
@@ -179,12 +209,7 @@ octopusv stat -i input.svcf -o stats.txt --report
 octopusv plot stats.txt -o figure_prefix
 ```
 
-The `--report` flag outputs an interactive HTML report:
-
-* SV type and size distributions
-* Chromosome breakdowns
-* Quality score summaries
-* Genotype and depth features
+The `--report` flag outputs an interactive HTML report covering SV type and size distributions, chromosome breakdowns, quality score summaries, and genotype and depth features.
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/html_example.png" width="70%" height="70%">
@@ -207,21 +232,15 @@ octopusv svcf2vcf -i input.svcf -o output.vcf
 
 ## Example Visualizations
 
-OctopusV generates publication-ready visualizations:
-
-### Chromosome Distribution
+OctopuSV generates publication-ready visualizations:
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/chromosome_distribution.png" width="50%" height="50%">
 </p>
 
-### SV Type Distribution
-
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/sv_types.png" width="50%" height="50%">
 </p>
-
-### SV Size Distribution
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/sv_sizes.png" width="50%" height="50%">
@@ -229,13 +248,9 @@ OctopusV generates publication-ready visualizations:
 
 ---
 
-See the companion pipeline: [TentacleSV](https://github.com/ylab-hi/TentacleSV)
+## Citation
 
----
-
-## 🧪 Citation
-
-If you use **OctopuSV**, please cite:
+If you use OctopuSV in your research, please cite:
 
 > Guo, Qingxiang, Yangyang Li, Ting-You Wang, Abhi Ramakrishnan, and Rendong Yang. "OctopuSV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis." Bioinformatics (2025): btaf599. doi: https://doi.org/10.1093/bioinformatics/btaf599
 
@@ -249,6 +264,10 @@ If you use **OctopuSV**, please cite:
   publisher={Oxford University Press}
 }
 ```
+
+If you find OctopuSV useful, a ⭐ on GitHub helps others discover the project!
+
+See the companion pipeline: [TentacleSV](https://github.com/ylab-hi/TentacleSV)
 
 ---
 
@@ -265,6 +284,6 @@ pre-commit run -a
 
 ## Contact
 
-* GitHub Issues: [https://github.com/ylab-hi/octopusV/issues](https://github.com/ylab-hi/octopusV/issues)
-* Email: [qingxiang.guo@northwestern.edu](mailto:qingxiang.guo@northwestern.edu)
-* Email: [yangyang.li@northwestern.edu](mailto:yangyang.li@northwestern.edu)
+- GitHub Issues: [https://github.com/ylab-hi/octopusV/issues](https://github.com/ylab-hi/octopusV/issues)
+- Email: [qingxiang.guo@northwestern.edu](mailto:qingxiang.guo@northwestern.edu)
+- Email: [yangyang.li@northwestern.edu](mailto:yangyang.li@northwestern.edu)
