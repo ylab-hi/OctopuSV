@@ -54,7 +54,6 @@ def get_alt_chrom_pos(alt):
                 except ValueError:
                     continue
 
-        logging.info(f"Unexpected ALT format, it should be something like N]chr10:69650962] or with sequences: {alt}")
         return None, None
 
     except Exception as e:

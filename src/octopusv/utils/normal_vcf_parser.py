@@ -10,9 +10,7 @@ def is_same_chr_bnd(event):
     if event.is_BND():
         split_result = re.split(r"[\[\]:]", event.alt)
         if len(split_result) != 4:
-            logging.info(
-                f"Unexpected ALT format, it should be something like N]chr10:69650962]: {split_result}",
-            )
+            return False
         else:
             chrom_alt, _ = split_result[1:3]
             return event.chrom == chrom_alt
