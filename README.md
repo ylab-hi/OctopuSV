@@ -1,4 +1,4 @@
-# OctopuSV: Advanced structural variant analysis toolkit 🐙
+# OctopuSV: End-to-end structural variant post-processing 🐙
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/logo.png" width="40%" height="40%">
@@ -8,20 +8,24 @@
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/octopusv.svg)](https://bioconda.github.io/recipes/octopusv/README.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> *Unify, merge, compare, and export structural variants across callers and samples.*
+
+> [!NOTE]
+> **What's New in v0.3.2** — New `octopusv clean` subcommand: sanitizes broken VCFs so they can be parsed by strict tools like Truvari and bcftools. Fixes missing header definitions, illegal INFO characters, invalid `GT`/`SVLEN`, and chromosome naming mismatches against a reference FASTA. Outputs a sorted, bgzipped, tabix-indexed VCF ready for downstream benchmarking.
+>
+> ```bash
+> octopusv clean input.vcf output.vcf.gz -g reference.fa
+> ```
+
+> [!NOTE]
+> **What's New in v0.3.1** — Native GRIDSS support. `octopusv correct` directly processes GRIDSS VCF output, resolving paired BND records into standard SV types (DEL/DUP/INV/INS/TRA) using the same logic as GRIDSS's official `simple-event-annotation.R`, including automatic INS detection from BND pairs with inserted sequences. Single breakends are safely skipped. No pre-processing with StructuralVariantAnnotation or other external tools required.
+
 > [!IMPORTANT]
 > **Always use the latest version for best results.**
 >
 > ```bash
 > conda install bioconda::octopusv
 > ```
-
-> [!NOTE]
-> **Native GRIDSS support** (v0.3.1+): OctopuSV directly processes GRIDSS VCF output
-> through `octopusv correct`. Paired BND records are resolved to standard SV types
-> (DEL/DUP/INV/INS/TRA) using the same logic as GRIDSS's official
-> `simple-event-annotation.R` — including automatic INS detection from BND pairs
-> with inserted sequences. Single breakends are safely skipped.
-> No pre-processing with StructuralVariantAnnotation or other external tools required.
 
 ---
 
@@ -38,11 +42,26 @@ Whether you're analyzing single samples, cohorts, or tumor/normal pairs, OctopuS
 
 ## How OctopuSV Works
 
-OctopuSV uses a standardized workflow to handle VCF inconsistencies across different SV callers:
+OctopuSV converts any SV caller's VCF into a unified intermediate format (**SVCF**), enabling consistent merging, comparison, and analysis across callers and samples. Results can be exported back to standard VCF, BED, or BEDPE formats.
 
-1. **Standardize**: Convert any SV caller output to SVCF format using `octopusv correct`
-2. **Analyze**: Perform merging, comparison, or somatic calling on standardized SVCF files
-3. **Export**: Convert results back to standard VCF using `octopusv svcf2vcf`
+```mermaid
+flowchart TD
+    A["Raw VCFs from multiple SV callers<br/>(Manta · Sniffles · GRIDSS · PBSV · ...)"] -->|octopusv correct| B["Unified SVCF format"]
+    B -->|octopusv merge| C["Merged SVCF<br/>multi-caller / multi-sample"]
+    B -->|octopusv somatic| D["Somatic SVCF<br/>tumor-specific SVs"]
+    B -->|octopusv clean| E["Truvari-ready VCF.gz<br/>sanitized + indexed"]
+    C --> F["octopusv stat / plot"]
+    C --> G["octopusv svcf2vcf<br/>svcf2bed / svcf2bedpe"]
+    D --> G
+    F --> H["Publication-ready<br/>statistics + figures"]
+    G --> I["Standard outputs<br/>for downstream analysis"]
+
+    style A fill:#f5f5f5,stroke:#999
+    style B fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style E fill:#fff3e0,stroke:#f57c00
+    style H fill:#e8f5e9,stroke:#388e3c
+    style I fill:#e8f5e9,stroke:#388e3c
+```
 
 **Why SVCF?** Different SV callers implement VCF inconsistently — varying field names, BND notations, coordinate systems. SVCF eliminates these compatibility issues by providing a unified intermediate format.
 
@@ -84,6 +103,8 @@ Continuously expanding support for additional callers.
 conda install bioconda::octopusv
 ```
 
+This installs OctopuSV along with all required dependencies including `bcftools`, `bgzip`, and `tabix`.
+
 Or with mamba for faster dependency resolution:
 
 ```bash
@@ -96,6 +117,13 @@ mamba install bioconda::octopusv
 pip install octopusv
 ```
 
+> [!NOTE]
+> The `octopusv clean` subcommand requires `bcftools`, `bgzip`, and `tabix` as external tools. If you installed via pip, install them separately:
+> ```bash
+> conda install -c bioconda bcftools htslib
+> ```
+> If you installed via Bioconda, these are already included.
+
 ### Docker
 
 ```bash
@@ -103,6 +131,16 @@ docker pull quay.io/biocontainers/octopusv:<tag>
 ```
 
 See [octopusv/tags](https://quay.io/repository/biocontainers/octopusv?tab=tags) for valid values.
+
+### From source (for developers)
+
+```bash
+git clone https://github.com/ylab-hi/OctopuSV.git
+cd OctopuSV
+mamba env create -f environment.yaml
+mamba activate octopusv
+poetry install
+```
 
 ---
 
@@ -185,7 +223,31 @@ octopusv merge -i manta_tumor.svcf delly_tumor.svcf gridss_tumor.svcf \
   -o high_confidence_somatic.svcf --min-support 2
 ```
 
-### 4. Benchmark Against Truth Sets
+### 4. Clean Broken VCFs for Downstream Tools
+
+Some callers produce VCFs that are technically valid but break strict parsers like Truvari or bcftools — missing header definitions, illegal characters in INFO fields, inconsistent chromosome naming, missing `GT` or `SVLEN`. `octopusv clean` fixes these issues without filtering any variants, producing a sorted, bgzipped, tabix-indexed VCF ready for downstream benchmarking.
+
+```bash
+# Basic clean (no chromosome harmonization)
+octopusv clean broken.vcf fixed.vcf.gz
+
+# With reference FASTA for chromosome name harmonization (recommended)
+octopusv clean broken.vcf fixed.vcf.gz -g /path/to/reference.fa
+
+# Typical workflow: clean before Truvari benchmark
+octopusv clean calls.vcf calls_clean.vcf.gz -g GRCh38.fa
+truvari bench -b truth.vcf.gz -c calls_clean.vcf.gz -f GRCh38.fa -o bench_results/
+```
+
+What `clean` fixes:
+- Removes `RNAMES` field and sanitizes illegal characters in INFO
+- Fills missing `SVLEN` based on `SVTYPE` and `END`
+- Ensures `GT` is the first FORMAT field with a valid value
+- Auto-generates missing INFO/FORMAT header definitions
+- Harmonizes chromosome names against a reference FASTA when `-g` is provided
+- Sorts, bgzips, and tabix-indexes the output
+
+### 5. Benchmark Against Truth Sets
 
 ```bash
 octopusv benchmark truth.vcf calls.svcf \
@@ -196,7 +258,7 @@ octopusv benchmark truth.vcf calls.svcf \
   --size-min 50 --size-max 50000
 ```
 
-### 5. Generate Statistics and Visualizations
+### 6. Generate Statistics and Visualizations
 
 ```bash
 # Basic stat collection
@@ -215,7 +277,7 @@ The `--report` flag outputs an interactive HTML report covering SV type and size
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/html_example.png" width="70%" height="70%">
 </p>
 
-### 6. Format Conversion
+### 7. Format Conversion
 
 ```bash
 # To BED
@@ -278,6 +340,8 @@ We welcome issues, suggestions, and pull requests!
 ```bash
 git clone https://github.com/ylab-hi/OctopuSV.git
 cd OctopuSV
+mamba env create -f environment.yaml
+mamba activate octopusv
 poetry install
 pre-commit run -a
 ```

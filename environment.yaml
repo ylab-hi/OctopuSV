@@ -1,0 +1,12 @@
+name: octopusv
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - bcftools
+  - htslib
+  - pip
+  - pip:
+      - octopusv
+

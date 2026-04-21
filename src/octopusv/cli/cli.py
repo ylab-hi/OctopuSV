@@ -12,6 +12,7 @@ from .svcf2bed import svcf2bed
 from .svcf2bedpe import svcf2bedpe
 from .svcf2vcf import svcf2vcf
 from .somatic import somatic
+from .clean import clean
 
 app = typer.Typer(
     epilog=f"{typer.style('Agent Octopus Code V helps you dive deep into the structural variations ocean!', fg=typer.colors.GREEN, bold=True)}",
@@ -30,6 +31,7 @@ app.command()(somatic)  # Command to initiate somatic SV calling functionality.
 app.command()(svcf2vcf)
 app.command()(svcf2bed)
 app.command()(svcf2bedpe)
+app.command()(clean)
 
 @app.callback()
 def display_version_info():
