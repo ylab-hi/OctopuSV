@@ -5,6 +5,10 @@ def extract_original_header_definitions(input_vcf_file):
     """
     Extract header definitions from original VCF file.
     Returns dictionary with different types of header lines.
+
+    🔴 CHANGED: Also extracts the list of sample names from the #CHROM
+    column header. For a single-sample VCF this list has one entry; for a
+    multi-sample VCF it has one entry per sample column.
     """
     header_info = {
         'filter_lines': [],
@@ -12,14 +16,24 @@ def extract_original_header_definitions(input_vcf_file):
         'format_lines': [],
         'contig_lines': [],
         'alt_lines': [],
-        'other_lines': []
+        'other_lines': [],
+        # 🔴 CHANGED: default to a single "Sample" column to preserve the
+        # legacy behavior when no #CHROM line is encountered.
+        'sample_names': ["Sample"],
     }
 
     with open(input_vcf_file, 'r') as f:
         for line in f:
-            line = line.strip()
-            if line.startswith('#CHROM') or not line.startswith('##'):
-                break  # Stop at #CHROM line or data lines
+            line = line.rstrip("\n")
+            # 🔴 CHANGED: parse sample names from the #CHROM line, then stop.
+            if line.startswith('#CHROM'):
+                cols = line.split("\t")
+                if len(cols) >= 10:
+                    header_info['sample_names'] = cols[9:]
+                break
+            if not line.startswith('##'):
+                # Reached a data line without a #CHROM header; stop anyway.
+                break
 
             if line.startswith('##FILTER='):
                 header_info['filter_lines'].append(line)
@@ -171,6 +185,12 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
     """
     Generate SVCF file header lines according to SVCF specification.
     If input_vcf_file is provided, extract and preserve original header definitions.
+
+    🔴 CHANGED: When the input VCF has more than one sample column, the
+    generated header includes a ##OctopuSV_mode=multi marker and the #CHROM
+    line lists all original sample names. Single-sample behavior is
+    unchanged (the #CHROM line ends with the original sample name, falling
+    back to "Sample" if no input file is provided).
     """
     current_time_str = datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|%Z")
 
@@ -185,19 +205,31 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
     # Get OctopuSV default definitions
     octopus_defaults = get_octopus_default_definitions()
 
+    # 🔴 CHANGED: defaults that get overridden when we have an input file.
+    sample_names = ["Sample"]
+    is_multi_sample = False
+
     # If input VCF file is provided, extract original definitions
     if input_vcf_file:
         original_headers = extract_original_header_definitions(input_vcf_file)
         # Use original contig lines if available, otherwise use provided ones
         if original_headers['contig_lines']:
             contig_lines = original_headers['contig_lines']
+        # 🔴 CHANGED: take sample names from the original #CHROM line.
+        sample_names = original_headers.get('sample_names', ["Sample"])
+        is_multi_sample = len(sample_names) > 1
         merged_definitions = merge_header_definitions(original_headers, octopus_defaults)
     else:
         # Use only OctopuSV defaults
         merged_definitions = octopus_defaults
 
-    # Construct final header
-    final_header = basic_header + contig_lines
+    # 🔴 CHANGED: insert a multi-sample mode marker so downstream tools
+    # (e.g. svcf2vcf) know to preserve all sample columns.
+    final_header = list(basic_header)
+    if is_multi_sample:
+        final_header.append("##OctopuSV_mode=multi")
+
+    final_header.extend(contig_lines)
 
     # Add definitions in standard order
     final_header.extend(merged_definitions['alt_lines'])
@@ -205,8 +237,13 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
     final_header.extend(merged_definitions['filter_lines'])
     final_header.extend(merged_definitions['format_lines'])
 
-    # Add column header
-    final_header.append("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample")
+    # 🔴 CHANGED: build the #CHROM line dynamically so it contains the
+    # correct number of sample columns. Single-sample VCFs end up with
+    # exactly one trailing column (matching the legacy behavior, but now
+    # carrying the original sample name instead of the placeholder "Sample").
+    chrom_cols = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"]
+    chrom_cols.extend(sample_names)
+    final_header.append("\t".join(chrom_cols))
 
     return final_header
 

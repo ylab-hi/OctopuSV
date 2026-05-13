@@ -17,7 +17,7 @@ class SVType(Enum):
 class SVEvent:
     """represent each SV event."""
 
-    def __init__(self, chrom, pos, id, ref, alt, qual, filter, info, format="GT", sample="0/1"):
+    def __init__(self, chrom, pos, id, ref, alt, qual, filter, info, format="GT", sample="0/1", samples=None):
         self.chrom = chrom
         self.pos = int(pos)
         self.id = id
@@ -29,6 +29,13 @@ class SVEvent:
         self.info = self._parse_info(info)  # self.info will be a dict
         self.format = format
         self.sample = sample
+        # 🔴 CHANGED: Multi-sample support.
+        # `samples` is a list of raw VCF sample column strings, one per sample.
+        # For single-sample input, samples = [sample]. For multi-sample input,
+        # samples = [sample_col_1, sample_col_2, ...]. Backwards compatible:
+        # if `samples` is not provided, fall back to a single-element list
+        # built from `sample`, preserving the original single-sample behavior.
+        self.samples = list(samples) if samples is not None else [sample]
 
     def _parse_info(self, info):  # Parse the info field according to your requirement
         info_dict = {}
@@ -118,6 +125,13 @@ class SVEvent:
         # Always include FORMAT and SAMPLE fields
         format_order = ["GT", "AD", "LN", "ST", "QV", "TY", "ID", "SC", "REF", "ALT", "CO"]
         format_str = ":".join(format_order)
-        sample_str = construct_sample_string(self)
+        # 🔴 CHANGED: Build one SVCF sample column per input sample. For
+        # single-sample input this loop runs once and the output is identical
+        # to the previous behavior. For multi-sample input each raw sample
+        # column is passed in turn so per-sample fields (GT, AD) reflect the
+        # right sample, while shared fields (LN/ST/QV/TY/ID/SC/REF/ALT/CO)
+        # are identical across samples.
+        sample_strs = [construct_sample_string(self, raw_sample=s) for s in self.samples]
+        sample_str = "\t".join(sample_strs)
 
         return f"{self.chrom}\t{self.pos}\t{self.id}\t{self.ref}\t{self.alt}\t{self.qual}\t{self.filter}\t{info_str}\t{format_str}\t{sample_str}"

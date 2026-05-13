@@ -77,7 +77,10 @@ def check_vcf_format(vcf_file_path):
 def parse_vcf(vcf_file_path):
     """Parse VCF file into lists of SVEvent objects based on their type.
 
-    Handles both standard VCF (10 columns) and simplified VCF (8 columns) formats.
+    Handles standard VCF (10 columns), simplified VCF (8 columns) and
+    multi-sample VCF (>10 columns) formats. For multi-sample VCFs each
+    SVEvent retains all sample columns via its `samples` attribute, and
+    they are propagated to the output SVCF.
     """
     check_vcf_format(vcf_file_path)  # Check the format first
     same_chr_bnd_events = []
@@ -98,19 +101,43 @@ def parse_vcf(vcf_file_path):
             elif not line.startswith("#"):  # Skip all header lines except ##contig
                 fields = line.strip().split("\t")
 
-                # Add default FORMAT and SAMPLE fields if they don't exist
+                # 🔴 CHANGED: Normalize fields into (core_fields, sample_fields).
+                # core_fields = the first 9 VCF columns (CHROM..FORMAT).
+                # sample_fields = list of one or more raw sample column strings.
+                # This split is what lets us support multi-sample VCFs without
+                # exploding the SVEvent positional-argument signature.
                 if len(fields) == 8:
-                    fields.extend(["GT", "0/1"])  # Add minimal FORMAT and SAMPLE fields
-
-                # Adjust for SVABA if it's detected by the source line and has 13 fields
-                if is_svaba_output and len(fields) == 13:
-                    adjusted_fields = fields[:8] + [fields[8], fields[12]]
+                    # Simplified VCF: synthesize a minimal FORMAT + single SAMPLE.
+                    core_fields = fields[:8] + ["GT"]
+                    sample_fields = ["0/1"]
+                elif is_svaba_output and len(fields) == 13:
+                    # SVABA special handling preserved: use original column 8
+                    # (FORMAT) and column 12 as the single relevant sample.
+                    core_fields = fields[:8] + [fields[8]]
+                    sample_fields = [fields[12]]
                 elif not is_svaba_output and len(fields) == 13:
                     raise ValueError("VCF format error: Detected 13 columns in the header.")
+                elif len(fields) >= 10:
+                    # Standard single-sample (len == 10) OR multi-sample (>10):
+                    # split into 9 core columns + N sample columns.
+                    core_fields = fields[:9]
+                    sample_fields = fields[9:]
+                elif len(fields) == 9:
+                    # Has FORMAT but no SAMPLE column: pad with default '0/1'.
+                    core_fields = fields[:9]
+                    sample_fields = ["0/1"]
                 else:
-                    adjusted_fields = fields
+                    # Shouldn't reach here because check_vcf_format rejects <8.
+                    continue
 
-                event = SVEvent(*adjusted_fields)  # Unpack fields and send to SVEvent class
+                # 🔴 CHANGED: pass `samples` so multi-sample info is preserved
+                # all the way through the converter pipeline (the converters
+                # use copy.deepcopy, so they carry `samples` automatically).
+                event = SVEvent(
+                    *core_fields,
+                    sample=sample_fields[0],
+                    samples=sample_fields,
+                )
                 event.source = source_info  # Add source dynamically
 
                 # Skip non-variant records (e.g., Dragen REF regions without SVTYPE)
