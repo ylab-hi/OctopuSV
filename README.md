@@ -11,6 +11,9 @@
 > *Unify, merge, compare, and export structural variants across callers and samples.*
 
 > [!NOTE]
+> **What's New in v0.3.3** — `octopusv correct` now handles multi-sample VCFs. Previously it crashed on joint-called outputs from GRIDSS, DELLY, and other callers with more than one sample column. The corrected SVCF now preserves all sample columns.
+
+> [!NOTE]
 > **What's New in v0.3.2** — New `octopusv clean` subcommand: sanitizes broken VCFs so they can be parsed by strict tools like Truvari and bcftools. Fixes missing header definitions, illegal INFO characters, invalid `GT`/`SVLEN`, and chromosome naming mismatches against a reference FASTA. Outputs a sorted, bgzipped, tabix-indexed VCF ready for downstream benchmarking.
 >
 > ```bash
