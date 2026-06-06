@@ -1,19 +1,37 @@
 from pathlib import Path
+
 import typer
+
 from octopusv.report.generator import ReportGenerator
 from octopusv.stater.sv_stater import SVStater
 from octopusv.ploter.chromosome_plotter import ChromosomePlotter
 from octopusv.ploter.type_plotter import TypePlotter
 from octopusv.ploter.size_plotter import SizePlotter
 
+
 def stat(
-    input_file: Path = typer.Argument(..., help="Input SVCF file to analyze."),
+    input_arg: Path = typer.Argument(
+        None, help="Input SVCF file to analyze (positional). Alternatively use -i/--input-file."
+    ),
+    input_option: Path = typer.Option(
+        None, "--input-file", "-i", help="Input SVCF file to analyze."
+    ),
     output_file: Path = typer.Option(..., "--output-file", "-o", help="Output file for statistics."),
     min_size: int = typer.Option(50, "--min-size", help="Minimum SV size to consider."),
     max_size: int = typer.Option(None, "--max-size", help="Maximum SV size to consider."),
     report: bool = typer.Option(False, "--report", help="Generate an HTML report."),
 ):
     """Analyze a single SVCF file and generate comprehensive statistics."""
+    # Resolve input file: accept either the positional argument or -i/--input-file.
+    input_file = input_option if input_option is not None else input_arg
+    if input_file is None:
+        typer.echo(
+            "Error: no input SVCF provided. Pass it as a positional argument "
+            "or with -i/--input-file.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     # Run analysis
     sv_stater = SVStater(str(input_file), min_size=min_size, max_size=max_size)
     sv_stater.analyze()
@@ -21,22 +39,22 @@ def stat(
 
     if report:
         typer.echo("Generating HTML report...")
-        
+
         # Generate plots
         output_prefix = str(output_file.with_suffix(''))
-        
+
         # Generate chromosome distribution plot
         chromosome_plotter = ChromosomePlotter(str(output_file))
         chromosome_plotter.plot(f"{output_prefix}_chromosome_distribution")
-        
+
         # Generate SV type plot
         type_plotter = TypePlotter(str(output_file))
         type_plotter.plot(f"{output_prefix}_sv_types")
-        
+
         # Generate size distribution plot
         size_plotter = SizePlotter(str(output_file))
         size_plotter.plot(f"{output_prefix}_sv_sizes")
-        
+
         # Generate HTML report
         report_generator = ReportGenerator()
         summary_stats = sv_stater.export_html(output_file)
@@ -49,6 +67,7 @@ def stat(
         typer.echo("Report generated.")
 
     typer.echo(f"Analysis results written to {output_file}")
+
 
 if __name__ == "__main__":
     typer.run(stat)
