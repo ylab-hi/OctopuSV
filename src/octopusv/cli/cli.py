@@ -13,6 +13,7 @@ from .svcf2bedpe import svcf2bedpe
 from .svcf2vcf import svcf2vcf
 from .somatic import somatic
 from .clean import clean
+from .plot_circos import plot_circos
 
 app = typer.Typer(
     epilog=f"{typer.style('Agent Octopus Code V helps you dive deep into the structural variations ocean!', fg=typer.colors.GREEN, bold=True)}",
@@ -32,6 +33,7 @@ app.command()(svcf2vcf)
 app.command()(svcf2bed)
 app.command()(svcf2bedpe)
 app.command()(clean)
+app.command(name="plot-circos")(plot_circos)
 
 @app.callback()
 def display_version_info():
