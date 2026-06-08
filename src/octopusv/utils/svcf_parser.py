@@ -16,7 +16,8 @@ class SVCFEvent:
         filter (str): Filter status of the SV event.
         info (dict): Dictionary containing additional information about the SV event.
         format (str): Format of the sample data related to the SV event.
-        sample (dict): Sample-specific data for the SV event.
+        sample (dict): Sample-specific data for the SV event (first sample).
+        raw_sample_columns (list): Raw string of EVERY sample column (multi-sample safe).
         source_file (str): The source file from which this SV event was parsed.
         sv_type (str): The SV type of the event.
         bnd_pattern (str): The BND pattern from the ALT field, if applicable.
@@ -27,7 +28,11 @@ class SVCFEvent:
         sample_name (str): Name of the sample.
     """
 
-    def __init__(self, chrom, pos, sv_id, ref, alt, quality, filter, info, format, sample, source_file, sample_name):
+    # Matches a CO coordinate token like "chr1_10002-chr1_10056".
+    _CO_PATTERN = re.compile(r"([^\s:]+_\d+-[^\s:]+_\d+)")
+
+    def __init__(self, chrom, pos, sv_id, ref, alt, quality, filter, info, format, sample,
+                 source_file, sample_name, raw_sample_columns=None):
         self.chrom = chrom
         self.pos = int(pos)
         self.sv_id = sv_id
@@ -38,6 +43,13 @@ class SVCFEvent:
         self.info = self._parse_info(info)
         self.format = format
         self.sample = self._parse_sample(sample)
+
+        # Multi-sample support: keep EVERY raw sample column string, one per sample.
+        # Single-sample input -> [sample]; multi-sample -> [col1, col2, ...].
+        # Mirrors SVEvent.samples so both event classes share one mental model.
+        # NOTE: assigned BEFORE _parse_coordinates(), which now consults it.
+        self.raw_sample_columns = list(raw_sample_columns) if raw_sample_columns is not None else [sample]
+
         self.source_file = source_file
         self.sample_name = sample_name
         self.sv_type = self.info.get("SVTYPE", "")
@@ -117,6 +129,25 @@ class SVCFEvent:
 
         return result
 
+    def _find_co_with_coords(self):
+        """Return a CO coordinate token that actually carries coordinates.
+
+        In multi-sample SVCF the leading samples are usually 0/0 with CO='.',
+        while only the carrier sample holds the real 'chrA_posA-chrB_posB'.
+        The original code looked only at the first sample (self.sample), which
+        breaks coordinate parsing for multi-sample TRA/BND records.
+
+        We scan every raw sample column with a regex for the CO token, which
+        is robust even if earlier fields (ALT/REF) contain colons. Falls back
+        to the first sample's parsed CO to preserve single-sample behavior.
+        """
+        for col in self.raw_sample_columns:
+            m = self._CO_PATTERN.search(col)
+            if m:
+                return m.group(1)
+        # Fallback: whatever the first sample's CO was (may be '.' or None).
+        return self.sample.get("CO")
+
     def _parse_coordinates(self):
         """Extracts and parses the coordinates of the SV from the ALT field or INFO field."""
         if self.sv_type in ("BND", "TRA"):
@@ -145,8 +176,8 @@ class SVCFEvent:
                 )
                 end_pos = self.pos
             return self.chrom, self.pos, end_chrom, end_pos
-        # For other SV types
-        co = self.sample.get("CO")
+        # For other SV types: prefer the CO token from the carrier sample.
+        co = self._find_co_with_coords()
         if co and "-" in co:
             start, end = co.split("-")
             start_chrom, start_pos = start.split("_")
@@ -207,7 +238,11 @@ class SVCFFileEventCreator:
                     parts = line.strip().split("\t")
                     if len(parts) < 10:
                         continue  # Ensure that there are enough parts to form a complete SV event
+                    # Pass ALL sample columns (parts[9:]) so multi-sample data
+                    # survives parsing. *parts[:10] still supplies the first 9
+                    # columns + the first sample (for the legacy self.sample).
                     sv_event = SVCFEvent(
-                        *parts[:10], source_file=filename, sample_name=sample_name
-                    )  # Create an SV event object
+                        *parts[:10], source_file=filename, sample_name=sample_name,
+                        raw_sample_columns=parts[9:],
+                    )
                     self.events.append(sv_event)  # Add the event to the list of events

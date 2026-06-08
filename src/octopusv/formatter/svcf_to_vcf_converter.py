@@ -11,23 +11,25 @@ class SVCFtoVCFConverter:
         self.mode, self.sample_names = self._detect_mode_and_samples()
 
     def _detect_mode_and_samples(self):
-        """Detect if SVCF is multi-sample mode and extract sample names from header."""
-        mode = "single"
+        """Detect sample names from the #CHROM header.
+
+        Multi vs single is now determined purely by the number of sample
+        columns in the #CHROM line, NOT by the fragile '##OctopuSV_mode=multi'
+        marker (which is absent in SVCFs produced outside octopusv correct or
+        by older versions). The returned `mode` is kept for backward
+        compatibility but is no longer used to drive sample-column output.
+        """
         sample_names = ["Sample"]
 
         with open(self.input_svcf_file) as f:
             for line in f:
-                if line.startswith("##OctopuSV_mode="):
-                    mode_value = line.split("=")[1].strip()
-                    if mode_value == "multi":
-                        mode = "multi"
-                elif line.startswith("#CHROM"):
-                    # Extract all sample column names from header
+                if line.startswith("#CHROM"):
                     parts = line.strip().split("\t")
                     if len(parts) > 9:
                         sample_names = parts[9:]
                     break
 
+        mode = "multi" if len(sample_names) > 1 else "single"
         return mode, sample_names
 
     def convert(self):
@@ -141,7 +143,11 @@ class SVCFtoVCFConverter:
             # BND events don't use END field, coordinates are in ALT field
             pass
         elif event.sv_type == "INS":
-            # For insertions, END should equal POS
+            # For insertions, END equals POS by VCF convention (an insertion
+            # occupies no reference span). NOTE: this is intentional. The SVCF
+            # carries END=POS+SVLEN as an internal computed coordinate for our
+            # own calculations; converting back to standard VCF resets END=POS.
+            # Do NOT "fix" this back to POS+SVLEN.
             end_pos = event.pos
             info_fields.append(f"END={end_pos}")
         elif event.sv_type in ["TRA"]:
@@ -189,45 +195,42 @@ class SVCFtoVCFConverter:
 
         format = "GT:AD:DP:LN"
 
-        # Handle multi-sample vs single-sample mode
-        if self.mode == "multi":
-            sample_columns = self._extract_multi_sample_data(event)
-        else:
-            # Single sample mode - use original logic
+        # One VCF sample column per raw SVCF sample column. single/multi is
+        # just len(raw_sample_columns); no mode flag, no file re-read. This is
+        # the same model SVEvent.samples uses on the VCF->SVCF (correct) path.
+        raw_cols = getattr(event, "raw_sample_columns", None)
+        if not raw_cols:
+            # Defensive fallback: reconstruct one column from the legacy
+            # single-sample dict (should not normally happen).
             gt = event.sample.get("GT", "./.")
             ad = event.sample.get("AD", ".,.")
             dp = self._calculate_dp(ad)
             ln = event.sample.get("LN", ".")
-            sample_columns = [f"{gt}:{ad}:{dp}:{ln}"]
+            raw_cols = [f"{gt}:{ad}:{ln}"]
+        sample_columns = [self._convert_svcf_sample_to_vcf(s) for s in raw_cols]
+
+        # Self-check: every record must emit exactly one column per header
+        # sample. This prevents silently truncated output from being reported
+        # as success (the original multi-sample bug symptom).
+        expected = len(self.sample_names)
+        if len(sample_columns) != expected:
+            raise ValueError(
+                f"Sample column count mismatch for {id} at {chrom}:{pos}: "
+                f"got {len(sample_columns)}, expected {expected} (from #CHROM header)."
+            )
 
         sample = "\t".join(sample_columns)
 
         return f"{chrom}\t{pos}\t{id}\t{ref}\t{alt}\t{qual}\t{filter}\t{info}\t{format}\t{sample}\n"
 
-    def _extract_multi_sample_data(self, event):
-        """Extract all sample columns from original SVCF file for this event."""
-        with open(self.input_svcf_file) as f:
-            for line in f:
-                if line.startswith("#"):
-                    continue
-                parts = line.strip().split("\t")
-                # Match by chromosome, position, and ID
-                if (parts[0] == event.chrom and
-                        parts[1] == str(event.pos) and
-                        parts[2] == event.sv_id):
-                    # Extract all sample columns (from column 9 onwards)
-                    if len(parts) > 9:
-                        svcf_samples = parts[9:]
-                        # Convert each SVCF sample format to VCF format
-                        vcf_samples = [self._convert_svcf_sample_to_vcf(s) for s in svcf_samples]
-                        return vcf_samples
-                    break
-
-        # Fallback: return missing data for all samples
-        return ["./.:.,.:0:."] * len(self.sample_names)
-
     def _convert_svcf_sample_to_vcf(self, svcf_sample):
-        """Convert SVCF sample format (GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO) to VCF format (GT:AD:DP:LN)."""
+        """Convert one SVCF sample column (GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO)
+        to VCF FORMAT (GT:AD:DP:LN).
+
+        Only the first three fields (GT, AD, LN) are needed; they always
+        occupy the first three positions, so a naive split is safe even when
+        later fields (ALT/CO) contain embedded colons.
+        """
         parts = svcf_sample.split(":")
 
         if len(parts) < 3:
