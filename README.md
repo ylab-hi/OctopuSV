@@ -11,17 +11,15 @@
 > *Unify, merge, compare, and export structural variants across callers and samples.*
 
 > [!NOTE]
-> **What's New in v0.3.3** — `octopusv correct` now handles multi-sample VCFs. Previously it crashed on joint-called outputs from GRIDSS, DELLY, and other callers with more than one sample column. The corrected SVCF now preserves all sample columns.
-
-> [!NOTE]
-> **What's New in v0.3.2** — New `octopusv clean` subcommand: sanitizes broken VCFs so they can be parsed by strict tools like Truvari and bcftools. Fixes missing header definitions, illegal INFO characters, invalid `GT`/`SVLEN`, and chromosome naming mismatches against a reference FASTA. Outputs a sorted, bgzipped, tabix-indexed VCF ready for downstream benchmarking.
+> **What's New in v0.3.4** — New `octopusv plot-circos` subcommand: draws a genome-wide SV Circos overview from an SVCF, with an inner link layer (DEL/DUP/INV/TRA, colored by type) and an outer breakpoint-density histogram. Also fixes multi-sample loss in `octopusv svcf2vcf` (all sample columns are now preserved on SVCF→VCF conversion) and resolves a flag conflict in `octopusv stat`.
 >
 > ```bash
-> octopusv clean input.vcf output.vcf.gz -g reference.fa
+> octopusv plot-circos -i input.svcf -o circos.png
 > ```
-
-> [!NOTE]
-> **What's New in v0.3.1** — Native GRIDSS support. `octopusv correct` directly processes GRIDSS VCF output, resolving paired BND records into standard SV types (DEL/DUP/INV/INS/TRA) using the same logic as GRIDSS's official `simple-event-annotation.R`, including automatic INS detection from BND pairs with inserted sequences. Single breakends are safely skipped. No pre-processing with StructuralVariantAnnotation or other external tools required.
+>
+> <p align="center">
+>   <img src="imgs/sample.png" width="600" alt="Genome-wide SV Circos overview">
+> </p>
 
 > [!IMPORTANT]
 > **Always use the latest version for best results.**
@@ -29,6 +27,15 @@
 > ```bash
 > conda install bioconda::octopusv
 > ```
+
+<details>
+<summary><b>Previous releases</b></summary>
+
+- **v0.3.3** — `octopusv correct` now handles multi-sample VCFs (joint-called outputs from GRIDSS, DELLY, etc.), preserving all sample columns.
+- **v0.3.2** — New `octopusv clean` subcommand: sanitizes broken VCFs so strict tools like Truvari and bcftools can parse them (`octopusv clean input.vcf output.vcf.gz -g reference.fa`).
+- **v0.3.1** — Native GRIDSS support: `octopusv correct` resolves paired BND records into standard SV types directly, no external pre-processing needed.
+
+</details>
 
 ---
 
@@ -53,7 +60,7 @@ flowchart TD
     B -->|octopusv merge| C["Merged SVCF<br/>multi-caller / multi-sample"]
     B -->|octopusv somatic| D["Somatic SVCF<br/>tumor-specific SVs"]
     B -->|octopusv clean| E["Truvari-ready VCF.gz<br/>sanitized + indexed"]
-    C --> F["octopusv stat / plot"]
+    C --> F["octopusv stat / plot / plot-circos"]
     C --> G["octopusv svcf2vcf<br/>svcf2bed / svcf2bedpe"]
     D --> G
     F --> H["Publication-ready<br/>statistics + figures"]
@@ -279,6 +286,21 @@ The `--report` flag outputs an interactive HTML report covering SV type and size
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/html_example.png" width="70%" height="70%">
 </p>
+
+`octopusv plot-circos` draws a whole-genome SV landscape directly from an SVCF: an inner link layer (DEL/DUP/INV/TRA, colored by type) and an outer breakpoint-density histogram. Useful for spotting chromosome-level breakpoint clustering and complex-rearrangement regions at a glance.
+
+```bash
+# Basic Circos overview
+octopusv plot-circos -i input.svcf -o circos.png
+
+# Plot only translocations (interchromosomal links)
+octopusv plot-circos -i input.svcf -o circos_tra.png --tra-only
+
+# Use a custom reference .fai for chromosome sizes (default: built-in hg38)
+octopusv plot-circos -i input.svcf -o circos.png --fai reference.fa.fai
+```
+
+INS is excluded from links by default. Events larger than `--intra-max-span` are written to an oversized-intra table next to the figure for manual inspection. See `octopusv plot-circos -h` for all options (support thresholds, span filters, per-type toggles, arc styling).
 
 ### 7. Format Conversion
 

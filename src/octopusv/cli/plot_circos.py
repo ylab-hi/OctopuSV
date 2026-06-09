@@ -11,7 +11,10 @@ from octopusv.vis.circos_plotter import (
 
 
 def plot_circos(
-    input_file: Path = typer.Argument(..., help="Input SVCF file to visualize."),
+    input_file: Path = typer.Option(
+        ..., "--input-file", "-i", exists=True,
+        help="Input SVCF file to visualize.",
+    ),
     output_file: Path = typer.Option(
         ..., "--output-file", "-o",
         help="Output figure path (.pdf / .png / .svg).",
