@@ -12,7 +12,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 typer = "^0.12.3"
-click = ">=8.0,<8.1"
+click = ">=8.0,<8.4"
 loguru = "^0.7.2"
 rich = "^13.7.1"
 natsort = "^8.4.0"
