@@ -130,22 +130,18 @@ class SVCFEvent:
         return result
 
     def _find_co_with_coords(self):
-        """Return a CO coordinate token that actually carries coordinates.
+        """Return a CO coordinate token that carries real coordinates.
 
-        In multi-sample SVCF the leading samples are usually 0/0 with CO='.',
-        while only the carrier sample holds the real 'chrA_posA-chrB_posB'.
-        The original code looked only at the first sample (self.sample), which
-        breaks coordinate parsing for multi-sample TRA/BND records.
-
-        We scan every raw sample column with a regex for the CO token, which
-        is robust even if earlier fields (ALT/REF) contain colons. Falls back
-        to the first sample's parsed CO to preserve single-sample behavior.
+        In multi-sample SVCF the leading samples are often 0/0 with CO='.',
+        while only the carrier sample holds 'chrA_posA-chrB_posB'. CO is the
+        LAST FORMAT field in OctopuSV SVCF and contains no colon, so the token
+        after the final ':' in each sample column is the CO value. Index-based,
+        no regex -> no catastrophic backtracking on long INS ALT sequences.
         """
         for col in self.raw_sample_columns:
-            m = self._CO_PATTERN.search(col)
-            if m:
-                return m.group(1)
-        # Fallback: whatever the first sample's CO was (may be '.' or None).
+            co_val = col.rsplit(":", 1)[-1]
+            if co_val and co_val != "." and "-" in co_val:
+                return co_val
         return self.sample.get("CO")
 
     def _parse_coordinates(self):

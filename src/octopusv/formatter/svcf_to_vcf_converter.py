@@ -1,6 +1,8 @@
 import logging
 import re
 
+from octopusv.utils.genotype_resolver import resolve_multi_caller_genotype
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -195,33 +197,68 @@ class SVCFtoVCFConverter:
 
         format = "GT:AD:DP:LN"
 
-        # One VCF sample column per raw SVCF sample column. single/multi is
-        # just len(raw_sample_columns); no mode flag, no file re-read. This is
-        # the same model SVEvent.samples uses on the VCF->SVCF (correct) path.
+        # Resolve sample column(s). Two distinct semantics:
+        #   - sample mode (header has >1 sample): emit ONE VCF column per
+        #     sample, preserving all of them (multi-sample fix). A count
+        #     self-check guards against silent truncation.
+        #   - caller mode (header has a single SAMPLE): a record may carry one
+        #     block per supporting caller. Standard VCF is single-sample, so we
+        #     collapse to ONE column. The genotype is decided by the project's
+        #     shared multi-caller voting rule (same as GenotypeAnalyzer), so
+        #     svcf2vcf and stat agree.
         raw_cols = getattr(event, "raw_sample_columns", None)
         if not raw_cols:
             # Defensive fallback: reconstruct one column from the legacy
             # single-sample dict (should not normally happen).
             gt = event.sample.get("GT", "./.")
             ad = event.sample.get("AD", ".,.")
-            dp = self._calculate_dp(ad)
             ln = event.sample.get("LN", ".")
             raw_cols = [f"{gt}:{ad}:{ln}"]
-        sample_columns = [self._convert_svcf_sample_to_vcf(s) for s in raw_cols]
 
-        # Self-check: every record must emit exactly one column per header
-        # sample. This prevents silently truncated output from being reported
-        # as success (the original multi-sample bug symptom).
         expected = len(self.sample_names)
-        if len(sample_columns) != expected:
-            raise ValueError(
-                f"Sample column count mismatch for {id} at {chrom}:{pos}: "
-                f"got {len(sample_columns)}, expected {expected} (from #CHROM header)."
-            )
+
+        if expected == 1:
+            # CALLER MODE (or single caller): collapse to one column.
+            sample_columns = [self._collapse_caller_blocks(event, raw_cols)]
+        else:
+            # SAMPLE MODE: one VCF column per declared sample; verify count so
+            # silent truncation (the original multi-sample bug) is caught.
+            sample_columns = [self._convert_svcf_sample_to_vcf(s) for s in raw_cols]
+            if len(sample_columns) != expected:
+                raise ValueError(
+                    f"Sample column count mismatch for {id} at {chrom}:{pos}: "
+                    f"got {len(sample_columns)}, expected {expected} (from #CHROM header)."
+                )
 
         sample = "\t".join(sample_columns)
 
         return f"{chrom}\t{pos}\t{id}\t{ref}\t{alt}\t{qual}\t{filter}\t{info}\t{format}\t{sample}\n"
+
+    def _collapse_caller_blocks(self, event, raw_cols):
+        """Collapse multi-caller blocks (caller mode) into ONE VCF sample column.
+
+        Uses the shared multi-caller voting rule to pick the representative
+        genotype, then takes AD/LN from the first block carrying that genotype,
+        so the emitted GT and its AD are from the same caller. This matches the
+        genotype GenotypeAnalyzer would report for the same record.
+        """
+        if len(raw_cols) == 1:
+            return self._convert_svcf_sample_to_vcf(raw_cols[0])
+
+        fmt = event.format if getattr(event, "format", None) else \
+            "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+        info_str = ";".join(
+            f"{k}={v}" if v is not True else k for k, v in event.info.items()
+        )
+        winning_gt = resolve_multi_caller_genotype(fmt, raw_cols, info_str)
+
+        if winning_gt is not None:
+            for col in raw_cols:
+                parts = col.split(":")
+                if parts and parts[0] == winning_gt:
+                    return self._convert_svcf_sample_to_vcf(col)
+        # Fallback: first block.
+        return self._convert_svcf_sample_to_vcf(raw_cols[0])
 
     def _convert_svcf_sample_to_vcf(self, svcf_sample):
         """Convert one SVCF sample column (GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO)
