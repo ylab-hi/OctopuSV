@@ -11,7 +11,7 @@
 > *Unify, merge, compare, and export structural variants across callers and samples.*
 
 > [!NOTE]
-> **What's New in v0.3.4** — New `octopusv plot-circos` subcommand: draws a genome-wide SV Circos overview from an SVCF, with an inner link layer (DEL/DUP/INV/TRA, colored by type) and an outer breakpoint-density histogram. Also fixes multi-sample loss in `octopusv svcf2vcf` (all sample columns are now preserved on SVCF→VCF conversion) and resolves a flag conflict in `octopusv stat`.
+> **What's New in v0.3.5** — New `octopusv plot-circos` subcommand: draws a genome-wide SV Circos overview from an SVCF, with an inner link layer (DEL/DUP/INV/TRA, colored by type) and an outer breakpoint-density histogram. Also fixes multi-sample loss in `octopusv svcf2vcf` (all sample columns are now preserved on SVCF→VCF conversion) and resolves a flag conflict in `octopusv stat`.
 >
 > ```bash
 > octopusv plot-circos -i input.svcf -o circos.png
