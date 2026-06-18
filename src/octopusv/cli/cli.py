@@ -1,19 +1,22 @@
 import logging
 import sys
+
 import typer
 from rich.logging import RichHandler
+
 from octopusv import __version__
 from .bench import bench
+from .clean import clean
 from .convert import correct
 from .merge import merge
 from .plot import plot
+from .plot_circos import plot_circos
+from .somatic import somatic
 from .stat import stat
 from .svcf2bed import svcf2bed
 from .svcf2bedpe import svcf2bedpe
 from .svcf2vcf import svcf2vcf
-from .somatic import somatic
-from .clean import clean
-from .plot_circos import plot_circos
+from .validate_svcf import validate_svcf
 
 app = typer.Typer(
     epilog=f"{typer.style('Agent Octopus Code V helps you dive deep into the structural variations ocean!', fg=typer.colors.GREEN, bold=True)}",
@@ -34,10 +37,13 @@ app.command()(svcf2bed)
 app.command()(svcf2bedpe)
 app.command()(clean)
 app.command(name="plot-circos")(plot_circos)
+app.command(name="validate-svcf")(validate_svcf)
+
 
 @app.callback()
 def display_version_info():
     """Display the version information."""
+
 
 display_version_info.__doc__ = f"""{typer.style("Version", fg=typer.colors.YELLOW, bold=True)}: {typer.style(f"{__version__}", fg=typer.colors.GREEN, bold=True)}"""
 
