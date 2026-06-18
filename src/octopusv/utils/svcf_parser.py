@@ -172,13 +172,14 @@ class SVCFEvent:
                 )
                 end_pos = self.pos
             return self.chrom, self.pos, end_chrom, end_pos
+
         # For other SV types: prefer the CO token from the carrier sample.
         co = self._find_co_with_coords()
-        if co and "-" in co:
-            start, end = co.split("-")
-            start_chrom, start_pos = start.split("_")
-            end_chrom, end_pos = end.split("_")
-            return start_chrom, int(start_pos), end_chrom, int(end_pos)
+        parsed_co = self._coords_from_co(co)
+        if parsed_co is not None:
+            return parsed_co
+
+        # CO absent or unparseable -> fall back to main columns + INFO.
         start_chrom = self.chrom
         start_pos = self.pos
         end_chrom = self.info.get("CHR2", self.chrom)
@@ -202,6 +203,28 @@ class SVCFEvent:
                 )
                 end_pos = self.pos
         return start_chrom, start_pos, end_chrom, end_pos
+
+    def _coords_from_co(self, co):
+        """Parse a CO token 'startChrom_startPos-endChrom_endPos' into coordinates.
+
+        Returns (start_chrom, start_pos, end_chrom, end_pos) or None if the token
+        is missing / not splittable.
+
+        Robust to contig names that themselves contain underscores or hyphens
+        (e.g. 'chrY_KI270740v1_random', 'NC_007605'): the position is always the
+        final '_'-delimited field, so split the chrom/pos pair from the RIGHT
+        (rsplit) and split the start-end pair only at the FIRST '-'.
+        """
+        if not co or "-" not in co:
+            return None
+        try:
+            start, end = co.split("-", 1)  # split only at the first '-'
+            start_chrom, start_pos = start.rsplit("_", 1)  # pos is the last '_' field
+            end_chrom, end_pos = end.rsplit("_", 1)
+            return start_chrom, int(start_pos), end_chrom, int(end_pos)
+        except (ValueError, AttributeError):
+            # Malformed CO token -> let the caller fall back to INFO/main columns.
+            return None
 
 
 class SVCFFileEventCreator:
