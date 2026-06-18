@@ -182,3 +182,5 @@ class TestOctopusV:
         assert os.path.exists(output_vcf), f"Output not created: {output_vcf}"
         assert compare_files(output_vcf, standard_vcf, verbose=True), \
             "svcf2vcf output does not match standard"
+
+# test
