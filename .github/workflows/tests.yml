@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: .venv
-          key: ${{ runner.os }}-poetry-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
+          key: ${{ runner.os }}-poetry-${{ matrix.python }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
           restore-keys: |
             ${{ runner.os }}-poetry-${{ matrix.python }}-
             ${{ runner.os }}-poetry-
@@ -130,7 +130,7 @@ jobs:
 
       - name: Install Poetry
         run: |
-          pipx install --pip-args=--constraint=.github/workflows/constraints.txt poetry
+          pipx install --pip-args=--constraint=.github/workflows/constraints.txt poetry==1.8.5
           poetry --version
 
       - name: Debug Python Environment
@@ -144,8 +144,8 @@ jobs:
 
       - name: Install Nox
         run: |
-          pipx install --pip-args=--constraint=.github/workflows/constraints.txt nox
-          pipx inject --pip-args=--constraint=.github/workflows/constraints.txt nox nox-poetry
+          pipx install --pip-args=--constraint=.github/workflows/constraints.txt nox==2026.4.10
+          pipx inject --pip-args=--constraint=.github/workflows/constraints.txt nox nox-poetry==1.0.3
           nox --version
 
       - name: Compute pre-commit cache key
@@ -161,7 +161,10 @@ jobs:
           digest = hashlib.sha256(payload).hexdigest()
           result = "${{ runner.os }}-{}-{}-pre-commit".format(python, digest[:8])
 
-          print("::set-output name=result::{}".format(result))
+          print("result={}".format(result))
+
+          with open("${{ github.output }}", "a") as output:
+              print("result={}".format(result), file=output)
 
       - name: Restore pre-commit cache
         uses: actions/cache@v3
@@ -174,11 +177,11 @@ jobs:
 
       - name: Run Nox
         run: |
-          nox --force-color --session=tests
+          nox --force-color --session=${{ matrix.session }}
 
       - name: Upload coverage data
         if: always() && matrix.session == 'tests'
-        uses: "actions/upload-artifact@v4"
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-data-${{ matrix.python }}-${{ matrix.os }}
           path: "htmlcov/index.html"
