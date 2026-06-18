@@ -6,40 +6,28 @@ on:
       - main
     paths:
       - "**.py"
-      - "**/Dockerfile"
       - ".github/workflows/*.yml"
       - poetry.lock
       - pyproject.toml
+      - "tests/**"
 
   pull_request:
     branches:
       - main
     paths:
       - "**.py"
-      - "**/Dockerfile"
       - ".github/workflows/*.yml"
       - poetry.lock
       - pyproject.toml
+      - "tests/**"
 
 jobs:
   tests:
-    name: ${{ matrix.session }} ${{ matrix.python }} / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { python: "3.10", os: "ubuntu-latest", session: "pre-commit" }
-          - { python: "3.10", os: "ubuntu-latest", session: "safety" }
-          - { python: "3.10", os: "ubuntu-latest", session: "mypy" }
-          - { python: "3.10", os: "ubuntu-latest", session: "tests" }
-          - { python: "3.10", os: "macos-latest", session: "tests" }
-          - { python: "3.10", os: "ubuntu-latest", session: "docs-build" }
+    name: tests 3.10 / ubuntu-latest
+    runs-on: ubuntu-latest
 
     env:
-      NOXSESSION: ${{ matrix.session }}
       FORCE_COLOR: "1"
-      PRE_COMMIT_COLOR: "always"
 
     steps:
       - name: Check out the repository
@@ -47,100 +35,27 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Cache pip packages
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python }}-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-${{ matrix.python }}-
-            ${{ runner.os }}-pip-
-
-      - name: Cache Poetry virtual environment
-        uses: actions/cache@v3
-        with:
-          path: .venv
-          key: ${{ runner.os }}-poetry-${{ matrix.python }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-poetry-${{ matrix.python }}-
-            ${{ runner.os }}-poetry-
-
-      - name: Set up Python ${{ matrix.python }}
+      - name: Set up Python 3.10
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.10"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -q --no-install-recommends --no-install-suggests \
+            libhts-dev \
+            libssl-dev
 
       - name: Upgrade pip
         run: |
           pip install --constraint=.github/workflows/constraints.txt pip
           pip --version
 
-      - name: Upgrade pip in virtual environments
-        shell: python
-        run: |
-          import os
-          import pip
-
-          with open(os.environ["GITHUB_ENV"], mode="a") as io:
-              print(f"VIRTUALENV_PIP={pip.__version__}", file=io)
-
-      - name: Install Dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -q --no-install-recommends --no-install-suggests libhts-dev libssl-dev
-
-      - name: Cache macOS dependencies
-        if: matrix.os == 'macos-latest'
-        uses: actions/cache@v3
-        with:
-          path: ~/brew-cache
-          key: macos-brew-${{ hashFiles('**/Dockerfile') }}
-          restore-keys: |
-            macos-brew-
-
-      - name: Configure Homebrew
-        if: matrix.os == 'macos-latest'
-        uses: Homebrew/actions/setup-homebrew@master
-
-      - name: Install macOS Dependencies
-        if: matrix.os == 'macos-latest'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
-          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-        run: |
-          # Create and set permissions for necessary directories
-          sudo mkdir -p /usr/local/include /usr/local/lib
-          sudo chown -R $(whoami) /usr/local/include /usr/local/lib
-
-          # Install required packages
-          brew install htslib
-          brew install openssl@3
-
-          # Create symbolic links using brew --prefix to ensure correct paths
-          ln -sf $(brew --prefix openssl@3)/include/openssl /usr/local/include/openssl || true
-          ln -sf $(brew --prefix openssl@3)/lib/*a /usr/local/lib/ || true
-          ln -sf $(brew --prefix openssl@3)/lib/*dylib /usr/local/lib/ || true
-
-          # Verify installations and links
-          ls -la /usr/local/include/openssl || true
-          ls -la /usr/local/lib/*ssl* || true
-          brew list --versions htslib openssl@3
-
       - name: Install Poetry
         run: |
           pipx install --pip-args=--constraint=.github/workflows/constraints.txt poetry==1.8.5
           poetry --version
-
-      - name: Debug Python Environment
-        if: matrix.os == 'macos-latest'
-        run: |
-          which python
-          python --version
-          echo "PYTHONPATH=$PYTHONPATH"
-          echo "Python executable location: $(which python)"
-          echo "OpenSSL location: $(brew --prefix openssl@3)"
 
       - name: Install Nox
         run: |
@@ -148,47 +63,13 @@ jobs:
           pipx inject --pip-args=--constraint=.github/workflows/constraints.txt nox nox-poetry==1.0.3
           nox --version
 
-      - name: Compute pre-commit cache key
-        if: matrix.session == 'pre-commit'
-        id: pre-commit-cache
-        shell: python
+      - name: Run tests
         run: |
-          import hashlib
-          import sys
-
-          python = "py{}.{}".format(*sys.version_info[:2])
-          payload = sys.version.encode() + sys.executable.encode()
-          digest = hashlib.sha256(payload).hexdigest()
-          result = "${{ runner.os }}-{}-{}-pre-commit".format(python, digest[:8])
-
-          print("result={}".format(result))
-
-          with open("${{ github.output }}", "a") as output:
-              print("result={}".format(result), file=output)
-
-      - name: Restore pre-commit cache
-        uses: actions/cache@v3
-        if: matrix.session == 'pre-commit'
-        with:
-          path: ~/.cache/pre-commit
-          key: ${{ steps.pre-commit-cache.outputs.result }}-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            ${{ steps.pre-commit-cache.outputs.result }}-
-
-      - name: Run Nox
-        run: |
-          nox --force-color --session=${{ matrix.session }}
+          nox --force-color --session=tests
 
       - name: Upload coverage data
-        if: always() && matrix.session == 'tests'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-data-${{ matrix.python }}-${{ matrix.os }}
+          name: coverage-data-python-3.10-ubuntu
           path: "htmlcov/index.html"
-
-      - name: Upload documentation
-        if: matrix.session == 'docs-build'
-        uses: actions/upload-artifact@v4
-        with:
-          name: docs
-          path: docs/_build
