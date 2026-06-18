@@ -91,13 +91,13 @@ def compare_files(file1, file2, verbose=False):
                     print(f"Line lengths differ: {len(line1)} vs {len(line2)}")
 
                 # Use difflib to show exact differences
-                for i, s in enumerate(difflib.ndiff(line1, line2)):
+                for j, s in enumerate(difflib.ndiff(line1, line2)):
                     if s[0] == ' ':
                         continue
                     elif s[0] == '-':
-                        print(f"Delete '{s[-1]}' from position {i}")
+                        print(f"Delete '{s[-1]}' from position {j}")
                     elif s[0] == '+':
-                        print(f"Add '{s[-1]}' to position {i}")
+                        print(f"Add '{s[-1]}' to position {j}")
 
             differences.append((i, line1, line2))
 
@@ -106,83 +106,79 @@ def compare_files(file1, file2, verbose=False):
 
 class TestOctopusV:
     def setup_method(self):
-        """Setup method runs before each test"""
-        # Ensure output directory exists
+        """Runs before each test; ensure the output directory exists."""
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    # ---- three independent correct tests -----------------------------------
+
+    def test_correct_sniffles(self):
+        self._check_correct("sniffles")
+
     def test_correct_svim(self):
-        """Test correct command with SVIM input"""
-        input_vcf = os.path.join(INPUT_DIR, "svim_example.vcf")
-        output_svcf = os.path.join(OUTPUT_DIR, "out_svim_example.svcf")
-        standard_svcf = os.path.join(STANDARD_DIR, "standard_svim.svcf")
-
-        # Check if input and standard files exist
-        assert os.path.exists(input_vcf), f"Input file not found: {input_vcf}"
-        assert os.path.exists(standard_svcf), f"Standard file not found: {standard_svcf}"
-
-        # Run octopusv correct command with -i and -o options
-        run_octopusv("correct", "-i", input_vcf, "-o", output_svcf, verbose=False)
-
-        # Check if output file was created
-        assert os.path.exists(output_svcf), f"Output file not created: {output_svcf}"
-
-        # Compare output file with standard file
-        assert compare_files(output_svcf, standard_svcf, verbose=True), \
-            "SVIM correction output does not match standard"
+        self._check_correct("svim")
 
     def test_correct_pbsv(self):
-        """Test correct command with PBSV input"""
-        input_vcf = os.path.join(INPUT_DIR, "pbsv_example.vcf")
-        output_svcf = os.path.join(OUTPUT_DIR, "out_pbsv_example.svcf")
-        standard_svcf = os.path.join(STANDARD_DIR, "standard_pbsv.svcf")
+        self._check_correct("pbsv")
 
-        # Check if input and standard files exist
-        assert os.path.exists(input_vcf), f"Input file not found: {input_vcf}"
-        assert os.path.exists(standard_svcf), f"Standard file not found: {standard_svcf}"
+    def _check_correct(self, caller):
+        """Run `octopusv correct` on one caller VCF and compare to standard."""
+        input_vcf = os.path.join(INPUT_DIR, f"{caller}.vcf")
+        output_svcf = os.path.join(OUTPUT_DIR, f"{caller}.svcf")
+        standard_svcf = os.path.join(STANDARD_DIR, f"{caller}.svcf")
 
-        # Run octopusv correct command with -i and -o options
+        assert os.path.exists(input_vcf), f"Input not found: {input_vcf}"
+        assert os.path.exists(standard_svcf), f"Standard not found: {standard_svcf}"
+
         run_octopusv("correct", "-i", input_vcf, "-o", output_svcf, verbose=False)
-
-        # Check if output file was created
-        assert os.path.exists(output_svcf), f"Output file not created: {output_svcf}"
-
-        # Compare output file with standard file
+        assert os.path.exists(output_svcf), f"Output not created: {output_svcf}"
         assert compare_files(output_svcf, standard_svcf, verbose=True), \
-            "PBSV correction output does not match standard"
+            f"{caller} correct output does not match standard"
 
-    def test_merge_intersect(self):
-        """Test merge command with intersect option"""
-        input_svcf1 = os.path.join(INPUT_DIR, "pbsv.svcf")
-        input_svcf2 = os.path.join(INPUT_DIR, "svim.svcf")
-        output_svcf = os.path.join(OUTPUT_DIR, "out_inter.svcf")
-        standard_svcf = os.path.join(STANDARD_DIR, "standard_intersection.svcf")
+    # ---- merge over the three corrected SVCFs ------------------------------
 
-        # Check if input and standard files exist
-        assert os.path.exists(input_svcf1), f"Input file 1 not found: {input_svcf1}"
-        assert os.path.exists(input_svcf2), f"Input file 2 not found: {input_svcf2}"
-        assert os.path.exists(standard_svcf), f"Standard file not found: {standard_svcf}"
+    def test_merge_min_support(self):
+        """Merge the three corrected SVCFs with --min-support 2 (fixed order).
 
-        # Run octopusv merge command
-        run_octopusv(
-            "merge",
-            "-i", input_svcf1, input_svcf2,
-            "--intersect",
-            "-o", output_svcf,
-            verbose=True
-        )
+        The correct step is run here so the test is self-contained and a
+        regression in correct also fails this test. Inputs deliberately include
+        underscore-containing contigs (e.g. chrY_KI270740v1_random, NC_007605)
+        to guard the CO coordinate parser against the unpack regression.
+        """
+        for caller in ("sniffles", "svim", "pbsv"):
+            run_octopusv("correct",
+                         "-i", os.path.join(INPUT_DIR, f"{caller}.vcf"),
+                         "-o", os.path.join(OUTPUT_DIR, f"{caller}.svcf"),
+                         verbose=False)
 
-        # Check if output file was created
-        assert os.path.exists(output_svcf), f"Output file not created: {output_svcf}"
+        output_svcf = os.path.join(OUTPUT_DIR, "min2.svcf")
+        standard_svcf = os.path.join(STANDARD_DIR, "min2.svcf")
+        assert os.path.exists(standard_svcf), f"Standard not found: {standard_svcf}"
 
-        # Compare files with verbose mode
-        is_same = compare_files(output_svcf, standard_svcf, verbose=True)
+        # Fixed input order: sniffles, svim, pbsv (order affects SOURCES).
+        run_octopusv("merge",
+                     "-i",
+                     os.path.join(OUTPUT_DIR, "sniffles.svcf"),
+                     os.path.join(OUTPUT_DIR, "svim.svcf"),
+                     os.path.join(OUTPUT_DIR, "pbsv.svcf"),
+                     "--min-support", "2",
+                     "-o", output_svcf, verbose=True)
 
-        # Print additional debug information if files differ
-        if not is_same:
-            print("\nRaw hex dump of first few lines:")
-            for filename in [output_svcf, standard_svcf]:
-                print(f"\n{filename}:")
-                with open(filename, 'rb') as f:
-                    print(f.read().hex())
+        assert os.path.exists(output_svcf), f"Output not created: {output_svcf}"
+        assert compare_files(output_svcf, standard_svcf, verbose=True), \
+            "Merge --min-support output does not match standard"
 
-        assert is_same, "Merge intersect output does not match standard"
+    # ---- svcf2vcf on the merged result -------------------------------------
+
+    def test_svcf2vcf(self):
+        """Convert the standard merged SVCF to VCF and compare."""
+        input_svcf = os.path.join(STANDARD_DIR, "min2.svcf")
+        output_vcf = os.path.join(OUTPUT_DIR, "min2.vcf")
+        standard_vcf = os.path.join(STANDARD_DIR, "min2.vcf")
+
+        assert os.path.exists(input_svcf), f"Input not found: {input_svcf}"
+        assert os.path.exists(standard_vcf), f"Standard not found: {standard_vcf}"
+
+        run_octopusv("svcf2vcf", "-i", input_svcf, "-o", output_vcf, verbose=False)
+        assert os.path.exists(output_vcf), f"Output not created: {output_vcf}"
+        assert compare_files(output_vcf, standard_vcf, verbose=True), \
+            "svcf2vcf output does not match standard"
