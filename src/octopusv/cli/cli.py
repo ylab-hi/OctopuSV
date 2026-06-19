@@ -8,6 +8,7 @@ from octopusv import __version__
 from .bench import bench
 from .clean import clean
 from .convert import correct
+from .header import header
 from .merge import merge
 from .plot import plot
 from .plot_circos import plot_circos
@@ -17,42 +18,121 @@ from .svcf2bed import svcf2bed
 from .svcf2bedpe import svcf2bedpe
 from .svcf2vcf import svcf2vcf
 from .validate_svcf import validate_svcf
-from .header import header
+
+
+HELP = (
+    f"[bold yellow]Version[/bold yellow]: [bold green]{__version__}[/bold green]\n\n"
+    "OctopuSV: SVCF-centered structural variant standardization, inspection, "
+    "statistics, visualization, and downstream-ready operations."
+)
+
+EPILOG = (
+    "[bold green]OctopuSV[/bold green] — "
+    "navigate the structural-variation ocean."
+)
+
 
 app = typer.Typer(
-    epilog=f"{typer.style('Agent Octopus Code V helps you dive deep into the structural variations ocean!', fg=typer.colors.GREEN, bold=True)}",
+    help=HELP,
+    epilog=EPILOG,
+    rich_markup_mode="rich",
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 
 FORMAT = "%(message)s"
-logging.basicConfig(level="INFO", format=FORMAT, datefmt="[%X]", handlers=[RichHandler()])
+logging.basicConfig(
+    level="INFO",
+    format=FORMAT,
+    datefmt="[%X]",
+    handlers=[RichHandler()],
+)
 
-app.command()(correct)  # Command to initiate convert functionality.
-app.command()(merge)  # Command to initiate merge functionality.
-app.command(name="benchmark")(bench)  # Command to initiate bench functionality.
-app.command()(stat)  # Command to initiate stat functionality.
-app.command()(plot)  # Command to initiate plot functionality.
-app.command()(somatic)  # Command to initiate somatic SV calling functionality.
-app.command()(svcf2vcf)
-app.command()(svcf2bed)
-app.command()(svcf2bedpe)
-app.command()(clean)
-app.command(name="plot-circos")(plot_circos)
-app.command(name="validate-svcf")(validate_svcf)
-app.command()(header)
+
+# ---------------------------------------------------------------------
+# SVCF inspection and statistics
+# ---------------------------------------------------------------------
+
+app.command(
+    rich_help_panel="SVCF inspection and statistics",
+)(header)
+
+app.command(
+    name="validate-svcf",
+    rich_help_panel="SVCF inspection and statistics",
+)(validate_svcf)
+
+app.command(
+    rich_help_panel="SVCF inspection and statistics",
+)(stat)
+
+
+# ---------------------------------------------------------------------
+# SV standardization and merging
+# ---------------------------------------------------------------------
+
+app.command(
+    rich_help_panel="SV standardization and merging",
+)(clean)
+
+app.command(
+    rich_help_panel="SV standardization and merging",
+)(correct)
+
+app.command(
+    rich_help_panel="SV standardization and merging",
+)(merge)
+
+
+# ---------------------------------------------------------------------
+# Conversion
+# ---------------------------------------------------------------------
+
+app.command(
+    rich_help_panel="Conversion",
+)(svcf2vcf)
+
+app.command(
+    rich_help_panel="Conversion",
+)(svcf2bed)
+
+app.command(
+    rich_help_panel="Conversion",
+)(svcf2bedpe)
+
+
+# ---------------------------------------------------------------------
+# Analysis and visualization
+# ---------------------------------------------------------------------
+
+app.command(
+    name="benchmark",
+    rich_help_panel="Analysis and visualization",
+)(bench)
+
+app.command(
+    rich_help_panel="Analysis and visualization",
+)(plot)
+
+app.command(
+    name="plot-circos",
+    rich_help_panel="Analysis and visualization",
+)(plot_circos)
+
+app.command(
+    rich_help_panel="Analysis and visualization",
+)(somatic)
 
 
 @app.callback()
 def display_version_info():
-    """Display the version information."""
+    """OctopuSV command-line interface."""
 
-
-display_version_info.__doc__ = f"""{typer.style("Version", fg=typer.colors.YELLOW, bold=True)}: {typer.style(f"{__version__}", fg=typer.colors.GREEN, bold=True)}"""
 
 # For documentation purposes
 if "sphinx" in sys.modules and __name__ != "__main__":
-    # Create the typer click object to generate docs with sphinx-click
+    # Create the typer click object to generate docs with sphinx-click.
     typer_click_object = typer.main.get_command(app)
+
 
 if __name__ == "__main__":
     app()
