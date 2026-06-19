@@ -1,61 +1,118 @@
+# size_plotter.py
+
+"""SV size distribution plotter.
+
+Preferred input is the structured size stats dict from SVStater:
+
+    {
+        "bins": {
+            "0-50 bp": 0,
+            "51-100 bp": 8935,
+            ...
+        },
+        ...
+    }
+
+For backward compatibility, this plotter also accepts full stat JSON or a
+legacy stat.txt path.
+"""
+
+from __future__ import annotations
+
+import json
 import logging
+from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 
-logging.basicConfig(level=logging.DEBUG)
+LOGGER = logging.getLogger(__name__)
+
+SIZE_ORDER = ["0-50 bp", "51-100 bp", "101-500 bp", "501-1 kb", "1 kb-10 kb", ">10 kb"]
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    with path.open() as handle:
+        return json.load(handle)
 
 
 class SizePlotter:
-    def __init__(self, input_file):
-        self.input_file = input_file
-        self.data = self.parse_data()
+    """Plot SV size-bin distribution."""
 
-    def parse_data(self):
-        """Parse the statistics file and extract SV size distribution."""
-        size_distribution = {}
-        parsing_distribution = False
-        with open(self.input_file) as f:
-            for line in f:
+    def __init__(self, stats_or_file: dict[str, Any] | str | Path):
+        self.stats_or_file = stats_or_file
+        self.data = self._load_data(stats_or_file)
+
+    def _load_data(self, stats_or_file: dict[str, Any] | str | Path) -> dict[str, int]:
+        if isinstance(stats_or_file, dict):
+            return self._from_dict(stats_or_file)
+
+        path = Path(stats_or_file)
+        if path.suffix.lower() == ".json":
+            return self._from_dict(_read_json(path))
+
+        return self._from_legacy_text(path)
+
+    def _from_dict(self, data: dict[str, Any]) -> dict[str, int]:
+        size_stats = data.get("size", data)
+        bins = size_stats.get("bins", {}) or {}
+        return {str(k): int(v) for k, v in bins.items()}
+
+    def _from_legacy_text(self, path: Path) -> dict[str, int]:
+        bins: dict[str, int] = {}
+        in_section = False
+
+        with path.open() as handle:
+            for line in handle:
                 if "Size distribution" in line:
-                    parsing_distribution = True
+                    in_section = True
                     continue
-                if parsing_distribution:
-                    if line.strip() == "":
-                        break
-                    parts = line.strip().split("=")
-                    if len(parts) == 2:
-                        size_range = parts[0].strip()
-                        count = int(parts[1].strip())
-                        size_distribution[size_range] = count
-        return size_distribution
+                if in_section and not line.strip():
+                    break
+                if not in_section:
+                    continue
 
-    def plot(self, output_prefix, *, save_svg=True):
+                parts = line.strip().split("=")
+                if len(parts) != 2:
+                    continue
+
+                label = parts[0].strip()
+                try:
+                    bins[label] = int(parts[1].strip())
+                except ValueError:
+                    continue
+
+        return bins
+
+    def plot(self, output_prefix: str | Path, *, save_svg: bool = True) -> None:
         """Create and save the SV size distribution plot."""
         if not self.data:
-            logging.error("No data to plot")
+            LOGGER.error("No size distribution data to plot.")
             return
 
-        # Create figure with specified size
-        plt.figure(figsize=(12, 7))
+        sizes = [self.data.get(label, 0) for label in SIZE_ORDER]
+        x = range(len(SIZE_ORDER))
 
-        # Set style with refined grid
-        sns.set_style("whitegrid", {"grid.linestyle": "--", "grid.alpha": 0.3})
+        fig, ax = plt.subplots(figsize=(12, 7))
+        bars = ax.bar(x, sizes, width=0.7, edgecolor="white", linewidth=1.5)
 
-        # Define consistent size order
-        size_order = ["0-50 bp", "51-100 bp", "101-500 bp", "501-1 kb", "1 kb-10 kb", ">10 kb"]
-        sizes = [self.data.get(size, 0) for size in size_order]
+        ax.set_xlabel("SV Size Range", fontsize=12, labelpad=10, fontweight="bold")
+        ax.set_ylabel("Count", fontsize=12, labelpad=10, fontweight="bold")
+        ax.set_title("Structural Variant Size Distribution", fontsize=14, pad=20, fontweight="bold")
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(SIZE_ORDER, rotation=25, ha="right")
+        ax.grid(True, axis="y", linestyle="--", alpha=0.3)
+        ax.set_axisbelow(True)
 
-        # Create custom color gradient
-        colors = sns.color_palette("RdYlBu_r", n_colors=len(size_order))
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.8)
 
-        # Create bar plot with refined styling
-        bars = plt.bar(size_order, sizes, color=colors, width=0.7, edgecolor="white", linewidth=1.5)
-
-        # Add value labels on bars
         for bar in bars:
             height = bar.get_height()
-            plt.text(
+            if height == 0:
+                continue
+            ax.text(
                 bar.get_x() + bar.get_width() / 2.0,
                 height,
                 f"{int(height):,}",
@@ -65,26 +122,13 @@ class SizePlotter:
                 fontweight="bold",
             )
 
-        # Customize labels and title
-        plt.xlabel("SV Size Range", fontsize=12, labelpad=10, fontweight="bold")
-        plt.ylabel("Count", fontsize=12, labelpad=10, fontweight="bold")
-        plt.title("Structural Variant Size Distribution", fontsize=14, pad=20, fontweight="bold")
-
-        # Adjust tick labels
-        plt.xticks(rotation=25, ha="right", fontsize=10)
-        plt.yticks(fontsize=10)
-
-        # Add subtle border
-        for spine in plt.gca().spines.values():
-            spine.set_visible(True)
-            spine.set_color("#cccccc")
-            spine.set_linewidth(0.8)
-
-        # Adjust layout and save
-        plt.tight_layout()
-        plt.savefig(f"{output_prefix}.png", dpi=300, bbox_inches="tight")
+        fig.tight_layout()
+        output_prefix = str(output_prefix)
+        fig.savefig(f"{output_prefix}.png", dpi=300, bbox_inches="tight", facecolor="white")
 
         if save_svg:
-            plt.savefig(f"{output_prefix}.svg", format="svg", bbox_inches="tight")
+            fig.savefig(f"{output_prefix}.svg", format="svg", bbox_inches="tight", facecolor="white")
 
-        plt.close()
+        plt.close(fig)
+        LOGGER.info("Size plot saved as %s.png%s", output_prefix, " and .svg" if save_svg else "")
+

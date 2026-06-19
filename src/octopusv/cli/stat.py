@@ -16,13 +16,29 @@ def stat(
     input_option: Path = typer.Option(
         None, "--input-file", "-i", help="Input SVCF file to analyze."
     ),
-    output_file: Path = typer.Option(..., "--output-file", "-o", help="Output file for statistics."),
+    output_file: Path = typer.Option(
+        None, "--output-file", "-o",
+        help="Output file. Optional for text/JSON (defaults to stdout); required with --report."
+    ),
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit structured JSON. Writes to -o if given, else to stdout."
+    ),
+    fai: Path = typer.Option(
+        None, "--fai",
+        help="Reference .fai index; highest-priority source for chromosome density."
+    ),
+    genome: str = typer.Option(
+        "auto", "--genome",
+        help="Built-in genome for density when no --fai: auto|hg38|grch38|hg19|grch37. "
+             "auto detects from contig names (hs37d5->hg19); ambiguous -> hg38 (assumed)."
+    ),
     min_size: int = typer.Option(50, "--min-size", help="Minimum SV size to consider."),
     max_size: int = typer.Option(None, "--max-size", help="Maximum SV size to consider."),
-    report: bool = typer.Option(False, "--report", help="Generate an HTML report."),
+    report: bool = typer.Option(False, "--report", help="Generate an HTML report (requires -o)."),
 ):
-    """Analyze a single SVCF file and generate comprehensive statistics."""
-    # Resolve input file: accept either the positional argument or -i/--input-file.
+    """Analyze a single SVCF file and report SV-content statistics."""
+    # Resolve input.
     input_file = input_option if input_option is not None else input_arg
     if input_file is None:
         typer.echo(
@@ -32,37 +48,43 @@ def stat(
         )
         raise typer.Exit(code=1)
 
-    # Run analysis
-    sv_stater = SVStater(str(input_file), min_size=min_size, max_size=max_size)
+    # --report needs an output prefix to write plots + html next to.
+    if report and output_file is None:
+        typer.echo("Error: --report requires -o/--output-file.", err=True)
+        raise typer.Exit(code=1)
+
+    sv_stater = SVStater(str(input_file), min_size=min_size, max_size=max_size,
+                         fai=str(fai) if fai else None, genome=genome)
     sv_stater.analyze()
+
+    # JSON path: to file if -o given, else stdout.
+    if as_json:
+        payload = sv_stater.write_json(str(output_file) if output_file else None)
+        if payload is not None:
+            typer.echo(payload)
+        else:
+            typer.echo(f"JSON statistics written to {output_file}")
+        return
+
+    # Text path: to file if -o given, else stdout.
+    if output_file is None:
+        typer.echo(sv_stater.to_text())
+        return
+
     sv_stater.write_results(output_file)
 
     if report:
         typer.echo("Generating HTML report...")
-
-        # Generate plots
         output_prefix = str(output_file.with_suffix(''))
-
-        # Generate chromosome distribution plot
-        chromosome_plotter = ChromosomePlotter(str(output_file))
-        chromosome_plotter.plot(f"{output_prefix}_chromosome_distribution")
-
-        # Generate SV type plot
-        type_plotter = TypePlotter(str(output_file))
-        type_plotter.plot(f"{output_prefix}_sv_types")
-
-        # Generate size distribution plot
-        size_plotter = SizePlotter(str(output_file))
-        size_plotter.plot(f"{output_prefix}_sv_sizes")
-
-        # Generate HTML report
+        ChromosomePlotter(str(output_file)).plot(f"{output_prefix}_chromosome_distribution")
+        TypePlotter(str(output_file)).plot(f"{output_prefix}_sv_types")
+        SizePlotter(str(output_file)).plot(f"{output_prefix}_sv_sizes")
         report_generator = ReportGenerator()
-        summary_stats = sv_stater.export_html(output_file)
         report_generator.generate(
             input_file=str(input_file),
             output_path=str(output_file),
             sample_id=input_file.stem,
-            summary_stats=summary_stats
+            summary_stats=sv_stater.to_html_dict(),
         )
         typer.echo("Report generated.")
 

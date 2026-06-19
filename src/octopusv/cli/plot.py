@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Optional
 
 import typer
 
@@ -8,19 +11,56 @@ from octopusv.ploter.type_plotter import TypePlotter
 
 
 def plot(
-    input_file: Path = typer.Argument(..., help="Input stat.txt file to plot."),
-    output_prefix: Path = typer.Option(..., "--output-prefix", "-o", help="Output prefix for plot files."),
+    input_file: Path = typer.Option(
+        ...,
+        "--input-file",
+        "-i",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+        help="Input statistics file. Prefer stat.json, but legacy stat.txt is also supported.",
+    ),
+    output_prefix: Optional[Path] = typer.Option(
+        None,
+        "--output-prefix",
+        "-o",
+        help=(
+            "Output prefix for plot files. If omitted, uses the input filename "
+            "without extension."
+        ),
+    ),
+    no_svg: bool = typer.Option(
+        False,
+        "--no-svg",
+        help="Only write PNG files; do not write SVG files.",
+    ),
 ):
-    """Generate plots from the statistics file."""
-    chromosome_plotter = ChromosomePlotter(input_file)
-    type_plotter = TypePlotter(input_file)
-    size_plotter = SizePlotter(input_file)
+    """Generate standard plots from OctopuSV statistics.
 
-    chromosome_plotter.plot(f"{output_prefix}_chromosome_distribution")
-    type_plotter.plot(f"{output_prefix}_sv_types")
-    size_plotter.plot(f"{output_prefix}_sv_sizes")
+    Preferred input:
+        octopusv stat -i sample.svcf --json -o stat.json
+        octopusv plot -i stat.json -o stat
 
-    typer.echo(f"Plots have been generated with prefix: {output_prefix}")
+    Legacy text stat.txt is still accepted for compatibility.
+    """
+    prefix_path = output_prefix if output_prefix is not None else input_file.with_suffix("")
+    prefix = str(prefix_path)
+    save_svg = not no_svg
+
+    ChromosomePlotter(input_file).plot(
+        f"{prefix}_chromosome_distribution",
+        save_svg=save_svg,
+    )
+    TypePlotter(input_file).plot(
+        f"{prefix}_sv_types",
+        save_svg=save_svg,
+    )
+    SizePlotter(input_file).plot(
+        f"{prefix}_sv_sizes",
+        save_svg=save_svg,
+    )
+
+    typer.echo(f"Plots written with prefix: {prefix}")
 
 
 if __name__ == "__main__":

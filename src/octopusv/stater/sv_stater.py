@@ -1,255 +1,279 @@
+"""SVStater: run all analyzers once and render text / JSON / HTML from dicts.
+
+Single source of truth is `self.stats` (nested dicts of numbers). Three
+renderers consume it:
+  * to_text()      -> the human report (replaces the old write_results()).
+  * to_json_dict() -> structured result for agents (stat --json).
+  * to_html_dict() -> adapts stats into the exact keys ReportGenerator's
+                      Jinja template expects, so --report keeps working
+                      without touching the template.
+
+No analyzer returns strings and nothing is parsed back out of text.
+"""
+
+import json
 from pathlib import Path
 
-from .chromosome_analyzer import ChromosomeAnalyzer
-from .genotype_analyzer import GenotypeAnalyzer
-from .qc_analyzer import QCAnalyzer
-from .size_analyzer import SizeAnalyzer
-from .type_analyzer import TypeAnalyzer
+from .stat_reader import read_records
+from .genome_sizes import resolve_lengths
+from .stat_analyzers import (
+    TypeAnalyzer, SizeAnalyzer, ChromosomeAnalyzer, QCAnalyzer, GenotypeAnalyzer,
+)
 
 
 class SVStater:
-    def __init__(self, input_file, min_size=50, max_size=None):
+    def __init__(self, input_file, min_size=50, max_size=None, fai=None, genome="auto"):
         self.input_file = input_file
         self.min_size = min_size
         self.max_size = max_size
-        self.results = {}
+        self.fai = fai
+        self.genome = genome
+        self.records = []
+        self.sample_names = []
+        self.stats = {}
+        self.length_source = None
 
     def analyze(self):
-        self.results["type"] = TypeAnalyzer(self.input_file).analyze()
-        self.results["size"] = SizeAnalyzer(self.input_file, self.min_size, self.max_size).analyze()
-        self.results["chromosome"] = ChromosomeAnalyzer(self.input_file).analyze()
-        self.results["qc"] = QCAnalyzer(self.input_file).analyze()
-        self.results["genotype"] = GenotypeAnalyzer(self.input_file).analyze()
+        """Read the file once and run every analyzer into self.stats."""
+        self.records, self.sample_names = read_records(self.input_file)
 
-    def write_results(self, output_file):
-        with Path.open(output_file, "w") as f:
-            f.write("OctopusV report\n")
-            f.write("-" * 40 + "\n\n")
+        # Decide chromosome lengths: --fai > --genome > auto-detect.
+        contigs = {r.chrom for r in self.records}
+        lengths, self.length_source = resolve_lengths(
+            contigs, fai=self.fai, genome=self.genome
+        )
 
-            f.write(">>>>>>> Input\n\n")
-            f.write(f"input file = {self.input_file}\n")
-            f.write(f"output file = {output_file}\n\n")
-
-            for category, result in self.results.items():
-                f.write(f">>>>>>> {category.capitalize()} Analysis\n\n")
-                f.write(self.format_result(result))
-                f.write("\n")
-
-    def format_result(self, result):
-        formatted = ""
-        for line in result.split("\n"):
-            if ":" in line:
-                key, value = line.split(":", 1)
-                formatted += f"{key.strip():30} = {value.strip()}\n"
-            else:
-                formatted += line + "\n"
-        return formatted
-
-    def export_html(self, output_stat):
-        """Export the analysis results to an HTML file."""
-        result = {}
-        result["input_file"] = self.input_file
-        result["output_file"] = output_stat
-
-        # Parse SV types
-        result['sv_types'] = {}
-        for line in self.results["type"].strip().split("\n")[1:]:
-            if ":" in line:
-                key, value = line.split(":", 1)
-                parts = value.strip().split()
-                if len(parts) >= 2 and "(" in parts[1]:
-                    try:
-                        count = int(parts[0])
-                        percent = float(parts[1][1:-2])  # Remove percentage sign and parentheses
-                        result['sv_types'][key.strip()] = (count, percent)
-                    except (ValueError, IndexError):
-                        continue
-
-        # Parse size distribution
-        lines = self.results["size"].strip().split("\n")
-        try:
-            result["total_svs"] = int(lines[0].split(":")[1].strip())
-            result["min_size"] = int(lines[1].split(":")[1].strip().split()[0])
-            result["max_size"] = int(lines[2].split(":")[1].strip().split()[0])
-            result["mean_size"] = float(lines[3].split(":")[1].strip().split()[0])
-            result["median_size"] = float(lines[4].split(":")[1].strip().split()[0])
-            result['std_dev'] = float(lines[5].split(":")[1].strip().split()[0])
-        except (IndexError, ValueError):
-            # Set default values
-            result["total_svs"] = 0
-            result["min_size"] = self.min_size
-            result["max_size"] = self.max_size or 0
-            result["mean_size"] = 0.0
-            result["median_size"] = 0.0
-            result['std_dev'] = 0.0
-
-        # Parse size distribution details
-        result['size_distribution'] = {}
-        for line in lines[8:]:
-            if ":" in line:
-                try:
-                    key, value = line.split(":", 1)
-                    result["size_distribution"][key.strip()] = int(value.strip())
-                except (ValueError, IndexError):
-                    continue
-
-        # Parse QC results
-        lines = self.results['qc'].strip().split("\n")
-
-        # Safely get average quality value
-        avg_qual_idx = -1
-        for i, line in enumerate(lines):
-            if "Average QUAL:" in line:
-                avg_qual_idx = i
-                break
-
-        if avg_qual_idx >= 0:
-            try:
-                result['avg_qual'] = float(lines[avg_qual_idx].split(":")[1].strip())
-            except (ValueError, IndexError):
-                result['avg_qual'] = 0.0
-        else:
-            result['avg_qual'] = 0.0
-
-        # Initialize filter status
-        result["filter_status"] = {
-            "PASS": ("0", 0.0),
-            "hom_ref": ("0", 0.0),
-            "not_fully_covered": ("0", 0.0)
+        self.stats = {
+            "type": TypeAnalyzer(self.records).analyze(),
+            "size": SizeAnalyzer(self.records, self.min_size, self.max_size).analyze(),
+            "chromosome": ChromosomeAnalyzer(self.records, lengths).analyze(),
+            "qc": QCAnalyzer(self.records).analyze(),
+            "genotype": GenotypeAnalyzer(self.records, self.sample_names).analyze(),
         }
 
-        # Find filter status section
-        filter_idx = -1
-        for i, line in enumerate(lines):
-            if "Filter Status:" in line:
-                filter_idx = i
-                break
+    # -- JSON ----------------------------------------------------------------
 
-        # Parse filter status information
-        if filter_idx >= 0:
-            filter_lines = []
-            for i in range(filter_idx + 1, len(lines)):
-                if lines[i].strip() and ":" in lines[i]:
-                    filter_lines.append(lines[i])
-                elif lines[i].strip() == "":  # Empty line indicates end of section
-                    break
+    def to_json_dict(self):
+        """Agent-facing structured result."""
+        t = self.stats["type"]
+        s = self.stats["size"]
+        c = self.stats["chromosome"]
+        qc = self.stats["qc"]
+        g = self.stats["genotype"]
 
-            # Process filter status
-            for line in filter_lines:
-                try:
-                    status, value = line.split(":", 1)
-                    status = status.strip()
-                    value_parts = value.strip().split()
+        warnings = []
+        if self.length_source and self.length_source.get("assumed"):
+            warnings.append(
+                f"reference_assumed_{self.length_source.get('genome')}_pass_--genome_or_--fai_to_be_explicit"
+            )
+        if c.get("unmatched_contigs"):
+            warnings.append("density_not_computed_for_some_contigs_see_unmatched_contigs")
 
-                    if len(value_parts) >= 1:
-                        count = value_parts[0]
-                        percent = 0.0
+        return {
+            "input": self.input_file,
+            "parameters": {"min_size": self.min_size, "max_size": self.max_size},
+            "records": {
+                "total": len(self.records),
+                "size_analyzed": s["records_analyzed"],
+            },
+            "svtype_counts": t["counts"],
+            "size": {
+                "min": s["min"], "max": s["max"], "mean": s["mean"],
+                "median": s["median"], "stdev": s["stdev"],
+                "bins": s["bins"], "excluded": s["excluded"],
+            },
+            "chromosome": {
+                "counts": c["counts"],
+                "density_per_mb": c["density_per_mb"],
+                "length_source": self.length_source,
+                "unmatched_contigs": c.get("unmatched_contigs", []),
+            },
+            "filter_counts": qc["filter_counts"],
+            "quality": qc["qual"],
+            "support": qc["support"],
+            "genotypes": g,
+            "warnings": warnings,
+        }
 
-                        if len(value_parts) >= 2 and "(" in value_parts[1]:
-                            try:
-                                percent = float(value_parts[1][1:-2])  # Remove parentheses and percentage sign
-                            except ValueError:
-                                percent = 0.0
+    def write_json(self, output_file=None):
+        payload = json.dumps(self.to_json_dict(), indent=2)
+        if output_file is None:
+            return payload
+        with Path(output_file).open("w") as f:
+            f.write(payload)
+        return None
 
-                        # Update or add status
-                        result["filter_status"][status] = (count, percent)
-                except (ValueError, IndexError):
-                    continue
+    # -- TEXT ----------------------------------------------------------------
 
-        # Safely get average read support
-        read_support_idx = -1
-        for i, line in enumerate(lines):
-            if "Average Read Support:" in line:
-                read_support_idx = i
-                break
+    def to_text(self):
+        """Human report. Format mirrors the old report closely so existing
+        plotters that read stat.txt keep working; the only intentional
+        differences are the removed fake density and TRA-excluded sizes."""
+        t = self.stats["type"]
+        s = self.stats["size"]
+        c = self.stats["chromosome"]
+        qc = self.stats["qc"]
+        g = self.stats["genotype"]
+        L = []
 
-        if read_support_idx >= 0:
-            try:
-                value = lines[read_support_idx].split(":")[1].strip()
-                # Check if it contains percentage
-                if " " in value and "(" in value:
-                    value = value.split()[0]  # Only take the first part (number)
-                result['avg_read_support'] = float(value)
-            except (ValueError, IndexError):
-                result['avg_read_support'] = 0.0
+        L.append("OctopusV report")
+        L.append("-" * 40)
+        L.append("")
+        L.append(">>>>>>> Input")
+        L.append("")
+        L.append(f"input file = {self.input_file}")
+        L.append("")
+
+        # Type
+        L.append(">>>>>>> Type Analysis")
+        L.append("")
+        L.append("SV Type Analysis               = ")
+        for sv_type, count in t["counts"].items():
+            pct = t["percentages"].get(sv_type, 0.0)
+            L.append(f"{sv_type:30} = {count} ({pct:.2f}%)")
+        L.append("")
+
+        # Size
+        L.append(">>>>>>> Size Analysis")
+        L.append("")
+        L.append(f"{'Total SVs analyzed':30} = {s['records_analyzed']}")
+        if s["records_analyzed"]:
+            L.append(f"{'Minimum size':30} = {s['min']} bp")
+            L.append(f"{'Maximum size':30} = {s['max']} bp")
+            L.append(f"{'Mean size':30} = {s['mean']:.2f} bp")
+            L.append(f"{'Median size':30} = {s['median']} bp")
+            L.append(f"{'Standard deviation':30} = {s['stdev']:.2f} bp")
+            L.append("")
+            L.append("Size distribution              = ")
+            for label, count in s["bins"].items():
+                L.append(f"{label:30} = {count}")
+        L.append("")
+
+        # Chromosome
+        L.append(">>>>>>> Chromosome Analysis")
+        L.append("")
+        src = self.length_source or {}
+        if src.get("kind") == "fai":
+            src_label = f"length_source=fai:{src.get('path')}"
+        elif src.get("kind") == "builtin":
+            src_label = f"length_source=builtin_{src.get('genome')}"
+            if src.get("assumed"):
+                src_label += ",assumed"
+                L.append(f"# reference assumed {src.get('genome')}; "
+                         f"pass --genome or --fai to be explicit")
         else:
-            result['avg_read_support'] = 0.0
+            src_label = "length_source=none"
+        L.append("Chromosome Distribution        = ")
+        density = c.get("density_per_mb") or {}
+        for chrom, count in c["counts"].items():
+            if chrom in density:
+                L.append(f"{chrom:30} = {count} SVs ({density[chrom]:.2f} SVs/Mb; {src_label})")
+            else:
+                L.append(f"{chrom:30} = {count} SVs (density not available: contig length not found)")
+        L.append("")
 
-        # Parse genotype distribution (enhanced for multi-sample support)
-        lines = self.results['genotype'].strip().split("\n")
-        result["genotype_dist"] = {}
-        result["sample_genotypes"] = {}  # For per-sample genotypes
-        result["population_genotypes"] = {}  # For population-level genotypes
+        # QC
+        L.append(">>>>>>> Qc Analysis")
+        L.append("")
+        L.append("Quality Score (QUAL) Statistics = ")
+        q = qc["qual"]
+        L.append(f"{'Number of variants with QUAL':30} = {q['n']}")
+        L.append(f"{'Average QUAL':30} = {_fmt(q['mean'])}")
+        L.append(f"{'Median QUAL':30} = {_fmt(q['median'])}")
+        L.append(f"{'Min QUAL':30} = {_fmt(q['min'])}")
+        L.append(f"{'Max QUAL':30} = {_fmt(q['max'])}")
+        L.append("")
+        L.append("Filter Status                  = ")
+        total_f = sum(qc["filter_counts"].values())
+        for status, count in sorted(qc["filter_counts"].items()):
+            pct = (count / total_f * 100) if total_f else 0.0
+            L.append(f"{status:30} = {count} ({pct:.2f}%)")
+        L.append("")
+        L.append("Read Support Statistics        = ")
+        sup = qc["support"]
+        L.append(f"{'Number of variants with support info':30} = {sup['n']}")
+        L.append(f"{'Average Read Support':30} = {_fmt(sup['mean'])}")
+        L.append(f"{'Median Read Support':30} = {_fmt(sup['median'])}")
+        L.append("")
 
-        current_sample = None
-        is_population = False
-        is_in_genotype_section = False
+        # Genotype
+        L.append(">>>>>>> Genotype Analysis")
+        L.append("")
+        L.append("Genotype Distribution          = ")
+        if g.get("mode") == "sample":
+            for name, dist in g["per_sample"].items():
+                tot = sum(dist.values())
+                L.append(f"{name} Genotypes:")
+                for gt, count in dist.items():
+                    pct = (count / tot * 100) if tot else 0.0
+                    L.append(f"  {gt:28} = {count} ({pct:.2f}%)")
+            tot = sum(g["overall"].values())
+            L.append("Overall:")
+            for gt, count in g["overall"].items():
+                pct = (count / tot * 100) if tot else 0.0
+                L.append(f"  {gt:28} = {count} ({pct:.2f}%)")
+        else:
+            tot = sum(g["overall"].values())
+            for gt, count in g["overall"].items():
+                pct = (count / tot * 100) if tot else 0.0
+                L.append(f"{gt:30} = {count} ({pct:.2f}%)")
+        L.append("")
+        return "\n".join(L)
 
-        for line in lines:
-            line = line.strip()
+    def write_results(self, output_file):
+        with Path(output_file).open("w") as f:
+            f.write(self.to_text())
 
-            # Skip empty lines
-            if not line:
-                continue
+    # -- HTML adapter --------------------------------------------------------
 
-            # Check for main header
-            if line == "Genotype Distribution:":
-                is_in_genotype_section = True
-                continue
+    def to_html_dict(self):
+        """Adapt stats into the keys ReportGenerator's template expects.
 
-            if not is_in_genotype_section:
-                continue
+        The legacy export_html produced these keys; we reproduce them directly
+        from structured data instead of parsing formatted text.
+        """
+        t = self.stats["type"]
+        s = self.stats["size"]
+        qc = self.stats["qc"]
+        g = self.stats["genotype"]
 
-            # Check for sample-specific genotype sections
-            if " Genotypes:" in line and not line.startswith("Overall"):
-                current_sample = line.split(" Genotypes:")[0].strip()
-                result["sample_genotypes"][current_sample] = {}
-                is_population = False
-                continue
-            elif line.startswith("Overall:"):
-                current_sample = None
-                is_population = True
-                continue
+        sv_types = {
+            sv_type: (count, t["percentages"].get(sv_type, 0.0))
+            for sv_type, count in t["counts"].items()
+        }
+        filter_status = {
+            status: (str(count), qc["filter_percentages"].get(status, 0.0))
+            for status, count in qc["filter_counts"].items()
+        }
+        # genotype_dist: caller mode -> overall; sample mode -> overall too.
+        genotype_dist = {
+            gt: (count, 0.0) for gt, count in g.get("overall", {}).items()
+        }
 
-            # Parse genotype data lines
-            if ":" in line:
-                try:
-                    key, value = line.split(":", 1)
-                    key = key.strip()
-                    value = value.strip()
+        return {
+            "input_file": self.input_file,
+            "output_file": self.input_file,
+            "sv_types": sv_types,
+            "total_svs": s["records_analyzed"],
+            "min_size": s["min"] or 0,
+            "max_size": s["max"] or 0,
+            "mean_size": s["mean"] or 0.0,
+            "median_size": s["median"] or 0.0,
+            "std_dev": s["stdev"] or 0.0,
+            "size_distribution": s["bins"],
+            "avg_qual": qc["qual"]["mean"] or 0.0,
+            "filter_status": filter_status,
+            "avg_read_support": qc["support"]["mean"] or 0.0,
+            "genotype_dist": genotype_dist,
+            "sample_genotypes": g.get("per_sample", {}),
+            "population_genotypes": {},
+        }
 
-                    # Remove leading spaces for indented lines
-                    if key.startswith("  "):
-                        key = key[2:]
+    # Back-compat alias: old code called export_html(output_file).
+    def export_html(self, output_file=None):
+        return self.to_html_dict()
 
-                    # Parse value (count and percentage)
-                    if " " in value and "(" in value:
-                        parts = value.split()
-                        count = int(parts[0])
-                        percent_str = parts[1]
-                        if percent_str.startswith("(") and percent_str.endswith("%)"):
-                            percent = float(percent_str[1:-2])  # Remove (%) wrapper
-                        else:
-                            percent = 0.0
-                        genotype_data = (count, percent)
-                    else:
-                        try:
-                            genotype_data = (int(value), 0.0)
-                        except ValueError:
-                            continue
 
-                    # Store in appropriate location
-                    if current_sample:
-                        # Sample-specific genotype
-                        result["sample_genotypes"][current_sample][key] = genotype_data
-                    elif is_population:
-                        # Population-level genotype
-                        result["population_genotypes"][key] = genotype_data
-                    else:
-                        # Legacy single-sample format (caller mode)
-                        result["genotype_dist"][key] = genotype_data
-
-                except (ValueError, IndexError):
-                    continue
-
-        return result
+def _fmt(v):
+    """Format a number or 'NA' for None (missing), for the text report."""
+    return "NA" if v is None else f"{v:.2f}"

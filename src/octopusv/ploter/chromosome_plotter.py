@@ -1,146 +1,232 @@
-# chromosome_plotter.py
+"""Chromosome distribution plotter.
 
+The new stat pipeline passes a structured chromosome stats dict directly:
+
+    {
+        "counts": {"1": 3809, "2": 4038, ...},
+        "density_per_mb": {"1": 15.30, "2": 16.60, ...},
+        "unmatched_contigs": [...]
+    }
+
+This plotter no longer hardcodes genome lengths and no longer parses stat.txt.
+For backward compatibility, it can still accept a path to a JSON stat output or
+a legacy text stat file, but the preferred path is dict input from SVStater.
+"""
+
+from __future__ import annotations
+
+import json
 import logging
+import re
+from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-logging.basicConfig(level=logging.DEBUG)
+LOGGER = logging.getLogger(__name__)
+
+
+def _natural_chrom_key(chrom: str) -> tuple[int, int | str]:
+    """Natural chromosome order: 1..22, X, Y, MT, then other contigs."""
+    raw = str(chrom)
+    name = raw[3:] if raw.lower().startswith("chr") else raw
+
+    if name.isdigit():
+        value = int(name)
+        if 1 <= value <= 22:
+            return (0, value)
+
+    if name == "X":
+        return (0, 23)
+    if name == "Y":
+        return (0, 24)
+    if name in {"M", "MT"}:
+        return (0, 25)
+
+    return (1, raw)
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    with path.open() as handle:
+        return json.load(handle)
 
 
 class ChromosomePlotter:
-    def __init__(self, input_file):
-        self.input_file = input_file
-        # GRCh38 chromosome lengths in base pairs
-        self.chromosome_lengths = {
-            "chr1": 248956422,
-            "chr2": 242193529,
-            "chr3": 198295559,
-            "chr4": 190214555,
-            "chr5": 181538259,
-            "chr6": 170805979,
-            "chr7": 159345973,
-            "chr8": 145138636,
-            "chr9": 138394717,
-            "chr10": 133797422,
-            "chr11": 135086622,
-            "chr12": 133275309,
-            "chr13": 114364328,
-            "chr14": 107043718,
-            "chr15": 101991189,
-            "chr16": 90338345,
-            "chr17": 83257441,
-            "chr18": 80373285,
-            "chr19": 58617616,
-            "chr20": 64444167,
-            "chr21": 46709983,
-            "chr22": 50818468,
-            "chrX": 156040895,
-            "chrY": 57227415,
+    """Plot chromosome-level SV counts and optional density."""
+
+    def __init__(self, stats_or_file: dict[str, Any] | str | Path):
+        self.stats_or_file = stats_or_file
+        self.data = self._load_data(stats_or_file)
+
+    def _load_data(self, stats_or_file: dict[str, Any] | str | Path) -> dict[str, Any]:
+        if isinstance(stats_or_file, dict):
+            return self._from_dict(stats_or_file)
+
+        path = Path(stats_or_file)
+        if path.suffix.lower() == ".json":
+            return self._from_dict(_read_json(path))
+
+        return self._from_legacy_text(path)
+
+    def _from_dict(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize either full stat JSON or chromosome-only stats."""
+        chrom_stats = data.get("chromosome", data)
+
+        counts = chrom_stats.get("counts", {}) or {}
+        density = chrom_stats.get("density_per_mb", {}) or {}
+        unmatched = chrom_stats.get("unmatched_contigs", []) or []
+        length_source = chrom_stats.get("length_source")
+
+        return {
+            "counts": {str(k): int(v) for k, v in counts.items()},
+            "density_per_mb": {
+                str(k): float(v) for k, v in density.items() if v is not None
+            },
+            "unmatched_contigs": [str(x) for x in unmatched],
+            "length_source": length_source,
         }
-        self.data = self.parse_data()
 
-    def parse_data(self):
-        """Parse the statistics file and extract chromosome data."""
-        chromosome_order = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"]
-        chromosome_data = {chrom: {"count": 0, "density": 0} for chrom in chromosome_order}
+    def _from_legacy_text(self, path: Path) -> dict[str, Any]:
+        """Best-effort parser for old stat.txt files.
 
-        parsing_chromosomes = False
-        with open(self.input_file) as f:
-            for line in f:
+        This is only for backward compatibility. The preferred input is a dict.
+        """
+        counts: dict[str, int] = {}
+        density: dict[str, float] = {}
+
+        in_section = False
+        pattern = re.compile(
+            r"^\s*(?P<chrom>[^=]+?)\s*=\s*"
+            r"(?P<count>\d+)\s+SVs"
+            r"(?:\s+\((?P<density>[0-9.]+)\s+SVs/Mb.*\))?"
+        )
+
+        with path.open() as handle:
+            for line in handle:
                 if "Chromosome Distribution" in line:
-                    parsing_chromosomes = True
+                    in_section = True
                     continue
-                if parsing_chromosomes:
-                    if line.strip() == "":
-                        break
-                    parts = line.strip().split("=")
-                    if len(parts) == 2:
-                        chrom = parts[0].strip()
-                        if chrom in chromosome_data:
-                            try:
-                                count = int(parts[1].split()[0])
-                                # Calculate density per Mb
-                                length_mb = self.chromosome_lengths[chrom] / 1_000_000
-                                density = count / length_mb
-                                chromosome_data[chrom] = {
-                                    "count": count,
-                                    "density": round(density, 1),  # Round to 1 decimal place
-                                }
-                            except (ValueError, ZeroDivisionError) as e:
-                                logging.warning(f"Error processing chromosome {chrom}: {e}")
-                                chromosome_data[chrom] = {"count": 0, "density": 0}
+                if in_section and not line.strip():
+                    break
+                if not in_section:
+                    continue
 
-        logging.debug(f"Parsed chromosome data: {chromosome_data}")
-        return chromosome_data
+                match = pattern.match(line)
+                if not match:
+                    continue
 
-    def plot(self, output_prefix, *, save_svg=True):
-        """Create and save the chromosome distribution plot."""
-        if not self.data:
-            logging.error("No data to plot")
+                chrom = match.group("chrom").strip()
+                counts[chrom] = int(match.group("count"))
+
+                if match.group("density") is not None:
+                    density[chrom] = float(match.group("density"))
+
+        return {
+            "counts": counts,
+            "density_per_mb": density,
+            "unmatched_contigs": [],
+            "length_source": None,
+        }
+
+    def _ordered_counts(self) -> list[tuple[str, int]]:
+        return sorted(self.data["counts"].items(), key=lambda kv: _natural_chrom_key(kv[0]))
+
+    def _ordered_density(self) -> list[tuple[str, float]]:
+        density = self.data.get("density_per_mb") or {}
+        return sorted(density.items(), key=lambda kv: _natural_chrom_key(kv[0]))
+
+    def plot(self, output_prefix: str | Path, *, save_svg: bool = True) -> None:
+        """Create and save chromosome count/density plot."""
+        ordered_counts = self._ordered_counts()
+        if not ordered_counts:
+            LOGGER.error("No chromosome count data to plot.")
             return
 
-        # Prepare data
-        chromosomes = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"]
-        x = np.arange(len(chromosomes))  # x coordinates for the bars
-        raw_counts = [self.data[chrom]["count"] for chrom in chromosomes]
-        densities = [self.data[chrom]["density"] for chrom in chromosomes]
+        ordered_density = self._ordered_density()
+        has_density = bool(ordered_density)
 
-        # Create figure with two subplots
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 16), height_ratios=[1, 1])
-        fig.suptitle("Structural Variant Distribution Across Chromosomes", fontsize=20, y=0.95, fontweight="bold")
+        if has_density:
+            fig, axes = plt.subplots(2, 1, figsize=(22, 16), height_ratios=[1, 1])
+            ax_count, ax_density = axes
+        else:
+            fig, ax_count = plt.subplots(1, 1, figsize=(22, 8))
+            ax_density = None
 
-        # Set the style for both plots
-        for ax in [ax1, ax2]:
-            ax.grid(True, axis="y", linestyle="--", alpha=0.3)
-            ax.set_axisbelow(True)
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            for spine in ax.spines.values():
-                spine.set_color("#cccccc")
-                spine.set_linewidth(0.8)
-            ax.set_xticks(x)
-            ax.tick_params(axis="both", which="major", labelsize=12)
+        fig.suptitle(
+            "Structural Variant Distribution Across Chromosomes",
+            fontsize=20,
+            y=0.98,
+            fontweight="bold",
+        )
 
-        # Plot 1: Raw counts with refined color
-        bars1 = ax1.bar(x, raw_counts, color="#4a90e2", width=0.8, edgecolor="white", linewidth=1)
-        ax1.set_title("Raw SV Counts", fontsize=16, pad=20, fontweight="bold")
-        ax1.set_ylabel("Number of SVs", fontsize=14, fontweight="bold")
-        ax1.set_xticklabels(chromosomes, rotation=0)
+        # Raw counts
+        chroms = [chrom for chrom, _ in ordered_counts]
+        counts = [count for _, count in ordered_counts]
+        x = np.arange(len(chroms))
 
-        # Plot 2: Normalized densities with complementary color
-        bars2 = ax2.bar(x, densities, color="#2ecc71", width=0.8, edgecolor="white", linewidth=1)
-        ax2.set_title("Normalized SV Density", fontsize=16, pad=20, fontweight="bold")
-        ax2.set_xlabel("Chromosome", fontsize=14, fontweight="bold")
-        ax2.set_ylabel("SVs per Mb", fontsize=14, fontweight="bold")
-        ax2.set_xticklabels(chromosomes, rotation=0)
+        bars = ax_count.bar(x, counts, width=0.8, edgecolor="white", linewidth=1)
+        ax_count.set_title("Raw SV Counts", fontsize=16, pad=18, fontweight="bold")
+        ax_count.set_ylabel("Number of SVs", fontsize=14, fontweight="bold")
+        ax_count.set_xticks(x)
+        ax_count.set_xticklabels(chroms, rotation=45, ha="right")
+        ax_count.grid(True, axis="y", linestyle="--", alpha=0.3)
+        ax_count.set_axisbelow(True)
+        ax_count.spines["top"].set_visible(False)
+        ax_count.spines["right"].set_visible(False)
 
-        # Add value labels on bars
-        def add_value_labels(axis, bars):
-            for bar in bars:
-                height = bar.get_height()
-                axis.text(
-                    bar.get_x() + bar.get_width() / 2.0,
-                    height,
-                    f"{height:,.1f}" if height % 1 else f"{int(height):,}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=10,
-                    fontweight="bold",
-                )
+        if len(chroms) <= 35:
+            self._add_value_labels(ax_count, bars, integer=True)
 
-        add_value_labels(ax1, bars1)
-        add_value_labels(ax2, bars2)
+        # Density, only where density was actually computed.
+        if ax_density is not None:
+            density_chroms = [chrom for chrom, _ in ordered_density]
+            densities = [value for _, value in ordered_density]
+            x2 = np.arange(len(density_chroms))
 
-        # Adjust layout
+            bars2 = ax_density.bar(x2, densities, width=0.8, edgecolor="white", linewidth=1)
+            ax_density.set_title(
+                "Normalized SV Density",
+                fontsize=16,
+                pad=18,
+                fontweight="bold",
+            )
+            ax_density.set_xlabel("Chromosome", fontsize=14, fontweight="bold")
+            ax_density.set_ylabel("SVs per Mb", fontsize=14, fontweight="bold")
+            ax_density.set_xticks(x2)
+            ax_density.set_xticklabels(density_chroms, rotation=45, ha="right")
+            ax_density.grid(True, axis="y", linestyle="--", alpha=0.3)
+            ax_density.set_axisbelow(True)
+            ax_density.spines["top"].set_visible(False)
+            ax_density.spines["right"].set_visible(False)
+
+            if len(density_chroms) <= 35:
+                self._add_value_labels(ax_density, bars2, integer=False)
+
         plt.tight_layout()
-
-        # Save plots with high quality
+        output_prefix = str(output_prefix)
         plt.savefig(f"{output_prefix}.png", dpi=300, bbox_inches="tight", facecolor="white")
 
         if save_svg:
             plt.savefig(f"{output_prefix}.svg", bbox_inches="tight", facecolor="white")
 
-        plt.close()
+        plt.close(fig)
+        LOGGER.info("Chromosome plot saved as %s.png%s", output_prefix, " and .svg" if save_svg else "")
 
-        logging.info(f"Plot saved as {output_prefix}.png and {output_prefix}.svg")
+    @staticmethod
+    def _add_value_labels(axis, bars, *, integer: bool) -> None:
+        for bar in bars:
+            height = bar.get_height()
+            if height == 0:
+                continue
+
+            label = f"{int(height):,}" if integer else f"{height:.2f}"
+            axis.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height,
+                label,
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                fontweight="bold",
+            )
