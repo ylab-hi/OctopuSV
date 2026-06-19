@@ -17,6 +17,7 @@ from .svcf2bed import svcf2bed
 from .svcf2bedpe import svcf2bedpe
 from .svcf2vcf import svcf2vcf
 from .validate_svcf import validate_svcf
+from .header import header
 
 app = typer.Typer(
     epilog=f"{typer.style('Agent Octopus Code V helps you dive deep into the structural variations ocean!', fg=typer.colors.GREEN, bold=True)}",
@@ -38,6 +39,7 @@ app.command()(svcf2bedpe)
 app.command()(clean)
 app.command(name="plot-circos")(plot_circos)
 app.command(name="validate-svcf")(validate_svcf)
+app.command()(header)
 
 
 @app.callback()
