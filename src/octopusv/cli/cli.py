@@ -18,6 +18,7 @@ from .svcf2bed import svcf2bed
 from .svcf2bedpe import svcf2bedpe
 from .svcf2vcf import svcf2vcf
 from .validate_svcf import validate_svcf
+from .filter import filter_svcf
 
 
 HELP = (
@@ -65,6 +66,10 @@ app.command(
     rich_help_panel="SVCF inspection and statistics",
 )(stat)
 
+app.command(
+    name="filter",
+    rich_help_panel="SVCF filtering and querying",
+)(filter_svcf)
 
 # ---------------------------------------------------------------------
 # SV standardization and merging
