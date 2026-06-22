@@ -21,6 +21,33 @@ from octopusv.utils.normal_vcf_parser import parse_vcf
 from octopusv.utils.svcf_utils import write_sv_vcf
 
 
+def _echo(message: str = "") -> None:
+    """Print human-facing CLI messages to stderr.
+
+    This keeps stdout clean for future machine-readable output or pipelines.
+    """
+    typer.echo(message, err=True)
+
+
+def _print_correct_success_message(output_file: Path) -> None:
+    """Print a concise success message for octopusv correct."""
+    _echo(f"Corrected SV events written to {output_file}")
+    _echo("")
+    _echo(
+        "Output type: SVCF. Convert with `octopusv svcf2vcf` before using "
+        "standard VCF tools such as bcftools/vcftools."
+    )
+    _echo(
+        f"Suggested conversion command: octopusv svcf2vcf "
+        f"-i {output_file} -o {output_file.with_suffix('.vcf')}"
+    )
+    _echo("")
+    _echo("Note: Some BND records may remain unconverted. This is intentional.")
+    _echo("OctopuSV only converts breakends when the SV type can be inferred with high confidence.")
+    _echo("Remaining BND records may represent complex events that require specialized analysis.")
+    _echo("If BND-level interpretation is not needed, remaining BND records can be filtered downstream.")
+
+
 def correct(
         input_vcf: Path | None = typer.Argument(
             None, exists=True, dir_okay=False, resolve_path=True, help="Input VCF file to correct."
@@ -76,12 +103,14 @@ def correct(
 ):
     """Correct SV events with optional quality filtering."""
 
-    # Determine input file
+    # Determine input file.
     if input_vcf and input_option:
         typer.echo(
-            "Error: Please specify input file either as an argument or with -i/--input-file, not both.", err=True
+            "Error: Please specify input file either as an argument or with -i/--input-file, not both.",
+            err=True,
         )
         raise typer.Exit(code=1)
+
     if input_vcf:
         input_file = input_vcf
     elif input_option:
@@ -90,12 +119,14 @@ def correct(
         typer.echo("Error: Input file is required.", err=True)
         raise typer.Exit(code=1)
 
-    # Determine output file
+    # Determine output file.
     if output and output_option:
         typer.echo(
-            "Error: Please specify output file either as an argument or with -o/--output-file, not both.", err=True
+            "Error: Please specify output file either as an argument or with -o/--output-file, not both.",
+            err=True,
         )
         raise typer.Exit(code=1)
+
     if output:
         output_file = output
     elif output_option:
@@ -104,23 +135,27 @@ def correct(
         typer.echo("Error: Output file is required.", err=True)
         raise typer.Exit(code=1)
 
-    # Parse the input VCF file
-    # non_bnd_events means DEL, INV, INS, DUP
+    # Parse the input VCF file.
+    # non_bnd_events means DEL, INV, INS, DUP.
     contig_lines, same_chr_bnd_events, diff_chr_bnd_events, non_bnd_events = parse_vcf(input_file)
 
-    # Initialize quality filter if any filtering parameters are provided
-    filter_params = [min_qual, max_qual, min_support, max_support, min_depth, max_depth,
-                     min_gq, min_svlen, max_svlen, filter_pass, exclude_nocall]
+    # Initialize quality filter if any filtering parameters are provided.
     has_quality_filters = any([
-        min_qual is not None, max_qual is not None,
-        min_support is not None, max_support is not None,
-        min_depth is not None, max_depth is not None,
-        min_gq is not None, min_svlen is not None, max_svlen is not None,
-        filter_pass, exclude_nocall
+        min_qual is not None,
+        max_qual is not None,
+        min_support is not None,
+        max_support is not None,
+        min_depth is not None,
+        max_depth is not None,
+        min_gq is not None,
+        min_svlen is not None,
+        max_svlen is not None,
+        filter_pass,
+        exclude_nocall,
     ])
 
     if has_quality_filters:
-        # Import QualityFilter only when needed
+        # Import QualityFilter only when needed.
         from octopusv.filter import QualityFilter
 
         quality_filter = QualityFilter(
@@ -134,34 +169,34 @@ def correct(
             min_svlen=min_svlen,
             max_svlen=max_svlen,
             filter_pass=filter_pass,
-            exclude_nocall=exclude_nocall
+            exclude_nocall=exclude_nocall,
         )
 
-        # Apply quality filtering to all event types
+        # Apply quality filtering to all event types.
         def apply_quality_filter(events):
             """Apply quality filter to a list of events."""
             return [event for event in events if quality_filter.filter_event(event)]
 
-        # Filter all event categories
+        # Filter all event categories.
         same_chr_bnd_events = apply_quality_filter(same_chr_bnd_events)
         diff_chr_bnd_events = apply_quality_filter(diff_chr_bnd_events)
         non_bnd_events = apply_quality_filter(non_bnd_events)
 
-        # Print filtering statistics
+        # Print filtering statistics.
         quality_filter.print_stats()
-        typer.echo(f"Quality filtering completed.")
+        _echo("Quality filtering completed.")
 
-    # Extract mate BND and no mate events, they are all with different chromosomes
+    # Extract mate BND and no mate events, they are all with different chromosomes.
     mate_bnd_pairs = find_mate_bnd_events(diff_chr_bnd_events, pos_tolerance=pos_tolerance)
     no_mate_events = find_no_mate_events(diff_chr_bnd_events, pos_tolerance=pos_tolerance)
 
-    # Further classify no_mate_events into special_no_mate_diff_bnd_pair and other_single_TRA
+    # Further classify no_mate_events into special_no_mate_diff_bnd_pair and other_single_TRA.
     special_no_mate_diff_bnd_pairs, other_single_TRA = find_special_no_mate_diff_bnd_pair_and_other_single_tra(
         no_mate_events,
         pos_tolerance=pos_tolerance,
     )
 
-    # Initialize the EventTransformer with a list of transform strategies for each type of events
+    # Initialize the EventTransformer with a list of transform strategies for each type of events.
     same_chr_sv_transformer = SameChrSVTransformer(
         [
             BNDKeepingConverter(),
@@ -186,7 +221,7 @@ def correct(
     single_TRA_transformer = SingleTRATransformer([SingleTRAToTRAConverter()])
     non_bnd_transformer = NonBNDTransformer([NonBNDConverter()])
 
-    # Apply all transformation strategies to the events
+    # Apply all transformation strategies to the events.
     same_chr_sv_transformed_events = same_chr_sv_transformer.apply_transforms(same_chr_bnd_events)
     mate_pair_transformed_events = mate_bnd_pair_transformer.apply_transforms(mate_bnd_pairs)
     special_no_mate_diff_bnd_pair_transformed_events = special_no_mate_diff_bnd_pair_transformer.apply_transforms(
@@ -195,7 +230,7 @@ def correct(
     single_TRA_transformed_events = single_TRA_transformer.apply_transforms(other_single_TRA)
     non_bnd_transformed_events = non_bnd_transformer.apply_transforms(non_bnd_events)
 
-    # Merge all transformed events
+    # Merge all transformed events.
     all_transformed_events = (
             same_chr_sv_transformed_events
             + mate_pair_transformed_events
@@ -204,22 +239,10 @@ def correct(
             + non_bnd_transformed_events
     )
 
-    # Write the transformed events to the output file
+    # Write the transformed events to the output file.
     write_sv_vcf(contig_lines, all_transformed_events, output_file, str(input_file))
-    typer.echo(f"Corrected SV events written to {output_file}")
-    typer.echo("")
-    typer.echo("IMPORTANT: The output is in SVCF format (OctopuSV intermediate format).")
-    typer.echo("For downstream analysis with bcftools/vcftools, please convert first:")
-    typer.echo(f"  octopusv svcf2vcf -i {output_file} -o {output_file.with_suffix('.vcf')}")
-    typer.echo("")
-    typer.echo("SVCF format contains additional fields for internal processing.")
-    typer.echo("Standard VCF tools may not recognize these custom fields.")
-    typer.echo("")
-    typer.echo("NOTE: Some BND events may remain unconverted - this is intentional.")
-    typer.echo("OctopuSV only converts breakends with high confidence to avoid misclassification.")
-    typer.echo("Remaining BNDs likely represent complex structural variations that require")
-    typer.echo("specialized analysis beyond simple SV type conversion.")
-    typer.echo("If not critical for your analysis, these remained BNDs can be filtered out downstream.")
+
+    _print_correct_success_message(output_file)
 
 
 def find_mate_bnd_events(events, pos_tolerance=3):
@@ -235,7 +258,7 @@ def find_mate_bnd_events(events, pos_tolerance=3):
 
             key_for_searching = (event.chrom, event.pos, chrom_alt, pos_alt)
 
-            # Generate all possible reverse keys
+            # Generate all possible reverse keys.
             possible_reverse_keys = []
             for i in range(-pos_tolerance, pos_tolerance + 1):
                 for j in range(-pos_tolerance, pos_tolerance + 1):
@@ -272,7 +295,7 @@ def find_no_mate_events(events, pos_tolerance=3):
 
             key = (event.chrom, event.pos, chrom_alt, pos_alt)
 
-            # Generate all possible reverse keys
+            # Generate all possible reverse keys.
             possible_reverse_keys = []
             for i in range(-pos_tolerance, pos_tolerance + 1):
                 for j in range(-pos_tolerance, pos_tolerance + 1):
@@ -321,7 +344,7 @@ def find_special_no_mate_diff_bnd_pair_and_other_single_tra(events, pos_toleranc
 
             key = (event.chrom, event.pos, chrom_alt, pos_alt)
 
-            # Generate all possible reverse keys
+            # Generate all possible reverse keys.
             possible_reverse_keys = []
             for i in range(-pos_tolerance, pos_tolerance + 1):
                 for j in range(-pos_tolerance, pos_tolerance + 1):
