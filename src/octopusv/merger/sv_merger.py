@@ -262,77 +262,209 @@ class SVMerger:
             result = result[:-4]
         return result
 
+    def _input_file_matches_event_sources(self, input_file, event_source_tokens):
+        """Return whether an input file belongs to an event source set.
+
+        event.source_file may contain full paths, basenames, or display-like
+        stems. This helper accepts all of them.
+        """
+        input_file = str(input_file)
+        input_basename = os.path.basename(input_file)
+        input_stem = os.path.splitext(input_basename)[0]
+
+        return (
+            input_file in event_source_tokens
+            or input_basename in event_source_tokens
+            or input_stem in event_source_tokens
+        )
+
+    def _event_source_tokens(self, event):
+        """Return normalized source tokens from event.source_file."""
+        tokens = set()
+
+        for raw_source in str(getattr(event, "source_file", "")).split(","):
+            source = raw_source.strip()
+            if not source:
+                continue
+
+            basename = os.path.basename(source)
+            stem = os.path.splitext(basename)[0]
+
+            tokens.add(source)
+            tokens.add(basename)
+            tokens.add(stem)
+
+        return tokens
+
+    def _sample_data_search_text(self, sample_name, sample_data):
+        """Build searchable text from one sample/evidence block.
+
+        In OctopuSV SVCF, the most useful source clues are often ID,
+        original_id, and SC, for example:
+            pbsv.INS.8
+            svim.INS.7
+            SVIM-v2.0.0
+            Sniffles2.INS.5S0
+        """
+        parts = [str(sample_name)]
+
+        if isinstance(sample_data, dict):
+            for key in (
+                "source_file",
+                "original_source_file",
+                "caller",
+                "source",
+                "original_id",
+                "ID",
+                "SC",
+                "TY",
+                "CO",
+            ):
+                value = sample_data.get(key)
+                if value not in (None, "", "."):
+                    parts.append(str(value))
+
+            # Include the whole dict as a robust final fallback.
+            parts.append(str(sample_data))
+        else:
+            parts.append(str(sample_data))
+
+        return " ".join(parts).lower()
+
+    def _infer_input_basename_for_sample_data(
+        self,
+        sample_name,
+        sample_data,
+        candidate_input_files,
+        assigned_basenames,
+    ):
+        """Infer which input file one sample/evidence block came from.
+
+        Priority:
+            1. explicit source_file-like field
+            2. evidence text containing input basename/stem
+            3. sample_name containing input basename/stem
+            4. no decision; caller will use a last-resort fallback
+        """
+        candidates = []
+        for input_file in candidate_input_files:
+            input_basename = os.path.basename(str(input_file))
+            if input_basename not in assigned_basenames:
+                candidates.append(str(input_file))
+
+        if not candidates:
+            return None
+
+        # Method 1: explicit source_file field.
+        if isinstance(sample_data, dict):
+            source_file_field = str(sample_data.get("source_file", "")).lower()
+            if source_file_field:
+                for input_file in candidates:
+                    input_basename = os.path.basename(input_file)
+                    input_stem = os.path.splitext(input_basename)[0]
+
+                    if (
+                        input_file.lower() in source_file_field
+                        or input_basename.lower() in source_file_field
+                        or input_stem.lower() in source_file_field
+                    ):
+                        return input_basename
+
+        search_text = self._sample_data_search_text(sample_name, sample_data)
+
+        # Method 2: evidence content.
+        # This fixes cases where merged_samples are internally ordered as
+        # pbsv,svim even though the header order is sniffles,svim,pbsv.
+        for input_file in candidates:
+            input_basename = os.path.basename(input_file)
+            input_stem = os.path.splitext(input_basename)[0].lower()
+
+            if input_stem and input_stem in search_text:
+                return input_basename
+
+            if input_basename.lower() in search_text:
+                return input_basename
+
+        # Method 3: sample_name only. This is weaker than sample_data, but keeps
+        # backward compatibility for older parsed objects.
+        sample_name_text = str(sample_name).lower()
+        for input_file in candidates:
+            input_basename = os.path.basename(input_file)
+            input_stem = os.path.splitext(input_basename)[0].lower()
+
+            if input_stem and input_stem in sample_name_text:
+                return input_basename
+
+            if input_basename.lower() in sample_name_text:
+                return input_basename
+
+        return None
+
     def _prepare_events_for_sample_mode(self, events, name_mapper):
-        """Preprocess events to establish sample-to-source mapping.
+        """Prepare merged events for sample-mode output.
 
-        This method runs once before writing, avoiding repeated matching
-        for each event during output, which would cause O(n³) complexity.
+        Critical sample-mode rule:
+            The #CHROM trailing columns are fixed sample/input columns.
 
-        Args:
-            events: List of merged events
-            name_mapper: NameMapper instance for name handling
+        Therefore, event.ordered_samples must be filled by the global input file
+        order, not by the arbitrary order of event.merged_samples.
 
-        Returns:
-            list: Events with ordered_samples attribute added
+        This prevents output like:
+            header: sniffles  svim  pbsv
+            row:    0/0       pbsv  svim
+
+        Correct output must be:
+            header: sniffles  svim  pbsv
+            row:    0/0       svim  pbsv
         """
         processed_events = []
 
         for event in events:
-            # Create ordered_samples list for each event
-            # Order matches input_files exactly
-            ordered_samples = []
-
-            # Get all merged_samples for this event
             merged_samples = getattr(event, "merged_samples", [])
 
-            # Build quick lookup dict from source basename to sample data
+            event_source_tokens = self._event_source_tokens(event)
+
+            # Candidate files that support this merged event, in original input order.
+            candidate_input_files = [
+                str(input_file)
+                for input_file in self.all_input_files
+                if self._input_file_matches_event_sources(
+                    input_file,
+                    event_source_tokens,
+                )
+            ]
+
             source_to_sample = {}
-            event_source_basenames = {os.path.basename(f.strip())
-                                    for f in event.source_file.split(",")}
 
             for sample_name, sample_format, sample_data in merged_samples:
-                # Try to match to specific input file
-                matched = False
+                assigned_basenames = set(source_to_sample)
 
-                if isinstance(sample_data, dict):
-                    # Method 1: Match from source_file field
-                    source_file_field = sample_data.get('source_file', '')
-                    for input_file in self.all_input_files:
-                        input_basename = os.path.basename(input_file)
-                        if input_basename in source_file_field or input_file in source_file_field:
-                            source_to_sample[input_basename] = sample_data
-                            matched = True
-                            break
+                inferred_basename = self._infer_input_basename_for_sample_data(
+                    sample_name=sample_name,
+                    sample_data=sample_data,
+                    candidate_input_files=candidate_input_files,
+                    assigned_basenames=assigned_basenames,
+                )
 
-                    # Method 2: Match from sample name
-                    if not matched:
-                        for input_file in self.all_input_files:
-                            input_basename = os.path.basename(input_file)
-                            input_name = os.path.splitext(input_basename)[0]
-                            if input_name.lower() in sample_name.lower():
-                                source_to_sample[input_basename] = sample_data
-                                matched = True
-                                break
+                if inferred_basename is not None:
+                    source_to_sample[inferred_basename] = sample_data
+                    continue
 
-                # Fallback: assign to first unassigned file in event sources
-                if not matched:
-                    for input_file in self.all_input_files:
-                        input_basename = os.path.basename(input_file)
-                        if (input_basename not in source_to_sample and
-                                input_basename in event_source_basenames):
-                            source_to_sample[input_basename] = sample_data
-                            break
+                # Last-resort fallback:
+                # Assign to the first unassigned candidate input in original
+                # input order. This should rarely be used after ID/SC matching.
+                for input_file in candidate_input_files:
+                    input_basename = os.path.basename(input_file)
+                    if input_basename not in source_to_sample:
+                        source_to_sample[input_basename] = sample_data
+                        break
 
-            # Build ordered_samples according to input_files order
+            # Build ordered_samples according to global input file order.
+            ordered_samples = []
             for input_file in self.all_input_files:
-                input_basename = os.path.basename(input_file)
-                if input_basename in source_to_sample:
-                    ordered_samples.append(source_to_sample[input_basename])
-                else:
-                    # This sample doesn't have this SV, fill with None
-                    ordered_samples.append(None)
+                input_basename = os.path.basename(str(input_file))
+                ordered_samples.append(source_to_sample.get(input_basename))
 
-            # Attach processed data to event
             event.ordered_samples = ordered_samples
             processed_events.append(event)
 
