@@ -20,6 +20,7 @@ from .svcf2vcf import svcf2vcf
 from .validate_svcf import validate_svcf
 from .filter import filter_svcf
 from .query import query_svcf
+from .subset import subset_svcf
 
 
 HELP = (
@@ -76,6 +77,11 @@ app.command(
     name="query",
     rich_help_panel="SVCF filtering and querying",
 )(query_svcf)
+
+app.command(
+    name="subset",
+    rich_help_panel="SVCF filtering and querying",
+)(subset_svcf)
 
 # ---------------------------------------------------------------------
 # SV standardization and merging
