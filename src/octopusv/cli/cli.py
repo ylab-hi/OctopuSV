@@ -22,6 +22,7 @@ from .filter import filter_svcf
 from .query import query_svcf
 from .subset import subset_svcf
 from .normalize_contigs import normalize_contigs
+from .inspect import inspect_svcf
 
 HELP = (
     f"[bold yellow]Version[/bold yellow]: [bold green]{__version__}[/bold green]\n\n"
@@ -67,6 +68,11 @@ app.command(
 app.command(
     rich_help_panel="SVCF inspection and statistics",
 )(stat)
+
+app.command(
+    name="inspect",
+    rich_help_panel="SVCF inspection and statistics",
+)(inspect_svcf)
 
 app.command(
     name="filter",

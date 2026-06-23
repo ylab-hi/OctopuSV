@@ -15,9 +15,15 @@ class SVCFEvent:
         quality (str): Quality score of the SV event.
         filter (str): Filter status of the SV event.
         info (dict): Dictionary containing additional information about the SV event.
+        raw_info (str): The ORIGINAL, unparsed INFO string. Kept verbatim so that
+            inspect/validate can detect duplicate INFO keys (info dict collapses
+            repeated keys to the last value).
         format (str): Format of the sample data related to the SV event.
         sample (dict): Sample-specific data for the SV event (first sample).
         raw_sample_columns (list): Raw string of EVERY sample column (multi-sample safe).
+        sample_names (list): All trailing column names from the #CHROM header,
+            one per sample column. Sample-mode needs the full list to map each
+            column to its sample identity; falls back to [sample_name].
         source_file (str): The source file from which this SV event was parsed.
         sv_type (str): The SV type of the event.
         bnd_pattern (str): The BND pattern from the ALT field, if applicable.
@@ -32,7 +38,7 @@ class SVCFEvent:
     _CO_PATTERN = re.compile(r"([^\s:]+_\d+-[^\s:]+_\d+)")
 
     def __init__(self, chrom, pos, sv_id, ref, alt, quality, filter, info, format, sample,
-                 source_file, sample_name, raw_sample_columns=None):
+                 source_file, sample_name, raw_sample_columns=None, sample_names=None):
         self.chrom = chrom
         self.pos = int(pos)
         self.sv_id = sv_id
@@ -40,6 +46,10 @@ class SVCFEvent:
         self.alt = alt
         self.quality = quality
         self.filter = filter
+        # Keep the raw INFO string BEFORE parsing into a dict. _parse_info()
+        # collapses duplicate keys (e.g. a buggy merge writing SOURCE_IDS twice),
+        # so the only way for inspect/validate to see duplicates is the raw text.
+        self.raw_info = info
         self.info = self._parse_info(info)
         self.format = format
         self.sample = self._parse_sample(sample)
@@ -52,6 +62,10 @@ class SVCFEvent:
 
         self.source_file = source_file
         self.sample_name = sample_name
+        # All trailing sample/column names from the #CHROM header. Sample-mode
+        # inspect aligns each raw_sample_columns entry to its sample identity by
+        # this list. Falls back to [sample_name] when only one column exists.
+        self.sample_names = list(sample_names) if sample_names is not None else [sample_name]
         self.sv_type = self.info.get("SVTYPE", "")
         self.bnd_pattern = self._extract_bnd_pattern()
 
@@ -244,13 +258,19 @@ class SVCFFileEventCreator:
         for filename in self.filenames:
             with open(filename) as file:
                 sample_name = None
+                sample_names = None
                 for line in file:
                     if line.startswith("#CHROM"):
                         header_parts = line.strip().split("\t")
                         if len(header_parts) > 9:
-                            sample_name = header_parts[9]
+                            # Keep ALL trailing sample/column names (sample-mode
+                            # inspect needs the full list); sample_name stays the
+                            # first one for legacy single-sample behavior.
+                            sample_names = header_parts[9:]
+                            sample_name = sample_names[0]
                         else:
                             sample_name = os.path.basename(filename)  # Use filename as sample name if not provided
+                            sample_names = [sample_name]
                         continue
                     if line.startswith("#"):
                         continue  # Skip comment lines that start with '#'
@@ -262,6 +282,6 @@ class SVCFFileEventCreator:
                     # columns + the first sample (for the legacy self.sample).
                     sv_event = SVCFEvent(
                         *parts[:10], source_file=filename, sample_name=sample_name,
-                        raw_sample_columns=parts[9:],
+                        raw_sample_columns=parts[9:], sample_names=sample_names,
                     )
                     self.events.append(sv_event)  # Add the event to the list of events
