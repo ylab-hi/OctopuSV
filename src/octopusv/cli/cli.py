@@ -21,7 +21,7 @@ from .validate_svcf import validate_svcf
 from .filter import filter_svcf
 from .query import query_svcf
 from .subset import subset_svcf
-
+from .normalize_contigs import normalize_contigs
 
 HELP = (
     f"[bold yellow]Version[/bold yellow]: [bold green]{__version__}[/bold green]\n\n"
@@ -99,6 +99,11 @@ app.command(
     rich_help_panel="SV standardization and merging",
 )(merge)
 
+
+app.command(
+    name="normalize-contigs",
+    rich_help_panel="SVCF normalization and preprocessing",
+)(normalize_contigs)
 
 # ---------------------------------------------------------------------
 # Conversion
