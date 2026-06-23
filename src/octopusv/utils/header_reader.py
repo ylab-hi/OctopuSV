@@ -21,9 +21,13 @@ Field naming is deliberately honest:
     declared_format_keys    -- pulled from ##INFO=<ID=..> / ##FORMAT=<ID=..>
                                definition lines; a declared key may be unused
                                in data, and data could carry undeclared keys.
+  * inferred_build          -- genome build guessed from ##contig lengths only;
+                               conservative ('unknown' unless key contigs agree).
 """
 
 import json
+
+from octopusv.utils.genome_build import infer_build
 
 CORE_COLUMNS = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"]
 MODE_MULTI_MARKER = "##OctopuSV_mode=multi"
@@ -96,6 +100,29 @@ class HeaderReader:
                     keys.append(key)
         return keys
 
+    def _contig_lengths(self):
+        """Map contig id -> length parsed from ##contig=<ID=..,length=..> lines.
+
+        Returns a dict of raw contig id -> int length. Used only for build
+        inference; ids are normalized inside infer_build.
+        """
+        out = {}
+        for ln in self._meta_lines():
+            if not ln.startswith("##contig="):
+                continue
+            cid = _extract_id(ln)
+            if cid is None:
+                continue
+            if "length=" not in ln:
+                continue
+            try:
+                raw = ln.split("length=", 1)[1].split(",", 1)[0].split(">", 1)[0]
+                length = int(raw)
+            except (IndexError, ValueError):
+                continue
+            out[cid] = length
+        return out
+
     def to_contract(self):
         """Return the declared-contract dict (header facts only)."""
         meta = self._meta_lines()
@@ -123,6 +150,7 @@ class HeaderReader:
             "n_contig_definitions": sum(1 for ln in meta if ln.startswith("##contig=")),
             "declared_info_keys": self._declared_keys("##INFO="),
             "declared_format_keys": self._declared_keys("##FORMAT="),
+            "inferred_build": infer_build(self._contig_lengths()),
         }
 
     def to_json(self):
