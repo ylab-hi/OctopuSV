@@ -1,5 +1,5 @@
 import datetime
-from typing import List
+from typing import List, Optional
 
 from .name_mapper import NameMapper
 
@@ -132,8 +132,15 @@ class MultiSampleWriter:
             '##FORMAT=<ID=CO,Number=1,Type=String,Description="Coordinate information of the SV">\n'
         )
 
-    def _sample_id_from_data(self, sample_data, format_keys: List[str]):
-        """Extract the original source ID from one sample/evidence block."""
+    def _sample_id_from_data(self, sample_data, format_keys: List[str]) -> Optional[str]:
+        """Extract the original source ID from one sample/evidence block.
+
+        This is used to rebuild INFO/SOURCE_IDS in the same order as
+        INFO/SOURCES and the retained sample columns.
+
+        For raw FORMAT strings, use a limited left split instead of splitting the
+        whole string. This avoids breaking on ':' inside BND ALT values.
+        """
         if sample_data is None:
             return None
 
@@ -143,13 +150,21 @@ class MultiSampleWriter:
                 return str(original_id)
             return None
 
-        values = str(sample_data).split(":")
-        if "ID" in format_keys:
-            idx = format_keys.index("ID")
-            if idx < len(values):
-                value = values[idx]
-                if value not in (None, "", ".", "unknown"):
-                    return str(value)
+        if "ID" not in format_keys:
+            return None
+
+        id_index = format_keys.index("ID")
+
+        # Split only enough fields to reach ID. FORMAT fields before ID should
+        # not contain ':' in OctopuSV SVCF, while later ALT/CO fields may.
+        values = str(sample_data).split(":", id_index + 1)
+
+        if id_index >= len(values):
+            return None
+
+        value = values[id_index]
+        if value not in (None, "", ".", "unknown"):
+            return str(value)
 
         return None
 
@@ -179,6 +194,11 @@ class MultiSampleWriter:
         sources_str = ",".join(sources) if sources else "."
         source_ids_str = ",".join(source_ids) if source_ids else "."
 
+        # Prepare INFO field.
+        # Do not inherit stale per-record SOURCES / SOURCE_IDS from the
+        # representative event. They may already exist if the input is a
+        # previously merged/subset/normalized SVCF. Always write exactly one
+        # fresh SOURCES and one fresh SOURCE_IDS field for this output record.
         info_items = []
         for key, value in event.info.items():
             if key in {"SOURCES", "SOURCE_IDS"}:

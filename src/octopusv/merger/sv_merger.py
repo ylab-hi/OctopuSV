@@ -596,20 +596,19 @@ class SVMerger:
 
                     display_source_ids = ",".join(source_ids_in_order)
 
-                    # Prepare INFO field with ordered SOURCES and SOURCE_IDS
+                    # Prepare INFO field with ordered SOURCES and SOURCE_IDS.
+                    # Drop stale per-record SOURCES / SOURCE_IDS from the representative event,
+                    # then write exactly one merged SOURCES and one merged SOURCE_IDS field.
                     info_items = []
                     for k, v in event.info.items():
-                        if k == "SOURCES":
-                            info_items.append(f"SOURCES={display_sources}")
-                        else:
-                            info_items.append(f"{k}={v}")
+                        if k in {"SOURCES", "SOURCE_IDS"}:
+                            continue
+                        info_items.append(f"{k}={v}")
+
+                    info_items.append(f"SOURCES={display_sources if display_sources else '.'}")
+                    info_items.append(f"SOURCE_IDS={display_source_ids if display_source_ids else '.'}")
 
                     info_field = ";".join(info_items)
-                    if "SOURCES" not in info_field:
-                        info_field += f";SOURCES={display_sources}"
-
-                    # Add SOURCE_IDS field
-                    info_field += f";SOURCE_IDS={display_source_ids}"
 
                     # Step 6: Get FORMAT field
                     format_field = event.format
