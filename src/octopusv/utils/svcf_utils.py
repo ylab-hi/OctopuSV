@@ -77,7 +77,8 @@ def get_octopus_default_definitions():
             '##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">',
             '##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">',
             '##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">' ,
-            '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers">'
+            '##INFO=<ID=SOURCES,Number=.,Type=String,Description="Source caller/sample labels supporting this merged SV record">',
+            '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers or samples">'
         ],
         'format_lines': [
             '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
@@ -198,7 +199,7 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
     basic_header = [
         "##fileformat=VCFv4.2",
         f"##fileDate={current_time_str}",
-        "##source=OctopuSV"
+        "##source=OctopuSV",
         "##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools"
     ]
 
