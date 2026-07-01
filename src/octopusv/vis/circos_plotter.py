@@ -36,6 +36,10 @@ SV_COLORS = {
 }
 INTRA_TYPES = ("DEL", "DUP", "INV")
 
+# INS is a single-breakpoint event; drawn as its own marker tick (not a link,
+# and by default not folded into the shared breakpoint-density histogram).
+INS_COLOR = "#E8862A"   # orange, distinct from DEL/DUP/INV/TRA
+
 
 def normalize_chrom(chrom):
     """Normalize a chromosome name to 'chrN' form; return as-is if unrecognized."""
@@ -93,6 +97,7 @@ class CircosPlotter:
         intra_max_span=50_000_000,
         include_ins=False,
         ins_support=3,
+        ins_in_density=False,
         bin_size=5_000_000,
         drop_del=False,
         drop_dup=False,
@@ -108,6 +113,7 @@ class CircosPlotter:
         self.intra_max_span = intra_max_span
         self.include_ins = include_ins
         self.ins_support = ins_support
+        self.ins_in_density = ins_in_density
         self.bin_size = bin_size
         self.drop_del = drop_del
         self.drop_dup = drop_dup
@@ -116,6 +122,7 @@ class CircosPlotter:
 
         self.links = []          # list of dicts: chrom1,pos1,chrom2,pos2,svtype,support
         self.breakpoints = []    # list of (chrom, pos) for density
+        self.ins_markers = []    # list of (chrom, pos) for the INS marker track
         self.oversized = []      # intra events > intra_max_span
         self.stats = defaultdict(int)
 
@@ -168,14 +175,20 @@ class CircosPlotter:
                 if not self.include_ins:
                     self.stats["drop_ins"] += 1
                     continue
-                if support is None or support < self.ins_support:
+                if self.ins_support > 0 and (support is None or support < self.ins_support):
                     self.stats["drop_ins_lowsupport"] += 1
                     continue
-                if self._on_primary(c1) and 1 <= p1 <= self.chrom_sizes[c1]:
+                if not (self._on_primary(c1) and 1 <= p1 <= self.chrom_sizes[c1]):
+                    self.stats["drop_ins_offchrom"] += 1
+                    continue
+                if self.ins_in_density:
+                    # Legacy behavior: fold INS into the shared density histogram.
                     self.breakpoints.append((c1, p1))
                     self.stats["ins_density"] += 1
                 else:
-                    self.stats["drop_ins_offchrom"] += 1
+                    # Default: INS gets its own marker tick, kept out of density.
+                    self.ins_markers.append((c1, p1))
+                    self.stats["ins_marker"] += 1
                 continue
 
             # ---- type on/off switches ----
@@ -196,7 +209,7 @@ class CircosPlotter:
 
             # ---- TRA / interchromosomal ----
             if svtype == "TRA":
-                if support is None or support < self.tra_support:
+                if self.tra_support > 0 and (support is None or support < self.tra_support):
                     self.stats["drop_tra_lowsupport"] += 1
                     continue
                 if not (self._on_primary(c1) and self._on_primary(c2)):
@@ -230,7 +243,7 @@ class CircosPlotter:
                 if span < self.intra_min_span:
                     self.stats["drop_intra_small"] += 1
                     continue
-                if support is None or support < self.intra_support:
+                if self.intra_support > 0 and (support is None or support < self.intra_support):
                     self.stats["drop_intra_lowsupport"] += 1
                     continue
                 if not (1 <= p1 <= self.chrom_sizes[c1] and 1 <= p2 <= self.chrom_sizes[c1]):
@@ -290,8 +303,17 @@ class CircosPlotter:
 
         circos = Circos(sectors=self.chrom_sizes, space=2)
         chr_r = (97, 100)
-        dens_r = (84, 95)
+        ins_r = (94.5, 96.5)   # INS marker ticks (only used when ins_markers present)
+        dens_r = (83, 93.5)
         link_r = 82
+
+        # INS positions per chromosome for the marker track.
+        ins_per_chrom = defaultdict(list)
+        for c, p in self.ins_markers:
+            ins_per_chrom[c].append(p)
+        # Half-width (bp) of each INS tick, so a single insertion stays visible at
+        # genome scale (a raw 30 bp INS would be invisible otherwise).
+        ins_tick_halfwidth = 1_000_000
 
         for sector in circos.sectors:
             chrom = sector.name
@@ -314,6 +336,16 @@ class CircosPlotter:
                 dt.bar(mids, counts, width=self.bin_size * 0.9, vmin=0, vmax=max_count,
                        color="#4D4D4D", ec="#4D4D4D", lw=0, align="center")
 
+            # INS marker track: one orange tick per insertion (fixed-width so
+            # small insertions remain visible; never folded into density here).
+            ins_pos = ins_per_chrom.get(chrom, [])
+            if ins_pos:
+                it = sector.add_track(ins_r)
+                for p in ins_pos:
+                    start = max(1, p - ins_tick_halfwidth)
+                    end = min(sector.size, p + ins_tick_halfwidth)
+                    it.rect(start, end, fc=INS_COLOR, ec=INS_COLOR, lw=0)
+
         def draw(subset, alpha, lw, height):
             for r in subset:
                 color = SV_COLORS.get(r["svtype"], "#999999")
@@ -332,9 +364,11 @@ class CircosPlotter:
         n_tra = sum(1 for r in self.links if r["svtype"] == "TRA")
         n_intra = n - n_tra
         n_bp = len(self.breakpoints)
+        n_ins = len(self.ins_markers)
+        ins_line = f"{n_ins:,} INS markers\n" if n_ins else ""
         circos.text(
             f"{sample_name}\n{n:,} links\n(intra {n_intra:,} / TRA {n_tra:,})\n"
-            f"{n_bp:,} breakpoints\nbin={self.bin_size / 1e6:g} Mb",
+            f"{n_bp:,} breakpoints\n{ins_line}bin={self.bin_size / 1e6:g} Mb",
             r=22, size=9, ha="center", va="center",
         )
 
@@ -342,6 +376,8 @@ class CircosPlotter:
         present = [t for t in ("DEL", "DUP", "INV", "TRA")
                    if any(r["svtype"] == t for r in self.links)]
         handles = [Line2D([0], [0], color=SV_COLORS[t], lw=2, label=t) for t in present]
+        if self.ins_markers:
+            handles.append(Line2D([0], [0], color=INS_COLOR, lw=4, label="INS"))
         handles.append(Line2D([0], [0], color="#4D4D4D", lw=4,
                               label=f"{self.bin_size / 1e6:g} Mb breakpoint count"))
         circos.ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.07),

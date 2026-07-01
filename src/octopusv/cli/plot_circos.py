@@ -73,12 +73,12 @@ def plot_circos(
     tra_support: int = typer.Option(
         3,
         "--tra-support",
-        help="Minimum SUPPORT for TRA (interchromosomal) links.",
+        help="Minimum SUPPORT for TRA (interchromosomal) links. Set 0 to disable this filter (e.g. merged short-read SVCF with SUPPORT=.).",
     ),
     intra_support: int = typer.Option(
         3,
         "--intra-support",
-        help="Minimum SUPPORT for intra DEL/DUP/INV links.",
+        help="Minimum SUPPORT for intra DEL/DUP/INV links. Set 0 to disable this filter (e.g. merged short-read SVCF with SUPPORT=.).",
     ),
     intra_min_span: int = typer.Option(
         5000,
@@ -101,7 +101,15 @@ def plot_circos(
     ins_support: int = typer.Option(
         3,
         "--ins-support",
-        help="Minimum SUPPORT for INS when --include-ins is set.",
+        help="Minimum SUPPORT for INS when --include-ins is set. Set 0 to disable this filter (e.g. merged short-read SVCF with SUPPORT=.).",
+    ),
+    ins_in_density: bool = typer.Option(
+        False,
+        "--ins-in-density",
+        help=(
+            "Fold INS breakpoints into the shared density histogram (legacy "
+            "behavior). By default INS are drawn on their own marker track."
+        ),
     ),
     bin_size: int = typer.Option(
         5_000_000,
@@ -226,6 +234,7 @@ def plot_circos(
         intra_max_span=intra_max_span,
         include_ins=include_ins,
         ins_support=ins_support,
+        ins_in_density=ins_in_density,
         bin_size=bin_size,
         drop_del=drop_del,
         drop_dup=drop_dup,
@@ -258,7 +267,8 @@ def plot_circos(
     typer.echo(f"Circos figure written to {output_file}")
     typer.echo(
         f"Plotted {n_links} links (intra {n_intra}, TRA {n_tra}); "
-        f"{len(plotter.breakpoints)} breakpoints in density layer."
+        f"{len(plotter.breakpoints)} breakpoints in density layer; "
+        f"{len(plotter.ins_markers)} INS markers."
     )
     typer.echo(
         f"Oversized intra table ({len(plotter.oversized)} events > "
