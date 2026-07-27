@@ -60,37 +60,15 @@ def select_representative_sv(sv_group, weights=None, max_support=30, max_qual=10
     representative_sv = None
     all_source_files = set()
     merged_samples_list = []
-    merged_sample_records = []
 
     for sv in sv_group:
-        # Preserve the exact source attached to this individual evidence record.
-        # select_representative_sv() mutates representative_sv.source_file into a
-        # comma-separated merged-source string, and the same group can be selected
-        # more than once during one merge run. Keep an immutable per-event copy so
-        # later calls never lose the original provenance.
-        original_source_file = getattr(sv, "_original_source_file", None)
-        if original_source_file is None:
-            original_source_file = str(sv.source_file)
-            sv._original_source_file = original_source_file
-
-        source_files = [
-            source.strip()
-            for source in original_source_file.split(",")
-            if source.strip()
-        ]
+        # Add source file
+        source_files = sv.source_file.split(",")
         all_source_files.update(source_files)
 
-        # Keep the existing three-field structure unchanged for caller-mode and
-        # backward compatibility with existing consumers.
+        # Add sample information
         sample_info = (sv.sample_name, sv.format, sv.sample)
         merged_samples_list.append(sample_info)
-
-        # Sample mode needs an explicit source -> evidence binding. Store that in
-        # a separate four-field structure instead of guessing the source later
-        # from SAMPLE, ID, SC, or event order.
-        merged_sample_records.append(
-            (original_source_file, sv.sample_name, sv.format, sv.sample)
-        )
 
         # Calculate support score
         support_value = sv.info.get("SUPPORT", "0")
@@ -143,6 +121,5 @@ def select_representative_sv(sv_group, weights=None, max_support=30, max_qual=10
     if representative_sv:
         representative_sv.source_file = ",".join(sorted(all_source_files))
         representative_sv.merged_samples = merged_samples_list
-        representative_sv.merged_sample_records = merged_sample_records
 
     return representative_sv

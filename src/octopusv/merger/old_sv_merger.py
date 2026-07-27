@@ -400,150 +400,72 @@ class SVMerger:
 
         return None
 
-    @staticmethod
-    def _normalize_source_path(source_file):
-        """Return a stable key for exact input-file provenance matching."""
-        return os.path.normcase(
-            os.path.realpath(
-                os.path.abspath(str(source_file))
-            )
-        )
-
     def _prepare_events_for_sample_mode(self, events, name_mapper):
         """Prepare merged events for sample-mode output.
 
-        Freshly merged events carry ``merged_sample_records`` entries shaped as:
-            (source_file, sample_name, sample_format, sample_data)
+        Critical sample-mode rule:
+            The #CHROM trailing columns are fixed sample/input columns.
 
-        The exact source path is the primary key. The older inference logic is
-        retained only as a compatibility fallback for legacy or manually-created
-        event objects that do not carry exact provenance.
+        Therefore, event.ordered_samples must be filled by the global input file
+        order, not by the arbitrary order of event.merged_samples.
+
+        This prevents output like:
+            header: sniffles  svim  pbsv
+            row:    0/0       pbsv  svim
+
+        Correct output must be:
+            header: sniffles  svim  pbsv
+            row:    0/0       svim  pbsv
         """
         processed_events = []
-        input_files = [str(input_file) for input_file in self.all_input_files]
-
-        # Use input indices, rather than basenames, as output-column identities.
-        # This also avoids collisions when two different directories contain the
-        # same filename.
-        input_indices_by_path = {}
-        for index, input_file in enumerate(input_files):
-            normalized_path = self._normalize_source_path(input_file)
-            input_indices_by_path.setdefault(normalized_path, []).append(index)
 
         for event in events:
-            merged_samples = list(getattr(event, "merged_samples", []))
-            merged_sample_records = getattr(event, "merged_sample_records", None)
+            merged_samples = getattr(event, "merged_samples", [])
 
-            # Key: index in self.all_input_files; value: parsed sample evidence.
-            source_to_sample = {}
-            unresolved_samples = []
+            event_source_tokens = self._event_source_tokens(event)
 
-            records_are_valid = (
-                merged_sample_records is not None
-                and len(merged_sample_records) == len(merged_samples)
-                and all(
-                    isinstance(record, (tuple, list)) and len(record) == 4
-                    for record in merged_sample_records
+            # Candidate files that support this merged event, in original input order.
+            candidate_input_files = [
+                str(input_file)
+                for input_file in self.all_input_files
+                if self._input_file_matches_event_sources(
+                    input_file,
+                    event_source_tokens,
                 )
-            )
-
-            # Preferred path for events produced by the fixed selector.
-            if records_are_valid:
-                for record in merged_sample_records:
-                    source_file, sample_name, sample_format, sample_data = record
-                    normalized_source = self._normalize_source_path(source_file)
-                    candidate_indices = input_indices_by_path.get(
-                        normalized_source,
-                        [],
-                    )
-
-                    if not candidate_indices:
-                        unresolved_samples.append(
-                            (sample_name, sample_format, sample_data)
-                        )
-                        continue
-
-                    # Usually there is exactly one index. Supporting a list keeps
-                    # behavior deterministic even if the same path was supplied
-                    # more than once on the command line.
-                    target_index = next(
-                        (
-                            index
-                            for index in candidate_indices
-                            if index not in source_to_sample
-                        ),
-                        None,
-                    )
-
-                    if target_index is not None:
-                        source_to_sample[target_index] = sample_data
-                    # If this source already owns its output column, do not spill
-                    # another nearby record from the same source into a different
-                    # sample column.
-            else:
-                unresolved_samples.extend(merged_samples)
-
-            # Compatibility fallback for old event objects without exact source
-            # provenance. This keeps existing external callers working, but fresh
-            # merge output should not enter this branch.
-            if unresolved_samples:
-                event_source_tokens = self._event_source_tokens(event)
-
-                candidate_indices = [
-                    index
-                    for index, input_file in enumerate(input_files)
-                    if self._input_file_matches_event_sources(
-                        input_file,
-                        event_source_tokens,
-                    )
-                ]
-                candidate_input_files = [
-                    input_files[index]
-                    for index in candidate_indices
-                ]
-
-                for sample_name, sample_format, sample_data in unresolved_samples:
-                    assigned_basenames = {
-                        os.path.basename(input_files[index])
-                        for index in source_to_sample
-                    }
-
-                    inferred_basename = self._infer_input_basename_for_sample_data(
-                        sample_name=sample_name,
-                        sample_data=sample_data,
-                        candidate_input_files=candidate_input_files,
-                        assigned_basenames=assigned_basenames,
-                    )
-
-                    target_index = None
-
-                    if inferred_basename is not None:
-                        for index in candidate_indices:
-                            if index in source_to_sample:
-                                continue
-                            if os.path.basename(input_files[index]) == inferred_basename:
-                                target_index = index
-                                break
-
-                    # Preserve the previous last-resort behavior for legacy data:
-                    # first unassigned supporting input in original input order.
-                    if target_index is None:
-                        target_index = next(
-                            (
-                                index
-                                for index in candidate_indices
-                                if index not in source_to_sample
-                            ),
-                            None,
-                        )
-
-                    if target_index is not None:
-                        source_to_sample[target_index] = sample_data
-
-            event.ordered_samples = [
-                source_to_sample.get(index)
-                for index in range(len(input_files))
             ]
+
+            source_to_sample = {}
+
+            for sample_name, sample_format, sample_data in merged_samples:
+                assigned_basenames = set(source_to_sample)
+
+                inferred_basename = self._infer_input_basename_for_sample_data(
+                    sample_name=sample_name,
+                    sample_data=sample_data,
+                    candidate_input_files=candidate_input_files,
+                    assigned_basenames=assigned_basenames,
+                )
+
+                if inferred_basename is not None:
+                    source_to_sample[inferred_basename] = sample_data
+                    continue
+
+                # Last-resort fallback:
+                # Assign to the first unassigned candidate input in original
+                # input order. This should rarely be used after ID/SC matching.
+                for input_file in candidate_input_files:
+                    input_basename = os.path.basename(input_file)
+                    if input_basename not in source_to_sample:
+                        source_to_sample[input_basename] = sample_data
+                        break
+
+            # Build ordered_samples according to global input file order.
+            ordered_samples = []
+            for input_file in self.all_input_files:
+                input_basename = os.path.basename(str(input_file))
+                ordered_samples.append(source_to_sample.get(input_basename))
+
+            event.ordered_samples = ordered_samples
             processed_events.append(event)
 
         return processed_events
