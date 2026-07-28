@@ -11,6 +11,24 @@
 > *Unify, merge, inspect, query, compare, and export structural variants across callers and samples.*
 
 > [!NOTE]
+> **What's New in v0.4.1** — Improved multi-sample merging, TRA/BND integration, and Circos plotting.
+>
+> - Fixed sample-mode merge errors that could place genotype evidence in the wrong sample column and turn real carriers into `0/0`.
+> - Improved TRA/BND merging by recognizing equivalent reciprocal breakend representations of the same physical event.
+> - Fixed `plot-circos` support filtering for records with `SUPPORT=.` and added a dedicated insertion marker track with `--include-ins`.
+>
+> Example:
+>
+> ```bash
+> octopusv plot-circos \
+>   -i merged.svcf \
+>   -o circos.png \
+>   --include-ins \
+>   --intra-support 0 \
+>   --ins-support 0 \
+>   --intra-min-span 20
+> ```
+
 > **What's New in v0.4.0** — OctopuSV now provides a more complete **SVCF operation layer** for validation, inspection, querying, filtering, subsetting, normalization, and standard-format conversion.
 >
 > **New SVCF inspection and validation commands**
