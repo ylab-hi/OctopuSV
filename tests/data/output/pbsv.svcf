@@ -1,6 +1,7 @@
 ##fileformat=VCFv4.2
-##fileDate=2026-06-18|03:11:23PM|
-##source=OctopuSV##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
+##fileDate=2026-07-28|11:51:21AM|
+##source=OctopuSV
+##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
 ##contig=<ID=1,length=249250621>
 ##contig=<ID=10,length=135534747>
 ##contig=<ID=11,length=135006516>
@@ -109,7 +110,8 @@
 ##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
 ##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">
 ##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">
-##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers">
+##INFO=<ID=SOURCES,Number=.,Type=String,Description="Source caller/sample labels supporting this merged SV record">
+##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers or samples">
 ##FILTER=<ID=Decoy,Description="Variant involves a decoy sequence">
 ##FILTER=<ID=NearReferenceGap,Description="Variant is near (< 1000 bp) from a gap (run of >= 50 Ns) in the reference assembly">
 ##FILTER=<ID=NearContigEnd,Description="Variant is near (< 1000 bp) from the end of a contig">
