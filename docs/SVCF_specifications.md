@@ -1,39 +1,177 @@
-# SVCF: A Customized VCF Format for Structural Variants
+# SVCF: A VCF-Based Format for Structural Variant Processing and Integration
 
 ## 1. Introduction
 
-SVCF is simply a customized version of the [Variant Call Format (VCF) Version 4.2](https://samtools.github.io/hts-specs/VCFv4.2.pdf) adapted for working with structural variants (SVs). This is not a new format standard, but merely our internal implementation with minor adjustments to better handle structural variant data.
+SVCF is a VCF-based format for structural variant normalization, integration, provenance tracking, and downstream analysis. It is defined by this specification and implemented by OctopuSV.
 
-This document describes how we use the standard VCF format with some custom fields and conventions to support structural variant analysis. The customization primarily adds specific fields for representing structural variants while maintaining full compatibility with standard VCF tools. 
+SVCF keeps the line-oriented text structure and core columns of the [Variant Call Format (VCF) Version 4.2](https://samtools.github.io/hts-specs/VCFv4.2.pdf). It adds a fixed evidence schema and a small set of conventions needed to preserve structural variant records from different callers and samples.
 
-These adaptations were created to improve integration with the SVoctopus software and facilitate operations such as merging, statistical analysis, and benchmarking of structural variants.
+SVCF does not replace or revise the official VCF specification. A general VCF program may be able to read parts of an SVCF file, but it is not expected to understand every SVCF-specific field or layout. In particular, caller-merge SVCF records may contain a variable number of evidence columns.
 
-## 2. File Structure
+Software other than OctopuSV may read or write SVCF when it follows the rules in this document.
 
-Our customized VCF follows the standard VCF structure:
+The recommended file extension is:
 
-- **Meta-information lines**: Start with "##" and provide metadata about the file (e.g., format version, reference used).
-- **Header line**: Starts with a single "#" and lists all the fields that will appear in the body of the file.
-- **Data lines**: Each data line contains information about a single variant and follows the columns specified in the header.
+```text
+.svcf
+```
 
-## 3. An Example
+Before using an SVCF file with general VCF tools such as bcftools or vcftools, convert it to VCF:
 
-```plaintext
+```bash
+octopusv svcf2vcf -i input.svcf -o output.vcf
+```
+
+This revision describes the SVCF contract implemented by OctopuSV v0.4.1.
+
+The words **must**, **should**, and **may** are used in their ordinary specification sense:
+
+- **must** means that the rule is required;
+- **should** means that the rule is recommended unless there is a clear reason not to follow it;
+- **may** means that the item is optional.
+
+## 2. File format
+
+An SVCF file contains:
+
+1. meta-information lines beginning with `##`;
+2. one header line beginning with `#CHROM`;
+3. tab-delimited data lines.
+
+Missing values are written as a single dot (`.`), following VCF convention.
+
+### 2.1 Meta-information lines
+
+The first meta-information line should be:
+
+```text
 ##fileformat=VCFv4.2
-##fileDate=2023-11-07|11:32:51AM|CDT|-0500
-##source=octopusV
-##contig=<ID=chr1,length=248956422>
-##contig=<ID=chr7,length=159345973>
-##contig=<ID=chr8,length=145138636>
-##contig=<ID=chr17,length=83257441>
-##contig=<ID=GL000008.2,length=209709>
-##contig=<ID=GL000194.1,length=191469>
-##ALT=<ID=DEL,Description="Deletion">
-##ALT=<ID=INV,Description="Inversion">
-##ALT=<ID=INS,Description="Insertion">
-##ALT=<ID=DUP,Description="Duplication">
-##ALT=<ID=TRA,Description="Translocation">
-##ALT=<ID=BND,Description="Breakend">
+```
+
+OctopuSV normally writes:
+
+```text
+##source=OctopuSV
+```
+
+It may also write:
+
+```text
+##fileDate=...
+##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
+```
+
+A sample/multi SVCF is identified by:
+
+```text
+##OctopuSV_mode=multi
+```
+
+The header should define the contigs, symbolic ALT alleles, INFO fields, FILTER values, and FORMAT fields used in the file.
+
+OctopuSV may preserve metadata definitions from an input VCF or SVCF. When an input header already defines the same INFO, FORMAT, FILTER, or ALT ID, the current OctopuSV header writer keeps the input definition. Preserved metadata does not change the SVCF record rules in this specification.
+
+### 2.2 Header line
+
+The first nine columns are fixed and must appear in this order:
+
+```text
+#CHROM  POS  ID  REF  ALT  QUAL  FILTER  INFO  FORMAT
+```
+
+At least one evidence column must follow `FORMAT`.
+
+The complete header therefore has the form:
+
+```text
+#CHROM  POS  ID  REF  ALT  QUAL  FILTER  INFO  FORMAT  evidence-column-1  ...
+```
+
+The first nine columns describe the normalized or merged SVCF record. The columns after `FORMAT` preserve evidence from source caller records or samples.
+
+The exact meaning and number of evidence columns depend on the SVCF mode described in Section 3.
+
+### 2.3 Data lines
+
+Each data line must:
+
+- be tab-delimited;
+- contain at least ten columns;
+- use the nine fixed columns in the required order;
+- use the SVCF FORMAT string defined in Section 6;
+- contain the number of evidence columns required by its mode.
+
+A compact caller-merge example is shown below:
+
+```text
+1	10889	svim.INS.3	T	TCCAGGGGAGGAGGCGTGGCACAGGCGCAGAGACACATGCTAGCGCGC	34	PASS	SVTYPE=INS;END=10936;SVLEN=47;CHR2=1;SUPPORT=28;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=.;RNAMES=.;SOURCES=svim,pbsv;SOURCE_IDS=svim.INS.3,pbsv.INS.1	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	1/1:1,28:47:.:34:INS:svim.INS.3:SVIM-v2.0.0:T:TCCAGGGGAGGAGGCGTGGCACAGGCGCAGAGACACATGCTAGCGCGC:1_10889-1_10936	1/1:1,25:47:.:.:INS:pbsv.INS.1:pbsv:G:GAGGAGGCGTGGCACAGGCGCAGAGACACATGCTAGCGCGCCCAGGGG:1_10896-1_10943
+```
+
+## 3. SVCF modes
+
+SVCF has three modes.
+
+| Mode | Mode marker | `SOURCES` | Evidence columns |
+|---|---|---|---|
+| Single-caller | No `##OctopuSV_mode=multi` | Must be absent | Exactly one |
+| Caller-merge | No `##OctopuSV_mode=multi` | Must be present and non-empty on every record | One column for each entry in `SOURCES`; the number may vary by record |
+| Sample/multi | `##OctopuSV_mode=multi` | Must be present and non-empty on every record | A fixed number matching the names after `FORMAT` in the `#CHROM` header |
+
+A file without the multi-sample marker must not mix single-caller records and caller-merge records. In a no-marker file, either all records contain `SOURCES` or none of them do.
+
+### 3.1 Single-caller mode
+
+Single-caller SVCF is normally produced by `octopusv correct`.
+
+It has one evidence column for each record. The column name normally comes from the input sample name or an OctopuSV fallback name.
+
+A single-caller record must not contain a non-empty `SOURCES` field.
+
+### 3.2 Caller-merge mode
+
+Caller-merge SVCF is produced when records from multiple callers are merged.
+
+Every record must contain `SOURCES`. The number of evidence columns on that record must equal the number of comma-separated entries in `SOURCES`.
+
+The number of evidence columns may differ between records. A record supported by two callers has two evidence columns; a record supported by three callers has three.
+
+This variable-width layout is part of caller-merge SVCF. It is not a conventional VCF sample layout.
+
+### 3.3 Sample/multi mode
+
+Sample/multi SVCF contains:
+
+```text
+##OctopuSV_mode=multi
+```
+
+The names after `FORMAT` in the `#CHROM` header define the evidence-column order for the whole file.
+
+Every data line must contain exactly that number of evidence columns.
+
+## 4. Fixed fields
+
+The fixed fields follow the general VCF 4.2 field model, with the SVCF rules below.
+
+| Field | SVCF rule |
+|---|---|
+| `CHROM` | Contig containing the event start or first breakpoint. It must not be empty. |
+| `POS` | Positive, 1-based coordinate of the event start or first breakpoint. |
+| `ID` | Identifier of the representative SVCF record. |
+| `REF` | Reference allele of the representative record. |
+| `ALT` | Alternate allele of the representative record. For `TRA` and `BND`, it must use a valid VCF breakend bracket form. |
+| `QUAL` | Quality value of the representative record, or `.` when unavailable. |
+| `FILTER` | Filter status of the representative record. `PASS` means that the record passed the filters applied by its source workflow. |
+| `INFO` | Event-level annotations and provenance fields. |
+| `FORMAT` | The fixed SVCF evidence schema. |
+
+The representative record is the normalized or selected record written in the first nine columns. Its values may differ from the original values kept in the evidence columns.
+
+## 5. INFO fields
+
+SVCF uses the following INFO definitions:
+
+```text
 ##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
 ##INFO=<ID=CHR2,Number=1,Type=String,Description="Chromosome for end">
 ##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
@@ -43,7 +181,81 @@ Our customized VCF follows the standard VCF structure:
 ##INFO=<ID=RTID,Number=1,Type=String,Description="Associated ID for reciprocal translocations if available">
 ##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
 ##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">
-##FILTER=<ID=PASS,Description="All filters passed, variant is most likely true">
+##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">
+##INFO=<ID=SOURCES,Number=.,Type=String,Description="Source caller/sample labels supporting this merged SV record">
+##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers or samples">
+```
+
+Every SVCF record must contain these keys:
+
+```text
+SVTYPE
+END
+SVLEN
+CHR2
+SUPPORT
+SVMETHOD
+RTID
+AF
+STRAND
+RNAMES
+```
+
+The key must be present even when its value is `.`.
+
+`SOURCES` is mode-dependent:
+
+- it must be absent or empty in single-caller mode;
+- it must be present and non-empty in caller-merge and sample/multi modes.
+
+`SOURCE_IDS` is written by the current OctopuSV merge implementation to preserve original record IDs. It is not used by the current validator to determine the SVCF mode.
+
+### 5.1 INFO field meanings
+
+| Field | Meaning |
+|---|---|
+| `SVTYPE` | Structural variant type. Allowed values are `DEL`, `DUP`, `INV`, `INS`, `TRA`, and `BND`. |
+| `CHR2` | Contig containing the second coordinate or mate breakpoint. |
+| `END` | Second coordinate used by the SVCF record. Its meaning depends on `SVTYPE`. |
+| `SVLEN` | Positive event length when applicable. `TRA` and `BND` use `.`. |
+| `SUPPORT` | Read-support value of the representative record. It is not the number of callers or samples. |
+| `SVMETHOD` | Method that produced the current SVCF record, normally `OctopuSV`. |
+| `RTID` | Related or reciprocal record ID when available; otherwise `.`. |
+| `AF` | Allele frequency when available; otherwise `.`. |
+| `STRAND` | Strand or orientation value retained by OctopuSV; otherwise `.`. |
+| `RNAMES` | Supporting read names when available; otherwise `.`. |
+| `SOURCES` | Comma-separated labels of the sources supporting a merged record. |
+| `SOURCE_IDS` | Comma-separated original record IDs written for source-level traceability. |
+
+`SUPPORT` may be `.` or a non-negative integer.
+
+For example:
+
+```text
+SOURCES=svim,pbsv
+SOURCE_IDS=svim.INS.3,pbsv.INS.1
+```
+
+In caller-merge mode, the source order is also the evidence-column order:
+
+```text
+SOURCES item 1  <-> evidence column 1
+SOURCES item 2  <-> evidence column 2
+```
+
+## 6. FORMAT and evidence columns
+
+The SVCF FORMAT string is fixed:
+
+```text
+GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO
+```
+
+The order must not change.
+
+The corresponding FORMAT definitions are:
+
+```text
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">
 ##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">
@@ -55,135 +267,246 @@ Our customized VCF follows the standard VCF structure:
 ##FORMAT=<ID=REF,Number=1,Type=String,Description="Reference allele sequence">
 ##FORMAT=<ID=ALT,Number=1,Type=String,Description="Alternate allele sequence">
 ##FORMAT=<ID=CO,Number=1,Type=String,Description="Coordinate information of the SV">
-#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	Sample
-GL000008.2	105803	svim.BND.1	N	N[chr13:67876737[	12	PASS	SVTYPE=TRA;END=67876737;SVLEN=.;CHR2=chr13;SUPPORT=10;SVMETHOD=octopusV;RTID=.;AF=.;STRAND=+	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:1,3:.:+:12:TRA:svim.BND.1:svim.vcf:N:N[chr13:67876737[:GL000008.2_105803-chr13_67876737
-GL000008.2	105804	svim.BND.2	N	]chr13:67886734]N	12	PASS	SVTYPE=TRA;END=67886734;SVLEN=.;CHR2=chr13;SUPPORT=10;SVMETHOD=octopusV;RTID=.;AF=.;STRAND=-	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/0:2,8:.:-:12:TRA:svim.BND.2:svim.vcf:N:]chr13:67886734]N:GL000008.2_105804-chr13_67886734
-GL000194.1	99821	svim.BND.3	N	N]chrX:119789373]	4	PASS	SVTYPE=TRA;END=119789373;SVLEN=.;CHR2=chrX;SUPPORT=4;SVMETHOD=octopusV;RTID=.;AF=.;STRAND=+-	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	1/1:0,4:.:+-:4:TRA:svim.BND.3:svim.vcf:N:N]chrX:119789373]:GL000194.1_99821-chrX_119789373
-GL000008.2	13306	svim.DEL.1	TTCTCCCACTTTTTGATGGGGTTGTTTTTTTCTTGTAAATTTGTTTG	T	1	PASS	SVTYPE=DEL;END=13352;SVLEN=46;CHR2=GL000008.2;SUPPORT=1;SVMETHOD=octopusV;RTID=.;AF=.;STRAND=+-	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/0:1,0:46:+-:1:DEL:svim.DEL.1:svim.vcf:TTCTCCCACTTTTTGATGGGGTTGTTTTTTTCTTGTAAATTTGTTTG:T:GL000008.2_13306-GL000008.2_13352
-GL000008.2	38637	svim.INS.2	G	GCTCGGGCCAAACTAGATGCTACCTTAATACACGTCTCACAA	1	PASS	SVTYPE=INS;END=38637;SVLEN=41;CHR2=GL000008.2;SUPPORT=1;SVMETHOD=octopusV;RTID=.;AF=.;STRAND=+-	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:1,0:41:+-:1:INS:svim.INS.2:svim.vcf:G:GCTCGGGCCAAACTAGATGCTACCTTAATACACGTCTCACAA:GL000008.2_38637-GL000008.2_38678
-chr1    16725233    svim.BND.1076   N   <INV>   7   PASS    SVTYPE=INV;END=16725253;SVLEN=20;CHR2=chr1;SUPPORT=6;SVMETHOD=octopusV;RTID=.;AF=.;STRAND=+ GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO  1/0:5,3:20:+:7:INV:svim.BND.1076:svim.vcf:N:[chr1:16725253[N:chr1_16725233-chr1_16725253
-chr7	117502838	svim.BND.8880	N	<DUP>	1	PASS	SVTYPE=DUP;END=131967043;SVLEN=14464205;CHR2=chr7;SUPPORT=1;SVMETHOD=octopusV;RTID=.;AF=.;STRAND=+-	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:0,1:14464205:+-:1:DUP:svim.BND.8880:svim.vcf:N:]chr7:131967043]N:chr7_117502838-chr7_131967043
-chr8	124536858	svim.BND.7772	N	N[chr17:39911421[	1	PASS	SVTYPE=TRA;END=39911421;SVLEN=.;CHR2=chr17;SUPPORT=1;SVMETHOD=octopusV;RTID=svim.BND.72;AF=.;STRAND=+-	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/0:2,2:.:+-:1:TRA:svim.BND.7772:svim.vcf:N:N[chr17:39911421[:chr8_124536858-chr17_39911421
-chr17	39911421	svim.BND.72	N	N[chr8:124536858[	7	PASS	SVTYPE=TRA;END=124536858;SVLEN=.;CHR2=chr17;SUPPORT=6;SVMETHOD=octopusV;RTID=svim.BND.7772;AF=.;STRAND=+	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:2,4:.:+:7:TRA:svim.BND.72:svim.vcf:N:N[chr8:124536858[:chr17_39911421-chr8_124536858
 ```
 
-## 4. Meta-Information Lines
+Each evidence column describes one source record or one sample entry.
 
-Meta-information lines contain various keywords prefixed with double hash marks "##" that define how the data lines should be interpreted. Each meta-information line is a directive typically defining the file format version, the reference genome, contigs, and information specific to the format or analysis tools.
+| Field | Meaning |
+|---|---|
+| `GT` | Genotype retained from the source record. |
+| `AD` | Reference and alternate allele depths when available. |
+| `LN` | Absolute source-event length when available. |
+| `ST` | Source strand or orientation value when available. |
+| `QV` | Source quality value when available. |
+| `TY` | Source structural variant type. |
+| `ID` | Original source record ID. |
+| `SC` | Source caller, caller version, file label, or another source name written by OctopuSV. |
+| `REF` | Original source REF value. |
+| `ALT` | Original source ALT value, including the original BND expression when applicable. |
+| `CO` | Source coordinates in the form described below. |
 
-## 5. Header Line
+`CO` must remain the last FORMAT field.
 
-The header line starts with a single "#" and provides the names of the columns in the data lines:
+The `CO` value has the form:
 
-```plaintext
-#CHROM POS ID REF ALT QUAL FILTER INFO FORMAT Sample
+```text
+startChrom_startPos-endChrom_endPos
 ```
 
-## 6. Data Lines
+Examples:
 
-Each data line corresponds to a structural variant and includes the following mandatory columns:
-
-- **CHROM**: The chromosome on which the variant occurs.
-- **POS**: The position of the variant on the chromosome.
-- **ID**: A semi-colon-separated list of unique identifiers for the variant.
-- **REF**: The reference allele at the position of the variant.
-- **ALT**: The alternate allele, specifying the variant found in a sample.
-- **QUAL**: A quality score for the variant call.
-- **FILTER**: Indicates if the variant passed filtering.
-- **INFO**: Additional information about the variant.
-- **FORMAT**: The format of the sample-specific data.
-- **Sample**: The sample-specific data for the variant.
-
-## 7. INFO Field
-
-The INFO field contains several subfields separated by semicolons, including:
-
-- **SVTYPE**: Type of structural variant (DUP, INV, TRA, DEL, INS).
-- **CHR2**: Chromosome for the end position of the SV.
-- **END**: End position of the variant; set to 0 for TRA.
-- **SVLEN**: Length of the SV; calculated as start-end for DEL, end-start for DUP and INV; set to '.' for TRA.
-- **SUPPORT**: Number of pieces of evidence supporting the SV.
-- **SVMETHOD**: Software used to identify the SV.
-- **RTID**: Identifier for reciprocal translocations, if applicable.
-- **AF**: Allele frequency of the SV.
-- **STRAND**: Strand orientation of the SV.
-
-Each tag in the INFO field would be used to annotate a structural variant in the SVCF file, providing a quick reference for key details of each event.
-
-## 8. FORMAT Field
-
-The FORMAT field includes:
-
-- **GT**: Genotype, represented as allele indices separated by a slash (`/`) for diploid genomes or a pipe (`|`) for phased genotypes.
-- **AD**: Allelic depths for the ref and alt alleles in the order listed.
-- **LN**: The length of the SV event.
-- **ST**: Strands for the SV event, if applicable.
-- **QV**: Quality Value for the SV event.
-- **TY**: The type of SV event.
-- **ID**: A unique identifier for the SV event.
-- **SC**: Source caller, often the VCF file name or a user-defined string.
-- **REF**: The reference bases for the SV event.
-- **ALT**: The alternate bases for the SV event (or `.` if none). It can also be BND pattern.
-- **CO**: Coordinates for the SV event indicating the affected region.
-
-## 9. Conventions
-
-### SVTYPE Convention
-
-Within our customized VCF format, the `SVTYPE` field is restricted to five canonical types of structural variants:
-
-- `DUP`: Duplication, a segment of DNA that is duplicated on the genome.
-- `INV`: Inversion, a segment of DNA that is inverted in the genome.
-- `TRA`: Translocation, a segment of DNA that has been excised from one part of the genome and relocated to another position.
-- `DEL`: Deletion, a segment of DNA that is missing from the genome.
-- `INS`: Insertion, a segment of DNA that is added to the genome.
-
-### Special Rules for `TRA`
-
-For translocations (`TRA`), `SVLEN` is represented by a dot (`.`) to avoid erroneous length calculations that could potentially reduce the overall length of the reference sequence.
-
-```plaintext
-#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	Sample
-chrX	12345678	svim.TRA.91011	A	<TRA>	60	PASS	SVTYPE=TRA;END=3456;SVLEN=.;SUPPORT=5;SVMETHOD=octopusV	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:20,30::.::60:TRA:svim.TRA.91011:example.vcf:A:<TRA>:chrX_12345678-chrY_23456789
+```text
+1_10889-1_10936
+1_3845267-hs37d5_32469995
 ```
 
-### Missing Values
+Contig names may contain underscores or hyphens. A parser should separate each coordinate from the rightmost underscore before the numeric position.
 
-In situations where data is not available, a dot (`.`) is used to represent the absence of data, not `NA`. This convention aligns with the VCF specification for missing information.
+Source IDs and BND ALT strings may contain colons. Software must not assume that every colon inside an evidence column is a FORMAT separator. The current OctopuSV parser keeps `CO` as the final field and uses bounded or right-side parsing where needed.
 
-### FORMAT Field: SC
+For non-`TRA` and non-`BND` records, the current SVCF parser first looks for a usable `CO` value in the evidence columns. If no usable `CO` is found, it falls back to `CHROM`, `POS`, `CHR2`, `END`, and, when needed, `SVLEN`.
 
-The `SC` subfield within the FORMAT field stands for "source" and is by default populated with the name of the VCF file from which the SV data is derived. Users have the option to customize this subfield to facilitate tracing the origin of the SV (such as the sample, file, platform, etc.) in subsequent analyses. This is distinct from the `SVMETHOD` field, which indicates the software (typically `octopusV`) that generated the current file.
+For `TRA` and `BND`, the parser first reads the mate coordinate from `ALT` and falls back to `CHR2` and `END` when needed.
 
-### SVLEN Calculation
+## 7. Structural variant representation
 
-The `SVLEN` field reflects the length of the structural variation and is calculated as follows:
+The legal SVCF structural variant types are:
 
-- For `DEL`: `SVLEN` is the positive value calculated by subtracting the `POS` (start position) from the `END`, indicating a deletion from the reference genome. The length of the deletion is the number of base pairs lost.
-- For `DUP` and `INV`: `SVLEN` is the positive value calculated by subtracting the `POS` (start position) from the `END`, indicating an increase in the length of the genome. The length is the number of base pairs gained.
-- For `TRA`: `SVLEN` is not applicable as the length does not change in a simple translocation event. The field is represented by a period (`.`) to indicate this.
+```text
+DEL
+DUP
+INV
+INS
+TRA
+BND
+```
 
-Here is the corrected representation:
+### 7.1 DEL, DUP, and INV
 
-- For `DEL`:
+For `DEL`, `DUP`, and `INV`:
 
-  ```
-  SVLEN = END - POS
-  ```
+- `END` must be a numeric value;
+- `END` must be greater than or equal to `POS`;
+- `CHR2` is normally the same as `CHROM`;
+- `SVLEN` is a positive event length when available.
 
-- For `DUP` and `INV`:
+Current OctopuSV output uses the absolute length rather than a negative deletion length.
 
-  ```
-  SVLEN = END - POS
-  ```
+### 7.2 INS
 
-- For `TRA`:
+For `INS`, the keys `END`, `SVLEN`, and `CHR2` must be present.
 
-  ```
-  SVLEN = .
-  ```
+When the insertion length is known, current OctopuSV SVCF output normally represents its internal span as:
 
-- For `INS`:
-  ```
-  SVLEN = Fixed number
-  ```
+```text
+END = POS + SVLEN
+```
+
+For example:
+
+```text
+POS=10889
+END=10936
+SVLEN=47
+```
+
+When the value is unavailable, `END` or `SVLEN` may be `.`. The current validator requires the keys but does not require a numeric relationship for `INS`.
+
+The internal SVCF endpoint is used by OctopuSV processing and merging. During `svcf2vcf` conversion, an insertion is written with the conventional VCF endpoint:
+
+```text
+END = POS
+```
+
+### 7.3 TRA and BND
+
+`TRA` and `BND` use VCF breakend notation in `ALT`.
+
+The accepted forms are:
+
+```text
+t[chr:pos[
+t]chr:pos]
+[chr:pos[t
+]chr:pos]t
+```
+
+where `t` is sequence placed before or after the breakend expression.
+
+For `TRA` and `BND`:
+
+- `CHR2` must contain the mate contig;
+- `END` must contain the numeric mate position;
+- the mate contig and position in `ALT` must agree with `CHR2` and `END`;
+- `SVLEN` must be `.`.
+
+Example:
+
+```text
+CHROM=1
+POS=3845267
+ALT=C[hs37d5:32469995[
+CHR2=hs37d5
+END=32469995
+SVTYPE=TRA
+SVLEN=.
+```
+
+OctopuSV uses `TRA` when the breakend can be represented as a translocation with sufficient confidence.
+
+`BND` is retained when OctopuSV cannot safely convert a breakend to another supported SV type. A retained `BND` record is valid SVCF and is not considered a conversion failure.
+
+## 8. Provenance
+
+SVCF separates the representative event from the source evidence.
+
+The fixed fields and INFO describe the representative normalized or merged event. Evidence columns retain source-specific values such as genotype, quality, coordinates, caller ID, REF, and ALT.
+
+The representative values do not have to match every source record exactly. For example, two insertion records may be merged while retaining slightly different source positions, lengths, or inserted sequences in their evidence columns.
+
+In caller-merge mode:
+
+- `SOURCES` identifies the source columns;
+- `SOURCE_IDS` preserves original source record IDs;
+- the evidence columns follow the `SOURCES` order;
+- each source event remains traceable through its evidence column.
+
+In sample/multi mode, the `#CHROM` header defines a fixed global order for the evidence columns.
+
+## 9. Missing values
+
+A missing value must be written as `.` rather than `NA`.
+
+Common examples include:
+
+```text
+QUAL=.
+SUPPORT=.
+SVLEN=.
+GT=./.
+AD=.,.
+QV=.
+CO=.
+```
+
+`./.` represents a missing genotype reported in an evidence column.
+
+A dot in another FORMAT field means that the corresponding source value is unavailable.
+
+A missing value does not remove the field from the fixed SVCF FORMAT layout.
+
+## 10. Conversion to VCF
+
+SVCF is intended to preserve normalized structural variant data and source evidence. VCF is the exchange format for software that does not implement SVCF.
+
+Convert an SVCF file with:
+
+```bash
+octopusv svcf2vcf -i input.svcf -o output.vcf
+```
+
+Conversion may be lossy because a conventional VCF does not preserve the full caller-merge evidence layout.
+
+In the current caller-merge conversion used by the OctopuSV regression tests:
+
+- the representative event remains one VCF record;
+- `SOURCES` and `SOURCE_IDS` remain in INFO;
+- the variable SVCF evidence columns are reduced to a conventional sample column;
+- the output FORMAT is `GT:AD:DP:LN`;
+- `DP` is calculated from the available allele depths;
+- insertion `END` is changed from the internal SVCF endpoint to `POS`.
+
+The original SVCF should be retained whenever source-level provenance is needed.
+
+## 11. Validation
+
+The reference validation command is:
+
+```bash
+octopusv validate-svcf -i input.svcf
+```
+
+The current validator checks:
+
+- the required leading header columns;
+- legal SVCF mode;
+- the fixed FORMAT string and order;
+- required INFO keys;
+- legal `SVTYPE`;
+- valid `SUPPORT`;
+- mode-specific evidence-column counts;
+- numeric `END` values for `DEL`, `DUP`, and `INV`;
+- BND syntax for `TRA` and `BND`;
+- agreement among BND `ALT`, `CHR2`, and `END`;
+- the presence of a parseable `CO` value.
+
+By default, failure to find a parseable `CO` is reported as a warning. It can be treated as an error with:
+
+```bash
+octopusv validate-svcf -i input.svcf --strict-co
+```
+
+The exit codes are:
+
+```text
+0  PASS or PASS_WITH_WARNINGS
+1  validation failed
+2  file unreadable or empty
+```
+
+## 12. Implementing SVCF
+
+Software that writes SVCF should follow the required columns, INFO fields,
+FORMAT layout, SVCF modes, and structural-variant coordinate rules described
+in this document.
+
+Software that reads SVCF should recognize the three SVCF modes, preserve
+source evidence and provenance, and correctly handle TRA and BND breakend
+records.
+
+`octopusv validate-svcf` can be used to check whether a file follows the
+current SVCF rules implemented by OctopuSV.
+
+When the SVCF format changes, the specification, writers, parsers, validator,
+converter, and regression tests should be updated together.
+
