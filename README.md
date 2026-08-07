@@ -146,7 +146,7 @@ octopusv svcf2bedpe -i merged.svcf -o final_results.bedpe
 
 ## Supported SV Callers
 
-**Long-read callers**: Sniffles, Severus, SVDSS, DeBreak, SVIM, CuteSV, PBSV, nanomonsv
+**Long-read callers**: Sniffles, Severus, SVDSS, DeBreak, SVIM, SVIM-ASM, CuteSV, PBSV, nanomonsv
 
 **Short-read callers**: Manta, Delly, GRIDSS, Lumpy, SvABA, Octopus, CLEVER
 
