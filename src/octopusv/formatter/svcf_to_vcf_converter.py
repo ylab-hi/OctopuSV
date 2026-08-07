@@ -305,16 +305,14 @@ class SVCFtoVCFConverter:
         info_fields = [f"SVTYPE={event.sv_type}"]
 
         # END handling.
-        if event.sv_type == "BND":
-            # BND events encode mate coordinates in ALT; END is not required.
+        if event.sv_type in {"BND", "TRA"}:
+            # BND/TRA mate coordinates are encoded in ALT.
+            # Do not emit cross-chromosomal mate positions as INFO/END.
             pass
         elif event.sv_type == "INS":
-            # Standard VCF convention: an insertion occupies no reference span,
-            # so END is set to POS. SVCF may carry END=POS+SVLEN internally.
+            # VCF-compatible insertion representation.
+            # SVCF may use END=POS+SVLEN internally.
             info_fields.append(f"END={event.pos}")
-        elif event.sv_type == "TRA":
-            if hasattr(event, "end_pos") and event.end_pos is not None:
-                info_fields.append(f"END={event.end_pos}")
         else:
             if hasattr(event, "end_pos") and event.end_pos is not None:
                 info_fields.append(f"END={event.end_pos}")

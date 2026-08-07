@@ -25,7 +25,7 @@ def svcf2vcf(
 
         typer.echo(f"Converted SVCF to VCF. Output written to {output_file}")
         typer.echo("")
-        typer.echo("SUCCESS: Standard VCF4.2 format generated.")
+        typer.echo("SUCCESS: VCF4.2-compatible output generated.")
         typer.echo("This file is now compatible with bcftools, vcftools, and other standard tools.")
         typer.echo("You can proceed with downstream analysis using standard VCF workflows.")
 
