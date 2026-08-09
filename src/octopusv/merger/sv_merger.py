@@ -1,5 +1,5 @@
 from .bnd_merger import BNDMerger
-from .sv_merge_logic import should_merge
+from .sv_merge_logic import get_max_distance_threshold, should_merge
 from .sv_merge_selection import MergeSelectionMixin
 from .sv_merge_writer import MergeWriterMixin
 from .sv_selector import select_representative_sv
@@ -42,10 +42,12 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
         self.max_length_ratio = max_length_ratio
         self.min_jaccard = min_jaccard
         self._all_merged_cache = None
+        self._active_start = {}
 
     def merge(self):
         """Merge all SV events based on their types and chromosomes."""
         self._all_merged_cache = None
+        self._active_start = {}
 
         for sv_type, chromosomes in self.classified_events.items():
             if sv_type == "TRA":
@@ -65,7 +67,7 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
                         self.merged_events[sv_type][chromosome] = []
                         self.event_groups[sv_type][chromosome] = []
                     for event in sorted(events, key=lambda e: (e.start_pos, e.end_pos, e.sv_id)):
-                        self.add_and_merge_event(sv_type, chromosome, event)
+                        self._add_and_merge_sorted_event(sv_type, chromosome, event)
 
     def add_and_merge_event(self, sv_type, chromosome, new_event):
         """Add a new event and merge it with existing events if possible."""
@@ -77,6 +79,47 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
             if should_merge(existing_event, new_event, self.max_distance, self.max_length_ratio, self.min_jaccard):
                 event_groups[idx].append(new_event)
                 return
+        events.append(new_event)
+        event_groups.append([new_event])
+
+    def _add_and_merge_sorted_event(self, sv_type, chromosome, new_event):
+        """Merge one event from the start-position-sorted stream used by merge().
+
+        Events whose group seed is farther left than the maximum possible
+        should_merge() distance threshold cannot match this event or any later
+        event in the same sorted stream, so they are skipped permanently.
+
+        Candidate groups inside the active window are still checked in their
+        original creation order with the unchanged should_merge() function.
+        """
+        self._all_merged_cache = None
+
+        events = self.merged_events[sv_type][chromosome]
+        event_groups = self.event_groups[sv_type][chromosome]
+
+        key = (sv_type, chromosome)
+        active_start = self._active_start.get(key, 0)
+        prune_bound = get_max_distance_threshold(sv_type)
+
+        while (
+            active_start < len(events)
+            and new_event.start_pos - events[active_start].start_pos > prune_bound
+        ):
+            active_start += 1
+
+        self._active_start[key] = active_start
+
+        for idx in range(active_start, len(events)):
+            if should_merge(
+                events[idx],
+                new_event,
+                self.max_distance,
+                self.max_length_ratio,
+                self.min_jaccard,
+            ):
+                event_groups[idx].append(new_event)
+                return
+
         events.append(new_event)
         event_groups.append([new_event])
 

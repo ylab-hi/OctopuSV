@@ -54,6 +54,15 @@ def should_merge(event1, event2, max_distance=50, max_length_ratio=1.3, min_jacc
     return ratio <= length_ratio_threshold
 
 
+def get_max_distance_threshold(sv_type):
+    """Return the maximum possible distance threshold for an SV type.
+
+    This stays tied to the same threshold function used by should_merge().
+    The >=1000 bp branch is the maximum threshold in the current merge logic.
+    """
+    return _get_distance_threshold(sv_type, 1000)
+
+
 def _get_distance_threshold(sv_type, min_length):
     """Get distance threshold based on SV type and minimum length."""
     base_threshold = {
