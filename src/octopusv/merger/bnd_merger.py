@@ -25,6 +25,7 @@ class BNDMerger:
         """
         self.bnd_events = {}  # Dictionary to store BND events by chromosome pairs
         self.delta = delta
+        self._merged_events_cache = None
 
     def add_event(self, event):
         """Add a BND event to the merger, organizing events by chromosome pairs.
@@ -38,6 +39,8 @@ class BNDMerger:
         3. Initializes a new list for previously unseen chromosome pairs
         4. Adds the event to the appropriate chromosome pair's event list
         """
+        self._merged_events_cache = None
+
         # Extract target chromosome from BND ALT field
         from .bnd_merge_logic import parse_bnd_alt
         _, target_chr, _ = parse_bnd_alt(event.alt)
@@ -103,6 +106,9 @@ class BNDMerger:
         3. Ensures source file information is properly merged
         4. Returns the list of representative events
         """
+        if self._merged_events_cache is not None:
+            return self._merged_events_cache
+
         all_chromosome_pair_events = self.merge_events()
         merged_events = []
         for _chromosome_pair, event_groups in all_chromosome_pair_events.items():
@@ -110,4 +116,5 @@ class BNDMerger:
                 representative_sv = select_representative_sv(event_group)
                 # source_file merging is handled within select_representative_sv
                 merged_events.append(representative_sv)
-        return merged_events
+        self._merged_events_cache = merged_events
+        return self._merged_events_cache

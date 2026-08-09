@@ -41,9 +41,12 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
         self.max_distance = max_distance
         self.max_length_ratio = max_length_ratio
         self.min_jaccard = min_jaccard
+        self._all_merged_cache = None
 
     def merge(self):
         """Merge all SV events based on their types and chromosomes."""
+        self._all_merged_cache = None
+
         for sv_type, chromosomes in self.classified_events.items():
             if sv_type == "TRA":
                 for (_chr1, _chr2), events in chromosomes.items():
@@ -66,6 +69,8 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
 
     def add_and_merge_event(self, sv_type, chromosome, new_event):
         """Add a new event and merge it with existing events if possible."""
+        self._all_merged_cache = None
+
         events = self.merged_events[sv_type][chromosome]
         event_groups = self.event_groups[sv_type][chromosome]
         for idx, existing_event in enumerate(events):
@@ -92,6 +97,9 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
 
     def get_all_merged_events(self):
         """Get all merged events across all types and chromosomes."""
+        if self._all_merged_cache is not None:
+            return self._all_merged_cache
+
         merged_events = []
         merged_events.extend(self.tra_merger.get_merged_events())
         merged_events.extend(self.bnd_merger.get_merged_events())
@@ -100,4 +108,6 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
                 for sv_group in self.event_groups[sv_type][chromosome]:
                     representative_sv = select_representative_sv(sv_group)
                     merged_events.append(representative_sv)
-        return merged_events
+
+        self._all_merged_cache = merged_events
+        return self._all_merged_cache
