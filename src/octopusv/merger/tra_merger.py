@@ -1,5 +1,5 @@
 from .sv_selector import select_representative_sv
-from .TRA_merge_logic import should_merge_tra
+from .TRA_merge_logic import _breakend_orientation_signature, should_merge_tra
 
 
 class TRAMerger:
@@ -47,40 +47,138 @@ class TRAMerger:
             self.tra_events[key] = []
         self.tra_events[key].append(event)
 
+    @staticmethod
+    def _adjacency_candidate_info(event):
+        """Return a safe physical-adjacency candidate key and aligned positions.
+
+        The key contains only requirements already enforced by
+        should_merge_tra(): reverse-complement state plus the unordered pair of
+        chromosome-side endpoints. When the two endpoint identities are
+        distinct, their positions can also be aligned canonically for safe
+        coordinate binning. Duplicate endpoint identities are left unbinned so
+        reciprocal pairing remains fully delegated to should_merge_tra().
+        """
+        signature = _breakend_orientation_signature(event)
+        if signature is None:
+            return None, None
+
+        local_endpoint, remote_endpoint, reverse_complement = signature
+        local_identity = (local_endpoint[0], local_endpoint[2])
+        remote_identity = (remote_endpoint[0], remote_endpoint[2])
+        endpoint_sides = tuple(sorted((local_identity, remote_identity)))
+        key = (endpoint_sides, reverse_complement)
+
+        if local_identity == remote_identity:
+            return key, None
+
+        if local_identity < remote_identity:
+            positions = (int(local_endpoint[1]), int(remote_endpoint[1]))
+        else:
+            positions = (int(remote_endpoint[1]), int(local_endpoint[1]))
+
+        return key, positions
+
     def merge_events(self):
         """Merge overlapping TRA events for each chromosome pair.
 
-        Returns:
-            dict: A dictionary where:
-                - Keys are chromosome pairs (tuple)
-                - Values are lists of event groups (each group contains related events)
+        Candidate pruning only removes comparisons that the unchanged
+        should_merge_tra() function is guaranteed to reject.
 
-        The merging process:
-        1. Iterates through each chromosome pair
-        2. For each pair, groups overlapping events based on:
-           - Breakpoint proximity (using delta)
-           - Overlap ratio threshold
-           - Strand consistency (if enabled)
-        3. Maintains separate groups for non-overlapping events
+        With strand consistency enabled, parseable physical-adjacency signatures
+        are first separated by the same chromosome-side and reverse-complement
+        requirements used by should_merge_tra(). For distinct endpoint
+        identities, candidates are additionally limited to the same two-breakpoint
+        tolerance window. Signature-less groups remain candidates because the
+        original logic falls back to legacy coordinate matching whenever either
+        signature is unavailable.
+
+        Candidate group indices are checked in original creation order, so the
+        existing first-match behavior is preserved exactly.
         """
         all_chromosome_pair_events = {}
+
         for chromosome_pair, unmerged_events in self.tra_events.items():
             merged_event_groups = []
+
+            adjacency_group_indices = {}
+            adjacency_bins = {}
+            fallback_group_indices = []
+
+            tra_delta = self.delta * 2
+            bin_width = tra_delta + 1 if tra_delta >= 0 else None
+
             for current_event in unmerged_events:
                 event_was_merged = False
-                for _idx, event_group in enumerate(merged_event_groups):
-                    existing_event = event_group[0]
+
+                if not self.strand_consistency or bin_width is None:
+                    current_key = None
+                    current_positions = None
+                    candidate_indices = range(len(merged_event_groups))
+                else:
+                    current_key, current_positions = self._adjacency_candidate_info(current_event)
+
+                    if current_key is None:
+                        # should_merge_tra() uses legacy coordinate matching when
+                        # either event lacks a valid signature, so no signature-
+                        # based pruning is safe for this current event.
+                        candidate_indices = range(len(merged_event_groups))
+                    elif current_positions is None:
+                        # Duplicate chromosome-side endpoint identities make the
+                        # same/reciprocal positional pairing ambiguous. Preserve
+                        # all groups with the same physical-adjacency key.
+                        candidate_indices = sorted(
+                            adjacency_group_indices.get(current_key, [])
+                            + fallback_group_indices
+                        )
+                    else:
+                        pos1_bin = current_positions[0] // bin_width
+                        pos2_bin = current_positions[1] // bin_width
+                        candidate_indices = list(fallback_group_indices)
+
+                        # If both aligned breakpoint differences are <= tra_delta
+                        # and bin width is tra_delta + 1, each bin can differ by
+                        # at most one from the matching group seed.
+                        for pos1_offset in (-1, 0, 1):
+                            for pos2_offset in (-1, 0, 1):
+                                bin_key = (
+                                    current_key,
+                                    pos1_bin + pos1_offset,
+                                    pos2_bin + pos2_offset,
+                                )
+                                candidate_indices.extend(adjacency_bins.get(bin_key, ()))
+
+                        candidate_indices.sort()
+
+                for idx in candidate_indices:
+                    existing_event = merged_event_groups[idx][0]
                     if should_merge_tra(
-                        existing_event, current_event, self.delta, self.min_overlap_ratio, self.strand_consistency
+                        existing_event,
+                        current_event,
+                        self.delta,
+                        self.min_overlap_ratio,
+                        self.strand_consistency,
                     ):
-                        # Add current event to existing group if it meets merge criteria
-                        event_group.append(current_event)
+                        merged_event_groups[idx].append(current_event)
                         event_was_merged = True
                         break
+
                 if not event_was_merged:
-                    # Create new group if event doesn't match any existing groups
+                    group_index = len(merged_event_groups)
                     merged_event_groups.append([current_event])
+
+                    if self.strand_consistency and bin_width is not None:
+                        if current_key is None:
+                            fallback_group_indices.append(group_index)
+                        else:
+                            adjacency_group_indices.setdefault(current_key, []).append(group_index)
+                            if current_positions is not None:
+                                pos1_bin = current_positions[0] // bin_width
+                                pos2_bin = current_positions[1] // bin_width
+                                bin_key = (current_key, pos1_bin, pos2_bin)
+                                adjacency_bins.setdefault(bin_key, []).append(group_index)
+
             all_chromosome_pair_events[chromosome_pair] = merged_event_groups
+
         return all_chromosome_pair_events
 
     def get_merged_events(self):
