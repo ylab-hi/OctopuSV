@@ -1,5 +1,13 @@
 # OctopuSV: End-to-end structural variant post-processing 🐙
 
+<p align="center">
+  <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/logo.png" width="40%" height="40%">
+</p>
+
+[![PyPI version](https://badge.fury.io/py/octopusv.svg)](https://badge.fury.io/py/octopusv)
+[![Bioconda](https://img.shields.io/conda/vn/bioconda/octopusv.svg)](https://bioconda.github.io/recipes/octopusv/README.html)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 > *Unify, merge, inspect, query, compare, and export structural variants across callers and samples.*
 
 > [!NOTE]
