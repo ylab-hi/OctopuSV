@@ -45,6 +45,7 @@
 
 <details>
 <summary><b>Previous releases</b></summary>
+
 - **v0.4.1** — Improved multi-sample merging, TRA/BND integration, and Circos plotting, including fixes for sample evidence placement, reciprocal breakend merging, and insertion visualization.
 - **v0.4.0** — Added a more complete SVCF operation layer for validation, inspection, querying, filtering, subsetting, normalization, and improved VCF export and provenance handling.
 - **v0.3.5** — Added genome-wide SV visualization with `octopusv plot-circos`.
