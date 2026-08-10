@@ -1,71 +1,28 @@
 # OctopuSV: End-to-end structural variant post-processing 🐙
 
-<p align="center">
-  <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/logo.png" width="40%" height="40%">
-</p>
-
-[![PyPI version](https://badge.fury.io/py/octopusv.svg)](https://badge.fury.io/py/octopusv)
-[![Bioconda](https://img.shields.io/conda/vn/bioconda/octopusv.svg)](https://bioconda.github.io/recipes/octopusv/README.html)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
 > *Unify, merge, inspect, query, compare, and export structural variants across callers and samples.*
 
 > [!NOTE]
-> **What's New in v0.4.1** — Improved multi-sample merging, TRA/BND integration, and Circos plotting.
+> **What's New in v0.4.2** — Major merge performance improvements and compatibility updates.
 >
-> - Fixed sample-mode merge errors that could place genotype evidence in the wrong sample column and turn real carriers into `0/0`.
-> - Improved TRA/BND merging by recognizing equivalent reciprocal breakend representations of the same physical event.
-> - Fixed `plot-circos` support filtering for records with `SUPPORT=.` and added a dedicated insertion marker track with `--include-ins`.
+> **~40× faster merge on a 100k-event benchmark**
 >
-> Example:
+> The merge engine has been substantially optimized without changing the underlying merge logic or output semantics. In a single-thread, 3-input union benchmark with 100,372 merged events, runtime decreased from **240.49 s to 6.07 s (~39.6× faster)** while peak memory usage remained essentially unchanged.
+>
+> - Optimized SV, TRA, and BND candidate matching by eliminating comparisons that the existing merge rules are guaranteed to reject.
+> - Added tested compatibility with SVIM-ASM output.
+> - Improved VCF4.2-compatible TRA export with `octopusv svcf2vcf`.
+> - Expanded regression testing for caller-mode and sample-mode merging.
+
+> [!TIP]
+> **Genome-wide SV visualization** — `octopusv plot-circos` draws a genome-wide SV Circos overview from an SVCF file, with intra-chromosomal SV links, translocations, insertion markers, and breakpoint-density tracks.
 >
 > ```bash
 > octopusv plot-circos \
 >   -i merged.svcf \
 >   -o circos.png \
->   --include-ins \
->   --intra-support 0 \
->   --ins-support 0 \
->   --intra-min-span 20
+>   --include-ins
 > ```
-
-> **What's New in v0.4.0** — OctopuSV now provides a more complete **SVCF operation layer** for validation, inspection, querying, filtering, subsetting, normalization, and standard-format conversion.
->
-> **New SVCF inspection and validation commands**
->
-> - `octopusv header` — show the header and metadata contract of an SVCF/VCF file.
-> - `octopusv validate-svcf` — validate an SVCF file against the OctopuSV SVCF contract, including required fields, evidence structure, and provenance consistency.
-> - `octopusv inspect` — inspect one or more SVCF records by ID and render parsed endpoints, span, `SOURCES`, `SOURCE_IDS`, and per-caller or per-sample evidence blocks.
-> - `octopusv inspect --id-file ... --jsonl` — export inspected records as JSONL for pipelines and structured downstream workflows.
->
-> **New SVCF filtering and querying commands**
->
-> - `octopusv query` — query SVCF records by genomic targets while preserving SVCF structure.
-> - `octopusv filter` — filter SVCF records by SV-level attributes while preserving SVCF structure.
-> - `octopusv subset` — subset SVCF sample/caller evidence columns while preserving SVCF structure.
->
-> **New SVCF normalization command**
->
-> - `octopusv normalize-contigs` — normalize standard SVCF contig names without changing coordinates.
->
-> **Important fixes and improvements**
->
-> - Fixed sample-mode merge column ordering so evidence blocks remain aligned with the `#CHROM` sample order.
-> - Improved merge provenance handling for `SOURCES` and `SOURCE_IDS`.
-> - Improved generated SVCF headers and default INFO definitions.
-> - Improved `octopusv svcf2vcf` so converted VCF records now preserve `SOURCES` and `SOURCE_IDS` in the `INFO` field.
-> - Improved CLI help organization and user-facing messages, including clearer handling of conflicting merge strategy options.
-
-> [!TIP]
-> **Genome-wide SV visualization from v0.3.5** — `octopusv plot-circos` draws a genome-wide SV Circos overview from an SVCF file, with an inner link layer for DEL/DUP/INV/TRA events and an outer breakpoint-density histogram.
->
-> ```bash
-> octopusv plot-circos -i input.svcf -o circos.png
-> ```
->
-> <p align="center">
->   <img src="imgs/sample.png" width="300" alt="Genome-wide SV Circos overview">
-> </p>
 
 > [!IMPORTANT]
 > **Always use the latest version for best results.**
@@ -76,7 +33,9 @@
 
 <details>
 <summary><b>Previous releases</b></summary>
-
+- **v0.4.1** — Improved multi-sample merging, TRA/BND integration, and Circos plotting, including fixes for sample evidence placement, reciprocal breakend merging, and insertion visualization.
+- **v0.4.0** — Added a more complete SVCF operation layer for validation, inspection, querying, filtering, subsetting, normalization, and improved VCF export and provenance handling.
+- **v0.3.5** — Added genome-wide SV visualization with `octopusv plot-circos`.
 - **v0.3.3** — Improved `octopusv correct` support for multi-sample VCFs, including joint-called outputs from GRIDSS, DELLY, and related callers.
 - **v0.3.2** — Added `octopusv clean`, which sanitizes broken VCFs so strict tools such as Truvari and bcftools can parse them.
 - **v0.3.1** — Added native GRIDSS support. `octopusv correct` resolves paired BND records into standard SV types directly, without external preprocessing.
