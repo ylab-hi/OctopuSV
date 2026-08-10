@@ -24,7 +24,9 @@
 >   --include-ins
 > ```
 
-<img src="imgs/sample.png" width="300" alt="Genome-wide SV Circos overview">
+<p align="center">
+  <img src="imgs/sample.png" width="600" alt="Genome-wide SV Circos overview">
+</p>
 
 > [!IMPORTANT]
 > **Always use the latest version for best results.**
