@@ -25,7 +25,7 @@
 > ```
 
 <p align="center">
-  <img src="imgs/sample.png" width="600" alt="Genome-wide SV Circos overview">
+  <img src="imgs/sample.png" width="350" alt="Genome-wide SV Circos overview">
 </p>
 
 > [!IMPORTANT]
