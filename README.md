@@ -1,4 +1,4 @@
-# OctopuSV: End-to-end structural variant post-processing 🐙
+# OctopuSV: multi-sample, cross-platform structural variant comparison and analysis 🐙
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/logo.png" width="40%" height="40%">
@@ -6,6 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/octopusv.svg)](https://pypi.org/project/octopusv/)
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/octopusv.svg)](https://bioconda.github.io/recipes/octopusv/README.html)
+[![Bioconda downloads](https://img.shields.io/conda/dn/bioconda/octopusv.svg)](https://anaconda.org/bioconda/octopusv)
+[![PyPI downloads](https://img.shields.io/pypi/dm/octopusv.svg)](https://pypi.org/project/octopusv/)
+[![DOI](https://img.shields.io/badge/DOI-10.1093%2Fbioinformatics%2Fbtaf599-blue)](https://doi.org/10.1093/bioinformatics/btaf599)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > *Unify, merge, inspect, query, compare, and export structural variants across callers and samples.*
