@@ -304,15 +304,31 @@ def merge(
             help="Logical expression for complex file combinations (e.g., '(A AND B) AND NOT (C OR D)')",
         ),
 
-        # Existing merging parameters
-        max_distance: int = typer.Option(
-            50, "--max-distance", help="Maximum allowed distance between start or end positions for merging events."
+        # Ordinary SV matching parameters
+        max_distance: int | None = typer.Option(
+            None,
+            "--max-distance",
+            help=(
+                "Override the maximum breakpoint distance used to merge ordinary SVs. "
+                "If not provided, OctopuSV uses SV-type- and size-aware adaptive thresholds."
+            ),
         ),
-        max_length_ratio: float = typer.Option(
-            1.3, "--max-length-ratio", help="Maximum allowed ratio between event lengths for merging events."
+        max_length_ratio: float | None = typer.Option(
+            None,
+            "--max-length-ratio",
+            help=(
+                "Override the maximum SV length ratio used to merge ordinary SVs. "
+                "If not provided, OctopuSV uses SV-type-specific thresholds."
+            ),
         ),
         min_jaccard: float = typer.Option(
-            0.7, "--min-jaccard", help="Minimum required Jaccard index for overlap to merge events."
+            0.10,
+            "--min-jaccard",
+            help=(
+                "Minimum interval Jaccard overlap required for DEL, DUP, and INV merging. "
+                "Use 0 to disable the Jaccard requirement. "
+                "INS, TRA, and BND are not evaluated with interval Jaccard."
+            ),
         ),
         tra_delta: int = typer.Option(
             50, "--tra-delta", help="Position uncertainty threshold for TRA events (in base pairs)."
@@ -379,6 +395,19 @@ def merge(
 
     if min_support is not None and min_support < 1:
         typer.echo("Error: --min-support must be a positive integer.", err=True)
+        raise typer.Exit(code=1)
+
+    # Validate ordinary SV matching parameters.
+    if max_distance is not None and max_distance < 0:
+        typer.echo("Error: --max-distance must be non-negative.", err=True)
+        raise typer.Exit(code=1)
+
+    if max_length_ratio is not None and max_length_ratio < 1.0:
+        typer.echo("Error: --max-length-ratio must be at least 1.0.", err=True)
+        raise typer.Exit(code=1)
+
+    if not 0.0 <= min_jaccard <= 1.0:
+        typer.echo("Error: --min-jaccard must be between 0 and 1.", err=True)
         raise typer.Exit(code=1)
 
     # Build name mapper.

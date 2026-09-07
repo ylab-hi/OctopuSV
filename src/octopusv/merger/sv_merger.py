@@ -14,9 +14,9 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
             tra_delta=50,
             tra_min_overlap_ratio=0.5,
             tra_strand_consistency=True,
-            max_distance=50,
-            max_length_ratio=1.3,
-            min_jaccard=0.7,
+            max_distance=None,
+            max_length_ratio=None,
+            min_jaccard=0.10,
             bnd_delta=50,
     ):
         """Initialize SVMerger with the given parameters and events.
@@ -27,9 +27,9 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
             tra_delta: Position uncertainty threshold for TRA events
             tra_min_overlap_ratio: Minimum overlap ratio for TRA events
             tra_strand_consistency: Whether to require strand consistency for TRA events
-            max_distance: Maximum allowed distance between start or end positions
-            max_length_ratio: Maximum allowed ratio between event lengths
-            min_jaccard: Minimum required Jaccard index for overlap
+            max_distance: Optional breakpoint-distance override for ordinary SVs; None uses adaptive thresholds
+            max_length_ratio: Optional SV length-ratio override; None uses SV-type-specific thresholds
+            min_jaccard: Minimum interval Jaccard overlap for DEL, DUP, and INV
             bnd_delta: Position uncertainty threshold for BND events (default: 50)
         """
         self.classified_events = classified_events
@@ -99,7 +99,11 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
 
         key = (sv_type, chromosome)
         active_start = self._active_start.get(key, 0)
-        prune_bound = get_max_distance_threshold(sv_type)
+        prune_bound = (
+            self.max_distance
+            if self.max_distance is not None
+            else get_max_distance_threshold(sv_type)
+        )
 
         while (
             active_start < len(events)
