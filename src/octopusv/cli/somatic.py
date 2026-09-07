@@ -6,18 +6,35 @@ def somatic(
         tumor_file: Path = typer.Option(..., "--tumor", "-t", exists=True, help="Tumor SVCF file."),
         normal_file: Path = typer.Option(..., "--normal", "-n", exists=True, help="Normal SVCF file."),
         output_file: Path = typer.Option(..., "--output-file", "-o", help="Output somatic SV file."),
-
         # Reuse merge parameters for SV matching
-        max_distance: int = typer.Option(50, "--max-distance", help="Maximum allowed distance for merging events."),
-        max_length_ratio: float = typer.Option(1.3, "--max-length-ratio",
-                                               help="Maximum allowed ratio between event lengths."),
-        min_jaccard: float = typer.Option(0.7, "--min-jaccard", help="Minimum required Jaccard index for overlap."),
+        max_distance: int | None = typer.Option(
+            None,
+            "--max-distance",
+            help=(
+                "Override the maximum breakpoint distance used to match tumor and normal SVs. "
+                "If not provided, OctopuSV uses SV-type- and size-aware adaptive thresholds."
+            ),
+        ),
+        max_length_ratio: float | None = typer.Option(
+            None,
+            "--max-length-ratio",
+            help=(
+                "Override the maximum SV length ratio used to match tumor and normal SVs. "
+                "If not provided, OctopuSV uses SV-type-specific thresholds."
+            ),
+        ),
+        min_jaccard: float = typer.Option(
+            0.10,
+            "--min-jaccard",
+            help=(
+                "Minimum interval Jaccard overlap required for DEL, DUP, and INV matching. "
+                "Use 0 to disable the Jaccard requirement."
+            ),
+        ),
 ):
     """Extract somatic SVs by finding tumor-specific variants (tumor - normal intersection)."""
-
     # Import merge function and call it directly
     from octopusv.cli.merge import merge
-
     # Call merge with specific logic: extract SVs only present in tumor
     merge(
         input_files=[tumor_file, normal_file],
@@ -43,7 +60,6 @@ def somatic(
         caller_names=None,
         upsetr_output=None
     )
-
     typer.echo(f"Somatic SVs extracted and written to: {output_file}")
     typer.echo("Note: Output contains SVs found in tumor but not in normal sample.")
     typer.echo("Remember to convert SVCF to VCF format for downstream analysis:")
