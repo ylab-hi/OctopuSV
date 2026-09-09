@@ -14,16 +14,18 @@
 > *Unify, merge, inspect, query, compare, and export structural variants across callers and samples.*
 
 > [!NOTE]
-> **What's New in v0.4.2** — Major merge performance improvements and compatibility updates.
+> **What's New in v0.4.3**
 >
-> **~40× faster merge on a 100k-event benchmark**
+> This release mainly focuses on merge behavior and SVCF coordinate handling.
 >
-> The merge engine has been substantially optimized without changing the underlying merge logic or output semantics. In a single-thread, 3-input union benchmark with 100,372 merged events, runtime decreased from **240.49 s to 6.07 s (~39.6× faster)** while peak memory usage remained essentially unchanged.
+> - `--max-distance` and `--max-length-ratio` now work as real overrides. If they are not provided, OctopuSV keeps the existing adaptive merge thresholds.
+> - Added `--min-jaccard` for DEL, DUP, and INV. It is disabled by default (`0`); benchmarking did not show a benefit from enabling it by default, but the option is available when stricter interval overlap is desired.
+> - Fixed a `svcf2vcf` bug where merged records could take `END` from another caller's `CO` field. Record-level coordinates are now preserved during conversion.
 >
-> - Optimized SV, TRA, and BND candidate matching by eliminating comparisons that the existing merge rules are guaranteed to reject.
-> - Added tested compatibility with SVIM-ASM output.
-> - Improved VCF4.2-compatible TRA export with `octopusv svcf2vcf`.
-> - Expanded regression testing for caller-mode and sample-mode merging.
+> **v0.4.2**
+>
+> - Merge is about **40× faster** on a 100k-event benchmark (240.49 s → 6.07 s), with similar memory usage.
+> - Improved SV, TRA, and BND candidate matching, added SVIM-ASM compatibility, and improved TRA export.
 
 > [!TIP]
 > **Genome-wide SV visualization** — `octopusv plot-circos` draws a genome-wide SV Circos overview from an SVCF file, with intra-chromosomal SV links, translocations, insertion markers, and breakpoint-density tracks.
