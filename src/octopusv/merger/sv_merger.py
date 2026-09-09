@@ -16,7 +16,7 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
             tra_strand_consistency=True,
             max_distance=None,
             max_length_ratio=None,
-            min_jaccard=0.10,
+            min_jaccard=0.0,
             bnd_delta=50,
     ):
         """Initialize SVMerger with the given parameters and events.

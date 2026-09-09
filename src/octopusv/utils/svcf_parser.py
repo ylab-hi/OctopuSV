@@ -187,36 +187,44 @@ class SVCFEvent:
                 end_pos = self.pos
             return self.chrom, self.pos, end_chrom, end_pos
 
-        # For other SV types: prefer the CO token from the carrier sample.
-        co = self._find_co_with_coords()
-        parsed_co = self._coords_from_co(co)
-        if parsed_co is not None:
-            return parsed_co
-
-        # CO absent or unparseable -> fall back to main columns + INFO.
+        # For ordinary SVs, the record-level CHROM/POS/INFO-END fields are
+        # authoritative. FORMAT/CO belongs to per-sample/per-caller evidence and
+        # must not override the coordinates of a merged representative record.
         start_chrom = self.chrom
         start_pos = self.pos
         end_chrom = self.info.get("CHR2", self.chrom)
-        end_pos_str = self.info.get("END", self.pos)
-        if end_pos_str == "." or end_pos_str is None:
-            # Try to use SVLEN
-            svlen = self.info.get("SVLEN", None)
-            if svlen and svlen != ".":
-                try:
-                    end_pos = self.pos + abs(int(svlen))
-                except ValueError:
-                    end_pos = self.pos
-            else:
-                end_pos = self.pos
-        else:
+        end_pos_str = self.info.get("END")
+
+        if end_pos_str not in (None, "", "."):
             try:
-                end_pos = int(end_pos_str)
-            except ValueError:
+                return start_chrom, start_pos, end_chrom, int(end_pos_str)
+            except (ValueError, TypeError):
                 logging.warning(
-                    f"Invalid end_pos '{end_pos_str}' for SV {self.sv_id} in {self.source_file}, setting end_pos to start_pos."
+                    f"Invalid end_pos '{end_pos_str}' for SV {self.sv_id} in {self.source_file}; "
+                    "trying record-level SVLEN before CO fallback."
                 )
-                end_pos = self.pos
-        return start_chrom, start_pos, end_chrom, end_pos
+
+        # If END is absent or unusable, prefer record-level SVLEN over FORMAT/CO.
+        # This keeps a merged representative tied to its own POS/SVLEN rather than
+        # borrowing coordinates from another caller's evidence block.
+        svlen = self.info.get("SVLEN")
+        if svlen not in (None, "", "."):
+            try:
+                end_pos = self.pos + abs(int(svlen))
+                return start_chrom, start_pos, end_chrom, end_pos
+            except (ValueError, TypeError):
+                pass
+
+        # Legacy fallback: recover an end coordinate from CO only when the
+        # record-level END and SVLEN are both unavailable or unusable. Preserve
+        # the record-level CHROM/POS even in this fallback.
+        co = self._find_co_with_coords()
+        parsed_co = self._coords_from_co(co)
+        if parsed_co is not None:
+            _co_start_chrom, _co_start_pos, co_end_chrom, co_end_pos = parsed_co
+            return start_chrom, start_pos, co_end_chrom, co_end_pos
+
+        return start_chrom, start_pos, end_chrom, start_pos
 
     def _coords_from_co(self, co):
         """Parse a CO token 'startChrom_startPos-endChrom_endPos' into coordinates.

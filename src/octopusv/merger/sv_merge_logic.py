@@ -3,7 +3,7 @@ def should_merge(
     event2,
     max_distance=None,
     max_length_ratio=None,
-    min_jaccard=0.10,
+    min_jaccard=0.0,
 ):
     """Determine whether two ordinary SV events should be merged.
 

@@ -24,11 +24,11 @@ def somatic(
             ),
         ),
         min_jaccard: float = typer.Option(
-            0.10,
+            0.0,
             "--min-jaccard",
             help=(
                 "Minimum interval Jaccard overlap required for DEL, DUP, and INV matching. "
-                "Use 0 to disable the Jaccard requirement."
+                "Default: 0 (disabled)."
             ),
         ),
 ):
