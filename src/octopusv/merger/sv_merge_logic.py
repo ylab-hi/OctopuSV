@@ -1,16 +1,19 @@
-def should_merge(event1, event2, max_distance=50, max_length_ratio=1.3, min_jaccard=0.7):
-    """Determines whether two SV events should be merged based on simple position and length comparison.
+def should_merge(
+    event1,
+    event2,
+    max_distance=None,
+    max_length_ratio=None,
+    min_jaccard=0.0,
+):
+    """Determine whether two ordinary SV events should be merged.
 
-    Args:
-        event1: First SV event
-        event2: Second SV event
-        max_distance: Base maximum allowed distance between positions
-        max_length_ratio: Base maximum allowed ratio between lengths
-        min_jaccard: Base minimum required Jaccard index (not used in simplified version)
+    If max_distance or max_length_ratio is not explicitly provided,
+    OctopuSV preserves the v0.4.2 adaptive/type-specific defaults.
 
-    Returns:
-        bool: True if events should be merged
+    Interval Jaccard is applied only to DEL, DUP, and INV.
+    INS does not use interval Jaccard.
     """
+
     # Compare chromosomes
     if event1.chrom != event2.chrom:
         return False
@@ -31,9 +34,20 @@ def should_merge(event1, event2, max_distance=50, max_length_ratio=1.3, min_jacc
     length1 = get_length(event1)
     length2 = get_length(event2)
 
-    # Get type-specific thresholds
-    distance_threshold = _get_distance_threshold(sv_type, min(length1, length2))
-    length_ratio_threshold = _get_length_ratio_threshold(sv_type)
+    # Use explicit user overrides when provided.
+    # Otherwise preserve the v0.4.2 defaults.
+    if max_distance is None:
+        distance_threshold = _get_distance_threshold(
+            sv_type,
+            min(length1, length2),
+        )
+    else:
+        distance_threshold = max_distance
+
+    if max_length_ratio is None:
+        length_ratio_threshold = _get_length_ratio_threshold(sv_type)
+    else:
+        length_ratio_threshold = max_length_ratio
 
     # Position comparison
     start_diff = abs(event1.start_pos - event2.start_pos)
@@ -51,22 +65,44 @@ def should_merge(event1, event2, max_distance=50, max_length_ratio=1.3, min_jacc
         return False
 
     ratio = max(length1, length2) / min(length1, length2)
-    return ratio <= length_ratio_threshold
+    if ratio > length_ratio_threshold:
+        return False
+
+    # DEL/DUP/INV represent reference intervals.
+    # Apply Jaccard only to these SV types.
+    if sv_type in {"DEL", "DUP", "INV"} and min_jaccard > 0:
+        jaccard = _calculate_interval_jaccard(event1, event2)
+        if jaccard < min_jaccard:
+            return False
+
+    return True
 
 
-def get_max_distance_threshold(sv_type):
-    """Return the maximum possible distance threshold for an SV type.
+def _calculate_interval_jaccard(event1, event2):
+    """Calculate inclusive interval Jaccard for two SV events."""
+    intersection = max(
+        0,
+        min(event1.end_pos, event2.end_pos)
+        - max(event1.start_pos, event2.start_pos)
+        + 1,
+    )
 
-    This stays tied to the same threshold function used by should_merge().
-    The >=1000 bp branch is the maximum threshold in the current merge logic.
-    """
-    return _get_distance_threshold(sv_type, 1000)
+    union = (
+        max(event1.end_pos, event2.end_pos)
+        - min(event1.start_pos, event2.start_pos)
+        + 1
+    )
+
+    if union <= 0:
+        return 0.0
+
+    return intersection / union
 
 
 def _get_distance_threshold(sv_type, min_length):
     """Get distance threshold based on SV type and minimum length."""
     base_threshold = {
-        "INS": 200,  # More lenient for insertions
+        "INS": 200,
         "DEL": 150,
         "DUP": 100,
         "INV": 100,
@@ -80,11 +116,21 @@ def _get_distance_threshold(sv_type, min_length):
     return base_threshold
 
 
+def get_max_distance_threshold(sv_type):
+    """Return the maximum adaptive distance threshold for an SV type.
+
+    This public helper is used by the optimized active-window pruning in
+    sv_merger.py. It must remain at least as permissive as should_merge()
+    when no explicit --max-distance override is supplied.
+    """
+    return _get_distance_threshold(sv_type, 1000)
+
+
 def _get_length_ratio_threshold(sv_type):
     """Get length ratio threshold based on SV type."""
     return {
-        "INS": 3.0,  # Very lenient for insertions
-        "DEL": 2.0,  # Somewhat lenient for deletions
+        "INS": 3.0,
+        "DEL": 2.0,
         "DUP": 1.5,
         "INV": 1.5,
     }.get(sv_type, 1.3)
