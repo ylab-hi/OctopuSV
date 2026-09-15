@@ -40,6 +40,177 @@ def _labels_match_default(labels: list[str], input_files: list[Path | str]) -> b
     return labels == _default_labels_from_input_files(input_files)
 
 
+def _normalize_input_path(path: Path | str) -> str:
+    """Return a stable real-path identity for one merge input."""
+    return os.path.normcase(
+        os.path.realpath(
+            os.path.abspath(str(path))
+        )
+    )
+
+
+def _validate_distinct_input_files(input_files: list[Path | str]) -> None:
+    """Reject two merge arguments that resolve to the same physical file."""
+    seen = {}
+
+    for input_file in input_files:
+        normalized = _normalize_input_path(input_file)
+        previous = seen.get(normalized)
+        if previous is not None:
+            raise ValueError(
+                "Two merge inputs resolve to the same physical file: "
+                f"{previous!r} and {str(input_file)!r}. "
+                "Each merge input must refer to a distinct file."
+            )
+        seen[normalized] = str(input_file)
+
+
+def _validate_unique_display_labels(
+    *,
+    labels: list[str],
+    input_files: list[Path | str],
+    mode: str,
+) -> None:
+    """Reject display labels that would make two inputs indistinguishable."""
+    label_to_files = {}
+    for label, input_file in zip(labels, input_files):
+        label_to_files.setdefault(label, []).append(str(input_file))
+
+    duplicates = {
+        label: files
+        for label, files in label_to_files.items()
+        if len(files) > 1
+    }
+    if not duplicates:
+        return
+
+    option = "--sample-names" if mode == "sample" else "--caller-names"
+    details = "; ".join(
+        f"{label!r}: {files}"
+        for label, files in duplicates.items()
+    )
+    raise ValueError(
+        "Merge input labels must be unique. "
+        f"Duplicate label(s): {details}. "
+        f"Use {option} to provide one unique label per input file."
+    )
+
+
+def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
+    """Reject input layouts that the selected merge mode cannot preserve.
+
+    This is intentionally a lightweight byte-level scan: it checks only the
+    #CHROM layout and tab counts, without splitting or parsing full records.
+
+    Caller mode requires every input record to carry exactly one trailing
+    evidence/sample column. Re-merging a variable-width caller-merged SVCF
+    would otherwise discard nested evidence.
+
+    Sample mode intentionally allows a caller-merged SVCF with one header
+    sample label and multiple caller evidence blocks per record. This is the
+    supported per-sample-caller-merge -> population-merge workflow. It does
+    not allow a true multi-sample SVCF to be nested as one input file.
+    """
+    found_chrom_header = False
+
+    with open(input_file, "rb") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if line.startswith(b"#CHROM"):
+                found_chrom_header = True
+                # A valid SVCF has nine fixed columns through FORMAT.
+                # fields = tabs + 1, so trailing columns = tabs - 8.
+                header_sample_count = max(0, line.count(b"\t") - 8)
+
+                if mode == "sample" and header_sample_count > 1:
+                    raise ValueError(
+                        f"Input {str(input_file)!r} has {header_sample_count} "
+                        "sample columns. `merge --mode sample` currently "
+                        "expects one input file per biological sample. "
+                        "Split or subset the file to one sample per input "
+                        "before merging."
+                    )
+                continue
+
+            if line.startswith(b"#") or not line.strip():
+                continue
+
+            if not found_chrom_header:
+                raise ValueError(
+                    f"Input {str(input_file)!r} is missing a #CHROM header "
+                    "before its data records."
+                )
+
+            if mode == "caller":
+                evidence_count = max(0, line.count(b"\t") - 8)
+                if evidence_count > 1:
+                    raise ValueError(
+                        f"Input {str(input_file)!r} contains {evidence_count} "
+                        f"evidence/sample columns on data line {line_number}. "
+                        "Caller-mode re-merge of multi-evidence SVCF records "
+                        "is not supported because nested evidence cannot be "
+                        "preserved unambiguously. Use single-evidence SVCF "
+                        "inputs for `merge --mode caller`."
+                    )
+            else:
+                # In sample mode the header determines whether this is a true
+                # multi-sample input. Variable-width caller evidence below a
+                # single SAMPLE header is intentionally allowed.
+                break
+
+    if not found_chrom_header:
+        raise ValueError(
+            f"Input {str(input_file)!r} is missing the required #CHROM header."
+        )
+
+
+def _preflight_merge_inputs(
+    *,
+    input_files: list[Path | str],
+    labels: list[str],
+    mode: str,
+) -> None:
+    """Run merge-specific identity and input-shape checks before parsing."""
+    _validate_distinct_input_files(input_files)
+    _validate_unique_display_labels(
+        labels=labels,
+        input_files=input_files,
+        mode=mode,
+    )
+
+    for input_file in input_files:
+        _preflight_svcf_shape(input_file, mode)
+
+
+def _mark_sample_input_collapses(events) -> None:
+    """Annotate sample-mode events that contain multiple caller evidence blocks.
+
+    A caller-merged SVCF may legitimately be used as one biological-sample
+    input to a population/sample-mode merge. The first evidence block is the
+    existing deterministic sample-level representation; this private counter
+    records how many additional blocks were collapsed so the writer can report
+    the compression instead of doing it silently.
+    """
+    key = "_octopusv_collapsed_evidence_count"
+
+    for event in events:
+        raw_columns = list(getattr(event, "raw_sample_columns", []) or [])
+        additional = max(0, len(raw_columns) - 1)
+        if additional == 0:
+            continue
+
+        sample_data = getattr(event, "sample", None)
+        if not isinstance(sample_data, dict):
+            continue
+
+        existing = sample_data.get(key, 0)
+        try:
+            existing = int(existing)
+        except (TypeError, ValueError):
+            existing = 0
+
+        sample_data[key] = max(0, existing) + additional
+
+
 def _describe_merge_rule(
     *,
     expression: str | None,
@@ -445,6 +616,17 @@ def merge(
         raise typer.Exit(code=1)
 
     labels = name_mapper.get_all_display_names() if name_mapper else []
+
+    try:
+        _preflight_merge_inputs(
+            input_files=all_input_files,
+            labels=labels,
+            mode=mode,
+        )
+    except (OSError, ValueError) as e:
+        _echo(f"Error: {e}")
+        raise typer.Exit(code=1)
+
     _print_initial_configuration(mode=mode, labels=labels, input_files=all_input_files)
 
     # Get contig information from input files.
@@ -454,6 +636,9 @@ def merge(
     # Process SV events.
     sv_event_creator = SVCFFileEventCreator(input_filenames)
     sv_event_creator.parse()
+
+    if mode == "sample":
+        _mark_sample_input_collapses(sv_event_creator.events)
 
     classifier = SVClassifierByType(sv_event_creator.events)
     classifier.classify()
@@ -496,7 +681,29 @@ def merge(
         )
 
     # Write merged results.
-    sv_merger.write_results(output_file, results, contigs, mode, name_mapper, input_filenames)
+    write_summary = sv_merger.write_results(
+        output_file,
+        results,
+        contigs,
+        mode,
+        name_mapper,
+        input_filenames,
+    ) or {}
+
+    if mode == "sample":
+        collapse_records = int(write_summary.get("sample_collapse_records", 0) or 0)
+        collapse_blocks = int(write_summary.get("sample_collapsed_evidence_blocks", 0) or 0)
+        if collapse_records > 0:
+            _echo(
+                "Warning: Sample-mode output collapsed multiple evidence blocks "
+                f"to one deterministic block per sample in {collapse_records} "
+                f"merged record(s); {collapse_blocks} additional evidence block(s) "
+                "were not serialized as separate sample columns. The retained "
+                "block is the first deterministic evidence block from each input; "
+                "for caller-merged per-sample inputs, this is the first evidence "
+                "column. If caller input order differs across samples, the retained "
+                "caller may also differ. The merged events were retained."
+            )
 
     _print_success_message(
         output_file=output_file,

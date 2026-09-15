@@ -1,3 +1,4 @@
+import logging
 import os
 
 
@@ -286,13 +287,11 @@ class MergeWriterMixin:
         keeps older external objects usable, but source identity cannot always
         be determined exactly when that information was never stored.
         """
-        import logging
-
-        logging.warning(
-            "Caller-mode event has no merged_sample_records; "
-            "falling back to legacy source inference for event %s",
-            getattr(event, "sv_id", "."),
-        )
+        self._legacy_caller_event_count = getattr(
+            self,
+            "_legacy_caller_event_count",
+            0,
+        ) + 1
 
         input_files = [str(path) for path in self.all_input_files]
         event_source_tokens = self._event_source_tokens(event)
@@ -331,6 +330,11 @@ class MergeWriterMixin:
                 )
 
             if inferred_basename is None:
+                self._legacy_caller_unresolved_evidence_count = getattr(
+                    self,
+                    "_legacy_caller_unresolved_evidence_count",
+                    0,
+                ) + 1
                 continue
 
             input_index = next(
@@ -343,6 +347,11 @@ class MergeWriterMixin:
             )
 
             if input_index is None:
+                self._legacy_caller_unresolved_evidence_count = getattr(
+                    self,
+                    "_legacy_caller_unresolved_evidence_count",
+                    0,
+                ) + 1
                 continue
 
             assigned_basenames.add(inferred_basename)
@@ -389,34 +398,58 @@ class MergeWriterMixin:
             name_mapper=name_mapper,
         )
 
+    @staticmethod
+    def _embedded_collapse_count(sample_data):
+        """Return additional evidence already collapsed into one sample block."""
+        if not isinstance(sample_data, dict):
+            return 0
+
+        value = sample_data.get(
+            "_octopusv_collapsed_evidence_count",
+            0,
+        )
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 0
+
     def _prepare_events_for_sample_mode(self, events, name_mapper):
         """Prepare merged events for sample-mode output.
 
         Freshly merged events carry ``merged_sample_records`` entries shaped as:
             (source_file, sample_name, sample_format, sample_data)
 
-        The exact source path is the primary key. The older inference logic is
-        retained only as a compatibility fallback for legacy or manually-created
-        event objects that do not carry exact source mapping.
+        Exact source paths determine sample columns. A sample-mode output has one
+        column per input file, so multiple evidence records from the same input
+        are represented by the first deterministic evidence record. Any such
+        compression is counted and reported by the CLI instead of being silent.
+
+        Legacy/manual events without exact source bindings retain the historical
+        best-effort inference path, but unresolved evidence is counted and
+        summarized once after writing.
         """
         processed_events = []
         input_files = [str(input_file) for input_file in self.all_input_files]
 
-        # Use input indices, rather than basenames, as output-column identities.
-        # This also avoids collisions when two different directories contain the
-        # same filename.
         input_indices_by_path = {}
         for index, input_file in enumerate(input_files):
             normalized_path = self._normalize_source_path(input_file)
             input_indices_by_path.setdefault(normalized_path, []).append(index)
 
+        stats = {
+            "sample_collapse_records": 0,
+            "sample_collapsed_evidence_blocks": 0,
+            "legacy_sample_events": 0,
+            "legacy_sample_unresolved_evidence_blocks": 0,
+        }
+
         for event in events:
             merged_samples = list(getattr(event, "merged_samples", []))
             merged_sample_records = getattr(event, "merged_sample_records", None)
 
-            # Key: index in self.all_input_files; value: parsed sample evidence.
             source_to_sample = {}
             unresolved_samples = []
+            event_had_collapse = False
 
             records_are_valid = (
                 merged_sample_records is not None
@@ -427,7 +460,6 @@ class MergeWriterMixin:
                 )
             )
 
-            # Preferred path for events produced by the fixed selector.
             if records_are_valid:
                 for record in merged_sample_records:
                     source_file, sample_name, sample_format, sample_data = record
@@ -437,35 +469,41 @@ class MergeWriterMixin:
                         [],
                     )
 
-                    if not candidate_indices:
-                        unresolved_samples.append(
-                            (sample_name, sample_format, sample_data)
+                    if len(candidate_indices) != 1:
+                        if not candidate_indices:
+                            reason = "does not match any merge input"
+                        else:
+                            reason = "matches more than one merge input"
+                        raise ValueError(
+                            "Cannot map sample evidence to exactly one input file: "
+                            f"{source_file!r} {reason}."
                         )
-                        continue
 
-                    # Usually there is exactly one index. Supporting a list keeps
-                    # behavior deterministic even if the same path was supplied
-                    # more than once on the command line.
-                    target_index = next(
-                        (
-                            index
-                            for index in candidate_indices
-                            if index not in source_to_sample
-                        ),
-                        None,
+                    target_index = candidate_indices[0]
+                    embedded_collapsed = self._embedded_collapse_count(
+                        sample_data
                     )
 
-                    if target_index is not None:
+                    if target_index not in source_to_sample:
                         source_to_sample[target_index] = sample_data
-                    # If this source already owns its output column, do not spill
-                    # another nearby record from the same source into a different
-                    # sample column.
+                        if embedded_collapsed:
+                            stats["sample_collapsed_evidence_blocks"] += (
+                                embedded_collapsed
+                            )
+                            event_had_collapse = True
+                    else:
+                        # One sample-mode column represents one input sample.
+                        # Keep the first deterministic evidence block already
+                        # assigned to this column and count every additional
+                        # underlying block represented by it.
+                        stats["sample_collapsed_evidence_blocks"] += (
+                            1 + embedded_collapsed
+                        )
+                        event_had_collapse = True
             else:
+                stats["legacy_sample_events"] += 1
                 unresolved_samples.extend(merged_samples)
 
-            # Compatibility fallback for old event objects without exact source
-            # mapping. This keeps existing external callers working, but fresh
-            # merge output should not enter this branch.
             if unresolved_samples:
                 event_source_tokens = self._event_source_tokens(event)
 
@@ -505,8 +543,6 @@ class MergeWriterMixin:
                                 target_index = index
                                 break
 
-                    # Preserve the previous last-resort behavior for legacy data:
-                    # first unassigned supporting input in original input order.
                     if target_index is None:
                         target_index = next(
                             (
@@ -519,6 +555,13 @@ class MergeWriterMixin:
 
                     if target_index is not None:
                         source_to_sample[target_index] = sample_data
+                    else:
+                        stats[
+                            "legacy_sample_unresolved_evidence_blocks"
+                        ] += 1
+
+            if event_had_collapse:
+                stats["sample_collapse_records"] += 1
 
             event.ordered_samples = [
                 source_to_sample.get(index)
@@ -526,7 +569,7 @@ class MergeWriterMixin:
             ]
             processed_events.append(event)
 
-        return processed_events
+        return processed_events, stats
 
     def write_results(self, output_file, events, contigs, mode="caller", name_mapper=None, input_files=None):
         """Write merged results to output file with proper VCF header definitions.
@@ -539,21 +582,34 @@ class MergeWriterMixin:
             name_mapper: NameMapper instance for name handling
             input_files: List of input file paths for dynamic header extraction
         """
+        self._legacy_caller_event_count = 0
+        self._legacy_caller_unresolved_evidence_count = 0
+
         if name_mapper and mode == "sample":
-            import sys
-
-            # Preprocess events for sample mode to avoid O(n³) complexity
-
-            processed_events = self._prepare_events_for_sample_mode(events, name_mapper)
-
-            import importlib.util, faulthandler
-            spec = importlib.util.find_spec(__package__ + ".multi_sample_writer")
+            processed_events, summary = self._prepare_events_for_sample_mode(
+                events,
+                name_mapper,
+            )
 
             from .multi_sample_writer import MultiSampleWriter
 
             writer = MultiSampleWriter(name_mapper)
-
             writer.write_results(output_file, processed_events, contigs)
+
+            legacy_events = summary.get("legacy_sample_events", 0)
+            legacy_unresolved = summary.get(
+                "legacy_sample_unresolved_evidence_blocks",
+                0,
+            )
+            if legacy_events:
+                logging.warning(
+                    "Sample-mode writer used legacy source inference for %d "
+                    "event(s); %d evidence block(s) could not be mapped.",
+                    legacy_events,
+                    legacy_unresolved,
+                )
+
+            return summary
 
         else:
             # Caller mode. SOURCES, SOURCE_IDS, and evidence blocks are all
@@ -649,6 +705,22 @@ class MergeWriterMixin:
                         + sample_part
                         + "\n"
                     )
+
+            if self._legacy_caller_event_count:
+                logging.warning(
+                    "Caller-mode writer used legacy source inference for %d "
+                    "event(s); %d evidence block(s) could not be mapped and "
+                    "were omitted.",
+                    self._legacy_caller_event_count,
+                    self._legacy_caller_unresolved_evidence_count,
+                )
+
+            return {
+                "legacy_caller_events": self._legacy_caller_event_count,
+                "legacy_caller_unresolved_evidence_blocks": (
+                    self._legacy_caller_unresolved_evidence_count
+                ),
+            }
 
     def _write_vcf_header(self, file_handle, contigs, input_files):
         """Write VCF header with dynamic field definitions extracted from ALL input files.
