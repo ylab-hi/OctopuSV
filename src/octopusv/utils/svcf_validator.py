@@ -1,25 +1,14 @@
 """SVCF validator: the OctopuSV SVCF contract checker.
 
-This is NOT a generic VCF lint. It checks whether a file conforms to the
-SVCF contract produced by OctopuSV across the three legal modes:
+This is not a generic VCF lint.  It validates the SVCF structure used by
+OctopuSV in three modes:
 
-  single-caller   : no ##OctopuSV_mode marker, INFO has no SOURCES,
-                    exactly one sample/caller column per row.
-  caller-merge    : no ##OctopuSV_mode marker, INFO has SOURCES on every row,
-                    number of trailing caller columns == len(SOURCES).
-                    Row column count can vary across records by design.
-  sample/multi    : has ##OctopuSV_mode=multi, #CHROM lists N sample/caller names,
-                    every row has exactly N trailing columns.
+* single-caller: one evidence column and no non-empty SOURCES field;
+* caller-merge: variable-width evidence columns aligned to SOURCES;
+* sample/multi: fixed-width sample columns declared by the #CHROM header.
 
-Output answers one practical question:
-  "Can this SVCF safely enter OctopuSV / downstream analysis / agent workflows,
-   and if not, what is broken?"
-
-It emits a human summary by default and structured JSON for --json.
-Exit codes:
-  0 = pass / pass-with-warnings
-  1 = validation failed
-  2 = unreadable file
+Validation is streaming: records are checked as they are read rather than
+loading the whole file into memory.
 """
 
 from __future__ import annotations
@@ -29,11 +18,13 @@ import os
 import re
 from dataclasses import dataclass
 
+from octopusv.utils.svcf_coordinate_parser import parse_svcf_co
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
-# OctopuSV's official SVCF FORMAT contract. Order matters.
+
 EXPECTED_FORMAT = "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+EXPECTED_FORMAT_KEYS = EXPECTED_FORMAT.split(":")
 
-# The 9 fixed leading columns of any SVCF/VCF record.
 CORE_COLUMNS = [
     "#CHROM",
     "POS",
@@ -48,9 +39,6 @@ CORE_COLUMNS = [
 
 LEGAL_SVTYPES = {"DEL", "DUP", "INV", "INS", "TRA", "BND"}
 
-# INFO keys that OctopuSV writes in current SVCF.
-# Value may be ".", but the key should be present.
-# SOURCES is mode-dependent and checked separately.
 REQUIRED_INFO_KEYS = {
     "SVTYPE",
     "END",
@@ -64,17 +52,13 @@ REQUIRED_INFO_KEYS = {
     "RNAMES",
 }
 
-# Mode marker line written by the SVCF writer for sample/multi mode.
 MODE_MULTI_MARKER = "##OctopuSV_mode=multi"
 
-# BND/TRA ALT forms:
-#   t[p[
-#   t]p]
-#   [p[t
-#   ]p]t
-# where p == chrom:pos.
+# Matching bracket forms only.  The local replacement sequence is deliberately
+# not restricted to A/C/G/T/N here; the structural requirement is the bracketed
+# remote chrom:pos coordinate.
 BND_ALT_RE = re.compile(
-    r"([ACGTNacgtn]*)([\[\]])([^:\[\]]+):(\d+)([\[\]])([ACGTNacgtn]*)"
+    r"^([^:\[\]]*)([\[\]])([^:\[\]]+):(\d+)\2([^:\[\]]*)$"
 )
 
 
@@ -101,7 +85,7 @@ class Issue:
 
 
 def _parse_info(info_str: str) -> dict:
-    """Parse the INFO column into a dict. Flags without '=' map to True."""
+    """Parse INFO into a dict; flags without '=' map to True."""
     info = {}
     for item in info_str.split(";"):
         if not item:
@@ -114,17 +98,51 @@ def _parse_info(info_str: str) -> dict:
     return info
 
 
+def _duplicate_info_keys(info_str: str) -> list[str]:
+    """Return repeated INFO keys in first-repeat order."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+
+    for item in info_str.split(";"):
+        if not item:
+            continue
+        key = item.split("=", 1)[0]
+        if not key:
+            continue
+        if key in seen and key not in duplicates:
+            duplicates.append(key)
+        seen.add(key)
+
+    return duplicates
+
+
 def _has_sources(info: dict) -> bool:
-    """Return True if INFO has a non-empty SOURCES value."""
     value = info.get("SOURCES")
     return value not in (None, "", ".", True)
 
 
 def _parse_sources(info: dict) -> list[str]:
-    """Parse SOURCES=caller1,caller2 into a clean caller list."""
+    """Parse SOURCES in order; duplicate source labels are intentionally kept."""
     if not _has_sources(info):
         return []
-    return [caller for caller in str(info["SOURCES"]).split(",") if caller]
+    return str(info["SOURCES"]).split(",")
+
+
+def _source_ids_present(info: dict) -> bool:
+    """SOURCE_IDS='.' is present and represents one positional missing ID."""
+    return "SOURCE_IDS" in info
+
+
+def _parse_source_ids(info: dict) -> list[str]:
+    """Parse SOURCE_IDS positionally, preserving '.' placeholders."""
+    if not _source_ids_present(info):
+        return []
+
+    value = info.get("SOURCE_IDS")
+    if value is True or value == "":
+        return []
+
+    return str(value).split(",")
 
 
 def _is_positive_int(value: object) -> bool:
@@ -136,18 +154,11 @@ def _is_nonnegative_int(value: object) -> bool:
 
 
 def _parse_bnd_alt(alt: str) -> tuple[str, int] | None:
-    """Parse a BND/TRA ALT bracket into (mate_chrom, mate_pos).
-
-    Returns None if ALT is not a valid full BND bracket form.
-
-    We intentionally parse only the ALT column. This avoids the real SVCF trap
-    where FORMAT sample/caller values may contain ':' inside caller IDs.
-    """
     match = BND_ALT_RE.fullmatch(alt)
     if not match:
         return None
 
-    _, _, mate_chrom, mate_pos, _, _ = match.groups()
+    _, _, mate_chrom, mate_pos, _ = match.groups()
     try:
         return mate_chrom, int(mate_pos)
     except ValueError:
@@ -155,7 +166,7 @@ def _parse_bnd_alt(alt: str) -> tuple[str, int] | None:
 
 
 class SVCFValidator:
-    """Validate one SVCF file against the OctopuSV SVCF contract."""
+    """Validate one SVCF file against the current OctopuSV SVCF contract."""
 
     def __init__(self, path: str, strict_co: bool = False):
         self.path = path
@@ -166,6 +177,11 @@ class SVCFValidator:
         self.mode: str | None = None
         self.declared_samples: list[str] = []
         self.unreadable = False
+
+        self._has_multi_marker = False
+        self._mode_source_flag: bool | None = None
+        self._mixed_mode_reported = False
+        self._mode_observations = 0
 
     # ------------------------------------------------------------------
     # Issue helpers
@@ -213,47 +229,91 @@ class SVCFValidator:
     # ------------------------------------------------------------------
 
     def validate(self) -> None:
-        """Run all checks and populate self.issues."""
+        """Run all checks in one streaming pass and populate ``issues``."""
+        # Make repeat calls deterministic rather than accumulating old state.
+        self.issues = []
+        self.records_total = 0
+        self.mode = None
+        self.declared_samples = []
+        self.unreadable = False
+        self._has_multi_marker = False
+        self._mode_source_flag = None
+        self._mixed_mode_reported = False
+        self._mode_observations = 0
+
         if not os.path.exists(self.path) or os.path.getsize(self.path) == 0:
             self.unreadable = True
             self._err("E_FILE_001", f"File not found or empty: {self.path}")
             return
 
+        chrom_line: str | None = None
+        header_complete = False
+
         try:
             with open(self.path, encoding="utf-8-sig") as handle:
-                lines = handle.readlines()
+                for line_no, raw_line in enumerate(handle, start=1):
+                    line = raw_line.rstrip("\r\n")
+                    if not line:
+                        continue
+
+                    if not header_complete:
+                        if line.startswith("##"):
+                            if line.strip() == MODE_MULTI_MARKER:
+                                self._has_multi_marker = True
+                            continue
+
+                        if line.startswith("#CHROM"):
+                            chrom_line = line
+                            self._check_header(chrom_line)
+                            self._initialize_mode_from_header(chrom_line)
+                            header_complete = True
+                            continue
+
+                        if line.startswith("#"):
+                            continue
+
+                        # Data before #CHROM is not a legal SVCF layout.  Stop
+                        # instead of trying to infer a header after data began.
+                        self._err(
+                            "E_HDR_001",
+                            "Missing #CHROM header line before data records.",
+                            line_no=line_no,
+                            blocking=True,
+                        )
+                        return
+
+                    if line.startswith("#"):
+                        continue
+
+                    self.records_total += 1
+                    self._check_record(line, line_no)
+
         except (OSError, UnicodeDecodeError) as exc:
             self.unreadable = True
             self._err("E_FILE_002", f"Cannot read file: {exc}")
             return
 
-        header_lines = [line.rstrip("\n") for line in lines if line.startswith("##")]
-        chrom_line = next(
-            (line.rstrip("\n") for line in lines if line.startswith("#CHROM")),
-            None,
-        )
-        data_lines = [
-            (i + 1, line.rstrip("\n"))
-            for i, line in enumerate(lines)
-            if line.strip() and not line.startswith("#")
-        ]
-
-        self._check_header(chrom_line)
         if chrom_line is None:
+            self._err(
+                "E_HDR_001",
+                "Missing #CHROM header line.",
+                blocking=True,
+            )
             return
 
-        self._detect_mode(header_lines, chrom_line, data_lines)
-
-        for line_no, line in data_lines:
-            self.records_total += 1
-            self._check_record(line, line_no)
+        if not self._has_multi_marker and self._mode_observations == 0:
+            self.mode = "single"
+            if self.records_total == 0:
+                self._warn(
+                    "W_MODE_001",
+                    "No data records found; treating file as single-caller mode.",
+                )
 
     # ------------------------------------------------------------------
     # Header / mode
     # ------------------------------------------------------------------
 
     def _check_header(self, chrom_line: str | None) -> None:
-        """Verify that #CHROM exists and has the correct 9 leading columns."""
         if chrom_line is None:
             self._err(
                 "E_HDR_001",
@@ -270,69 +330,44 @@ class SVCFValidator:
                 blocking=True,
             )
 
-    def _detect_mode(
-        self,
-        header_lines: list[str],
-        chrom_line: str,
-        data_lines: list[tuple[int, str]],
-    ) -> None:
-        """Classify the whole file into one legal SVCF mode.
-
-        Official contract:
-          marker present                    -> sample_multi
-          no marker + all rows have SOURCES -> caller_merge
-          no marker + no row has SOURCES    -> single
-          no marker + mixed SOURCES status  -> invalid mixed mode
-        """
+    def _initialize_mode_from_header(self, chrom_line: str) -> None:
         columns = chrom_line.split("\t")
 
-        if any(line.strip() == MODE_MULTI_MARKER for line in header_lines):
+        if self._has_multi_marker:
             self.mode = "sample_multi"
             self.declared_samples = columns[9:]
-
             if not self.declared_samples:
                 self._err(
                     "E_MODE_001",
                     "sample/multi mode but #CHROM declares no sample columns.",
                     blocking=True,
                 )
+
+    def _update_nonmulti_mode(self, info: dict) -> None:
+        """Update no-marker mode without storing prior records."""
+        if self._has_multi_marker:
             return
 
-        source_flags = []
-        malformed_for_mode = 0
+        has_sources = _has_sources(info)
+        self._mode_observations += 1
 
-        for _, line in data_lines:
-            parts = line.split("\t")
-            if len(parts) < 8:
-                malformed_for_mode += 1
-                continue
-            info = _parse_info(parts[7])
-            source_flags.append(_has_sources(info))
-
-        if not source_flags:
-            self.mode = "single"
-            if malformed_for_mode == 0:
-                self._warn(
-                    "W_MODE_001",
-                    "No data records found; treating file as single-caller mode.",
-                )
+        if self._mode_source_flag is None:
+            self._mode_source_flag = has_sources
+            self.mode = "caller_merge" if has_sources else "single"
             return
 
-        has_sources_count = sum(source_flags)
-        no_sources_count = len(source_flags) - has_sources_count
+        if has_sources == self._mode_source_flag:
+            return
 
-        if has_sources_count and no_sources_count:
-            self.mode = "mixed"
+        self.mode = "mixed"
+        if not self._mixed_mode_reported:
             self._err(
                 "E_MODE_002",
                 "Invalid mixed SVCF mode: some records have SOURCES and some do not. "
                 "A no-marker SVCF must be either all single-caller or all caller-merge.",
                 blocking=True,
             )
-        elif has_sources_count:
-            self.mode = "caller_merge"
-        else:
-            self.mode = "single"
+            self._mixed_mode_reported = True
 
     # ------------------------------------------------------------------
     # Per-record checks
@@ -340,6 +375,13 @@ class SVCFValidator:
 
     def _check_record(self, line: str, line_no: int) -> None:
         parts = line.split("\t")
+
+        # Mode inference needs INFO when available, even if a later column-count
+        # check will reject the row.
+        info = _parse_info(parts[7]) if len(parts) >= 8 else {}
+        if len(parts) >= 8:
+            self._update_nonmulti_mode(info)
+
         if len(parts) < 10:
             self._err(
                 "E_REC_001",
@@ -352,14 +394,25 @@ class SVCFValidator:
         chrom, pos, sv_id = parts[0], parts[1], parts[2]
         alt, info_str, fmt = parts[4], parts[7], parts[8]
         sample_cols = parts[9:]
-        info = _parse_info(info_str)
+
+        duplicates = _duplicate_info_keys(info_str)
+        if duplicates:
+            self._err(
+                "E_INFO_002",
+                f"Duplicate INFO field(s): {duplicates}.",
+                sv_id,
+                line_no,
+                blocking=True,
+            )
 
         self._check_core_fields(chrom, pos, sv_id, line_no)
         self._check_format(fmt, sv_id, line_no)
+        self._check_evidence_width(fmt, sample_cols, sv_id, line_no)
         self._check_info_keys(info, sv_id, line_no)
         self._check_support(info, sv_id, line_no)
         self._check_sources_by_mode(info, sv_id, line_no)
         self._check_column_count(info, sample_cols, sv_id, line_no)
+        self._check_source_ids(info, fmt, sample_cols, sv_id, line_no)
         self._check_svtype_and_coords(info, alt, pos, sv_id, line_no)
         self._check_co(sample_cols, sv_id, line_no)
 
@@ -389,7 +442,6 @@ class SVCFValidator:
             )
 
     def _check_format(self, fmt: str, sv_id: str, line_no: int) -> None:
-        """FORMAT must equal the official SVCF contract exactly."""
         if fmt != EXPECTED_FORMAT:
             self._err(
                 "E_FMT_001",
@@ -399,8 +451,35 @@ class SVCFValidator:
                 blocking=True,
             )
 
+    def _check_evidence_width(
+        self,
+        fmt: str,
+        sample_cols: list[str],
+        sv_id: str,
+        line_no: int,
+    ) -> None:
+        """Catch definitely truncated evidence blocks without raw ':' guessing.
+
+        Colon-bearing ID/ALT values may increase the raw token count, but a
+        valid fixed SVCF block cannot contain fewer tokens than FORMAT keys.
+        """
+        if fmt != EXPECTED_FORMAT:
+            return
+
+        minimum_tokens = len(EXPECTED_FORMAT_KEYS)
+        for index, block in enumerate(sample_cols, start=1):
+            token_count = block.count(":") + 1
+            if token_count < minimum_tokens:
+                self._err(
+                    "E_FMT_002",
+                    f"Evidence column {index} has only {token_count} colon-delimited "
+                    f"token(s); fixed SVCF FORMAT requires at least {minimum_tokens}.",
+                    sv_id,
+                    line_no,
+                    blocking=True,
+                )
+
     def _check_info_keys(self, info: dict, sv_id: str, line_no: int) -> None:
-        """Required INFO keys must be present. Values may be '.'."""
         missing = REQUIRED_INFO_KEYS - set(info.keys())
         if missing:
             blocking = bool({"SVTYPE", "END", "CHR2"} & missing)
@@ -413,23 +492,9 @@ class SVCFValidator:
             )
 
     def _check_support(self, info: dict, sv_id: str, line_no: int) -> None:
-        """SUPPORT is read support, not caller count.
-
-        OctopuSV SVCF allows SUPPORT='.' when record-level read support is
-        unavailable or not applicable.
-
-        Contract:
-          - missing SUPPORT key is handled by _check_info_keys;
-          - SUPPORT='.' is valid;
-          - numeric SUPPORT must be a non-negative integer;
-          - any other value is invalid.
-        """
         support = info.get("SUPPORT")
 
-        if support is None:
-            return
-
-        if support == ".":
+        if support is None or support == ".":
             return
 
         if support is True or support == "" or not _is_nonnegative_int(support):
@@ -448,7 +513,6 @@ class SVCFValidator:
         sv_id: str,
         line_no: int,
     ) -> None:
-        """Check SOURCES presence according to official SVCF mode."""
         if self.mode == "single":
             if _has_sources(info):
                 self._err(
@@ -476,7 +540,6 @@ class SVCFValidator:
         sv_id: str,
         line_no: int,
     ) -> None:
-        """Mode-aware sample/caller column-count contract."""
         n_cols = len(sample_cols)
 
         if self.mode == "sample_multi":
@@ -492,12 +555,12 @@ class SVCFValidator:
             return
 
         if self.mode == "caller_merge":
-            callers = _parse_sources(info)
-            if n_cols != len(callers):
+            sources = _parse_sources(info)
+            if n_cols != len(sources):
                 self._err(
                     "E_COL_002",
-                    f"caller-merge mode has {n_cols} caller column(s), "
-                    f"but SOURCES lists {len(callers)} caller(s).",
+                    f"caller-merge mode has {n_cols} evidence column(s), "
+                    f"but SOURCES lists {len(sources)} item(s).",
                     sv_id,
                     line_no,
                     blocking=True,
@@ -508,16 +571,68 @@ class SVCFValidator:
             if n_cols != 1:
                 self._err(
                     "E_COL_003",
-                    f"single-caller mode expects 1 sample/caller column, got {n_cols}.",
+                    f"single-caller mode expects 1 evidence column, got {n_cols}.",
                     sv_id,
                     line_no,
                     blocking=True,
                 )
+
+    def _check_source_ids(
+        self,
+        info: dict,
+        fmt: str,
+        sample_cols: list[str],
+        sv_id: str,
+        line_no: int,
+    ) -> None:
+        """Check positional SOURCE_IDS without inventing source identity.
+
+        SOURCE_IDS remains optional for legacy SVCF until SVCF 1.1 is finalized.
+        When present, its positions are meaningful and '.' placeholders must be
+        retained.  Caller-mode evidence IDs are checked directly with the shared
+        evidence parser.  We do not infer identity from SC, filenames, or ID
+        prefixes.
+        """
+        if not _source_ids_present(info):
             return
 
-        if self.mode == "mixed":
-            # Avoid cascaded false assumptions after the global mixed-mode error.
+        source_ids = _parse_source_ids(info)
+        sources = _parse_sources(info)
+
+        if len(source_ids) != len(sources):
+            self._err(
+                "E_SRC_003",
+                f"SOURCE_IDS lists {len(source_ids)} item(s), but SOURCES lists "
+                f"{len(sources)} item(s).",
+                sv_id,
+                line_no,
+                blocking=True,
+            )
             return
+
+        if self.mode != "caller_merge":
+            return
+
+        if len(sample_cols) != len(source_ids):
+            # _check_column_count already reports the evidence/SOURCES mismatch.
+            return
+
+        for index, (source_id, sample_col) in enumerate(
+            zip(source_ids, sample_cols),
+            start=1,
+        ):
+            parsed = parse_svcf_sample_block(fmt, sample_col)
+            evidence_id = str(parsed.get("ID", "."))
+
+            if str(source_id) != evidence_id:
+                self._err(
+                    "E_SRC_004",
+                    f"SOURCE_IDS item {index} ('{source_id}') does not match "
+                    f"evidence column {index} ID ('{evidence_id}').",
+                    sv_id,
+                    line_no,
+                    blocking=True,
+                )
 
     def _check_svtype_and_coords(
         self,
@@ -545,13 +660,8 @@ class SVCFValidator:
 
         if svtype in {"DEL", "DUP", "INV"}:
             self._check_span_sv_end(svtype, end, pos, sv_id, line_no)
-
         elif svtype in {"TRA", "BND"}:
             self._check_tra_bnd(svtype, alt, info, sv_id, line_no)
-
-        # INS: SVTYPE legal + CHROM/POS checked.
-        # END/SVLEN/CHR2 keys are required by the SVCF INFO contract above,
-        # but values may be '.', and no BND bracket is required.
 
     def _check_span_sv_end(
         self,
@@ -561,7 +671,6 @@ class SVCFValidator:
         sv_id: str,
         line_no: int,
     ) -> None:
-        """DEL/DUP/INV require numeric END >= POS."""
         if end in (None, ".", True):
             self._err(
                 "E_END_001",
@@ -599,9 +708,9 @@ class SVCFValidator:
         sv_id: str,
         line_no: int,
     ) -> None:
-        """TRA/BND require CHR2, numeric END, parseable ALT, and agreement."""
         chr2 = info.get("CHR2")
         end = info.get("END")
+        svlen = info.get("SVLEN")
 
         if chr2 in (None, "", ".", True):
             self._err(
@@ -630,23 +739,31 @@ class SVCFValidator:
                 line_no,
                 blocking=True,
             )
-            return
+        else:
+            mate_chrom, mate_pos = parsed
 
-        mate_chrom, mate_pos = parsed
+            if chr2 not in (None, "", ".", True) and mate_chrom != str(chr2):
+                self._err(
+                    "E_TRA_004",
+                    f"{svtype} ALT mate chrom '{mate_chrom}' != CHR2 '{chr2}'.",
+                    sv_id,
+                    line_no,
+                    blocking=True,
+                )
 
-        if chr2 not in (None, "", ".", True) and mate_chrom != str(chr2):
+            if str(end).isdigit() and mate_pos != int(str(end)):
+                self._err(
+                    "E_TRA_005",
+                    f"{svtype} ALT mate pos {mate_pos} != END {end}.",
+                    sv_id,
+                    line_no,
+                    blocking=True,
+                )
+
+        if svlen is not None and svlen != ".":
             self._err(
-                "E_TRA_004",
-                f"{svtype} ALT mate chrom '{mate_chrom}' != CHR2 '{chr2}'.",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
-
-        if str(end).isdigit() and mate_pos != int(str(end)):
-            self._err(
-                "E_TRA_005",
-                f"{svtype} ALT mate pos {mate_pos} != END {end}.",
+                "E_TRA_006",
+                f"{svtype} requires SVLEN='.', got '{svlen}'.",
                 sv_id,
                 line_no,
                 blocking=True,
@@ -658,17 +775,12 @@ class SVCFValidator:
         sv_id: str,
         line_no: int,
     ) -> None:
-        """Check whether at least one sample/caller column has a parseable CO.
-
-        CO is the final FORMAT field under OctopuSV's SVCF contract. Because
-        legal sample/caller values may contain ':' inside IDs or ALT strings,
-        we must not validate sample/caller values by raw ':' counting.
-        """
+        """Require at least one unambiguously parseable CO value."""
         found_parseable = False
 
         for col in sample_cols:
             co = col.rsplit(":", 1)[-1]
-            if co and co != "." and "-" in co:
+            if parse_svcf_co(co) is not None:
                 found_parseable = True
                 break
 
@@ -678,7 +790,7 @@ class SVCFValidator:
         if self.strict_co:
             self._err(
                 "E_CO_001",
-                "No parseable CO token in any sample/caller column.",
+                "No unambiguously parseable CO value in any evidence column.",
                 sv_id,
                 line_no,
                 blocking=False,
@@ -686,7 +798,7 @@ class SVCFValidator:
         else:
             self._warn(
                 "W_CO_001",
-                "No parseable CO token in any sample/caller column.",
+                "No unambiguously parseable CO value in any evidence column.",
                 sv_id,
                 line_no,
             )
@@ -732,7 +844,6 @@ class SVCFValidator:
         return shown, truncated
 
     def to_summary(self, max_issues: int | None = 50) -> str:
-        """Human-readable multi-line summary string."""
         lines = [
             "SVCF validation summary",
             f"Input: {self.path}",
@@ -745,7 +856,6 @@ class SVCFValidator:
         ]
 
         shown_issues, truncated = self._limited_issues(max_issues)
-
         shown_errors = [issue for issue in shown_issues if issue.level == "error"]
         shown_warnings = [issue for issue in shown_issues if issue.level == "warning"]
 
@@ -769,10 +879,19 @@ class SVCFValidator:
             lines.append("")
             lines.append(f"... {truncated} additional issue(s) not shown.")
 
+        issue_codes = {issue.code for issue in self.issues}
+        if issue_codes & {"E_FMT_002", "E_SRC_004"}:
+            lines.append("")
+            lines.append("Migration note:")
+            lines.append(
+                "  If this SVCF was generated by an earlier OctopuSV release, "
+                "re-run the original merge with OctopuSV 0.5.0 rather than "
+                "manually editing SOURCE_IDS or evidence columns."
+            )
+
         return "\n".join(lines)
 
     def to_json(self, max_issues: int | None = None) -> str:
-        """Structured result for agent consumption."""
         shown_issues, truncated = self._limited_issues(max_issues)
 
         return json.dumps(
