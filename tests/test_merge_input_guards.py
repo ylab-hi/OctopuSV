@@ -123,10 +123,15 @@ def test_sample_mode_rejects_true_multi_sample_input(tmp_path):
         )
 
 
-def test_mark_sample_input_collapses_annotates_existing_first_block():
+def test_mark_sample_input_collapses_preserves_full_evidence_payload():
     sample = {"ID": "a.1", "GT": "0/1"}
     event = SimpleNamespace(
         sample=sample,
+        format="GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO",
+        info={
+            "SOURCES": "cuteSV,svim,svim",
+            "SOURCE_IDS": "a.1,b.1,b.2",
+        },
         raw_sample_columns=[BLOCK_A, BLOCK_B, BLOCK_B],
     )
 
@@ -134,6 +139,29 @@ def test_mark_sample_input_collapses_annotates_existing_first_block():
 
     assert sample["_octopusv_collapsed_evidence_count"] == 2
     assert sample["ID"] == "a.1"
+
+    payload = sample["_octopusv_evidence_payload"]
+    assert payload == {
+        "format": "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO",
+        "blocks": (BLOCK_A, BLOCK_B, BLOCK_B),
+        "sources": "cuteSV,svim,svim",
+        "source_ids": "a.1,b.1,b.2",
+    }
+
+
+def test_mark_sample_input_collapses_preserves_single_evidence_too():
+    sample = {"ID": "a.1", "GT": "0/1"}
+    event = SimpleNamespace(
+        sample=sample,
+        format="GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO",
+        info={},
+        raw_sample_columns=[BLOCK_A],
+    )
+
+    _mark_sample_input_collapses([event])
+
+    assert "_octopusv_collapsed_evidence_count" not in sample
+    assert sample["_octopusv_evidence_payload"]["blocks"] == (BLOCK_A,)
 
 
 def test_caller_mode_preflight_scans_beyond_first_data_record(tmp_path):

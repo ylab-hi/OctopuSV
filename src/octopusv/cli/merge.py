@@ -182,33 +182,58 @@ def _preflight_merge_inputs(
 
 
 def _mark_sample_input_collapses(events) -> None:
-    """Annotate sample-mode events that contain multiple caller evidence blocks.
+    """Preserve sample-input evidence and annotate current collapse counts.
 
     A caller-merged SVCF may legitimately be used as one biological-sample
-    input to a population/sample-mode merge. The first evidence block is the
-    existing deterministic sample-level representation; this private counter
-    records how many additional blocks were collapsed so the writer can report
-    the compression instead of doing it silently.
+    input to a population/sample-mode merge. Until the 1.0 sample-consensus
+    synthesis is connected, the existing writer still uses the first evidence
+    block as the sample-level representation.
+
+    This function therefore has two intentionally separate responsibilities:
+
+    1. Preserve the complete caller-evidence payload on the existing sample
+       dictionary under a private ``_octopusv_`` key so it survives selection
+       and reaches the sample-mode writer without changing merge semantics.
+    2. Keep the historical private collapse counter unchanged so current
+       output/warnings remain byte-for-byte compatible during this transport
+       step.
+
+    Runtime-only ``_octopusv_`` keys are not part of FORMAT and must never be
+    serialized into SVCF output.
     """
-    key = "_octopusv_collapsed_evidence_count"
+    collapse_key = "_octopusv_collapsed_evidence_count"
+    payload_key = "_octopusv_evidence_payload"
 
     for event in events:
         raw_columns = list(getattr(event, "raw_sample_columns", []) or [])
-        additional = max(0, len(raw_columns) - 1)
-        if additional == 0:
-            continue
-
         sample_data = getattr(event, "sample", None)
         if not isinstance(sample_data, dict):
             continue
 
-        existing = sample_data.get(key, 0)
+        info = getattr(event, "info", None)
+        if not isinstance(info, dict):
+            info = {}
+
+        # Transport only: keep the raw evidence and its explicit positional
+        # source fields intact. Do not interpret, collapse, or vote here.
+        sample_data[payload_key] = {
+            "format": getattr(event, "format", ""),
+            "blocks": tuple(raw_columns),
+            "sources": info.get("SOURCES"),
+            "source_ids": info.get("SOURCE_IDS"),
+        }
+
+        additional = max(0, len(raw_columns) - 1)
+        if additional == 0:
+            continue
+
+        existing = sample_data.get(collapse_key, 0)
         try:
             existing = int(existing)
         except (TypeError, ValueError):
             existing = 0
 
-        sample_data[key] = max(0, existing) + additional
+        sample_data[collapse_key] = max(0, existing) + additional
 
 
 def _describe_merge_rule(

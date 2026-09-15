@@ -180,3 +180,38 @@ def test_sample_mode_retains_each_inputs_first_block_when_caller_order_differs(t
     ]
     assert summary["sample_collapse_records"] == 1
     assert summary["sample_collapsed_evidence_blocks"] == 2
+
+
+def test_private_evidence_payload_survives_exact_sample_mapping(tmp_path):
+    """Transport-only payload must reach the sample writer unchanged."""
+    sample_a = tmp_path / "sampleA.svcf"
+    writer = DummyWriter([sample_a])
+    mapper = NameMapper(
+        [str(sample_a)],
+        mode="sample",
+        custom_names=["A"],
+    )
+
+    sample_data = _sample("a.first", collapsed=1)
+    payload = {
+        "format": "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO",
+        "blocks": ("callerA-block", "callerB-block"),
+        "sources": "callerA,callerB",
+        "source_ids": "a.first,a.second",
+    }
+    sample_data["_octopusv_evidence_payload"] = payload
+
+    event = _event(
+        [(str(sample_a), "SAMPLE", "FMT", sample_data)]
+    )
+
+    processed, summary = writer._prepare_events_for_sample_mode(
+        [event],
+        mapper,
+    )
+
+    retained = processed[0].ordered_samples[0]
+    assert retained is sample_data
+    assert retained["_octopusv_evidence_payload"] == payload
+    assert summary["sample_collapse_records"] == 1
+    assert summary["sample_collapsed_evidence_blocks"] == 1
