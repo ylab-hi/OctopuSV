@@ -1,7 +1,10 @@
 import logging
 import re
 
-from octopusv.utils.genotype_resolver import resolve_multi_caller_genotype
+from octopusv.utils.genotype_resolver import (
+    resolve_multi_caller_genotype,
+    unique_source_segments,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -11,7 +14,7 @@ class SVCFtoVCFConverter:
 
     Design goals:
       - Preserve standard VCF compatibility.
-      - Preserve OctopuSV provenance in INFO, especially SOURCES and SOURCE_IDS.
+      - Preserve OctopuSV source information in INFO, especially SOURCES and SOURCE_IDS.
       - Keep sample-mode sample columns intact.
       - Collapse caller-mode evidence blocks into one standard VCF sample column.
     """
@@ -105,7 +108,7 @@ class SVCFtoVCFConverter:
     def _format_info_value(value) -> str:
         """Make an INFO value safe for VCF text output.
 
-        OctopuSV provenance values normally contain safe characters such as
+        OctopuSV source-tracking values normally contain safe characters such as
         letters, digits, '.', '_', '-', ':', and commas. We keep commas because
         Number=. INFO values use comma-separated lists. Whitespace, semicolons,
         and equal signs would break INFO parsing, so we replace them.
@@ -301,7 +304,7 @@ class SVCFtoVCFConverter:
         qual = event.quality if hasattr(event, "quality") else "."
         filter_status = event.filter if hasattr(event, "filter") else "PASS"
 
-        # Build standard + provenance-preserving INFO.
+        # Build standard INFO while preserving OctopuSV source fields.
         info_fields = [f"SVTYPE={event.sv_type}"]
 
         # END handling.
@@ -335,7 +338,7 @@ class SVCFtoVCFConverter:
                 pass
 
         # Preserve SVCF/OctopuSV INFO fields that remain meaningful in VCF.
-        # SOURCES and SOURCE_IDS are essential provenance fields. They explain
+        # SOURCES and SOURCE_IDS are essential source-tracking fields. They explain
         # which callers/samples supported a merged record, especially after
         # caller-mode evidence blocks are collapsed into one VCF sample column.
         for key in [
@@ -364,7 +367,7 @@ class SVCFtoVCFConverter:
         #   Header has one SAMPLE column, but each record may have multiple
         #   caller evidence blocks. Standard VCF cannot store multiple caller
         #   blocks as separate sample columns, so we collapse to one SAMPLE
-        #   genotype and preserve caller provenance in INFO/SOURCES/SOURCE_IDS.
+        #   genotype and preserve caller source information in INFO/SOURCES/SOURCE_IDS.
         raw_cols = getattr(event, "raw_sample_columns", None)
         if not raw_cols:
             gt = event.sample.get("GT", "./.")
@@ -412,9 +415,10 @@ class SVCFtoVCFConverter:
             for k, v in event.info.items()
         )
         winning_gt = resolve_multi_caller_genotype(fmt, raw_cols, info_str)
+        selected_blocks = unique_source_segments(raw_cols, info_str)
 
         if winning_gt is not None:
-            for col in raw_cols:
+            for _index, col in selected_blocks:
                 parts = col.split(":")
                 if parts and parts[0] == winning_gt:
                     return self._convert_svcf_sample_to_vcf(col)
