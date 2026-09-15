@@ -2,6 +2,7 @@ import datetime
 from typing import List, Optional
 
 from .name_mapper import NameMapper
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 
 class MultiSampleWriter:
@@ -138,8 +139,8 @@ class MultiSampleWriter:
         This is used to rebuild INFO/SOURCE_IDS in the same order as
         INFO/SOURCES and the retained sample columns.
 
-        For raw FORMAT strings, use a limited left split instead of splitting the
-        whole string. This avoids breaking on ':' inside BND ALT values.
+        Raw FORMAT strings are parsed with the shared SVCF block parser so
+        colon-containing source IDs and ALT values are preserved intact.
         """
         if sample_data is None:
             return None
@@ -153,16 +154,12 @@ class MultiSampleWriter:
         if "ID" not in format_keys:
             return None
 
-        id_index = format_keys.index("ID")
+        parsed = parse_svcf_sample_block(
+            format_keys,
+            str(sample_data),
+        )
+        value = parsed.get("ID")
 
-        # Split only enough fields to reach ID. FORMAT fields before ID should
-        # not contain ':' in OctopuSV SVCF, while later ALT/CO fields may.
-        values = str(sample_data).split(":", id_index + 1)
-
-        if id_index >= len(values):
-            return None
-
-        value = values[id_index]
         if value not in (None, "", ".", "unknown"):
             return str(value)
 

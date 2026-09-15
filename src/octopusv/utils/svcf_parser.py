@@ -2,6 +2,8 @@ import logging
 import os
 import re
 
+from .svcf_sample_parser import parse_svcf_sample_block
+
 
 class SVCFEvent:
     """Represents a structural variant (SV) event parsed from an SVCF file.
@@ -111,35 +113,12 @@ class SVCFEvent:
         return info
 
     def _parse_sample(self, sample):
-        """Parses the sample string based on the format to extract all relevant data.
-        Handles fields that may contain colons (like ALT and CO).
-        """
-        format_keys = self.format.split(":")
-        sample_parts = sample.split(":")
-        result = {}
+        """Parse one SVCF evidence block using the shared SVCF parser."""
+        result = parse_svcf_sample_block(self.format, sample)
 
-        # Special handling of fields that may contain colons
-        special_fields = ["ALT", "CO", "REF"]  # Fields that might need special handling
-        special_field_index = None
-
-        for i, key in enumerate(format_keys):
-            if key in special_fields:
-                special_field_index = i
-                break
-
-        if special_field_index is not None:
-            # Regular fields
-            for i in range(special_field_index):
-                result[format_keys[i]] = sample_parts[i]
-
-            # Process the special field and all fields after it
-            result[format_keys[special_field_index]] = ":".join(sample_parts[special_field_index:])
-        else:
-            # If there are no special fields, handle them in the usual way
-            result = dict(zip(format_keys, sample_parts, strict=False))
-
-        # Store the complete original event ID to preserve IDs with colons (e.g., Manta IDs)
-        result['original_id'] = self.sv_id
+        # Keep the record-level ID used by existing merge/sample-mode code.
+        # The evidence-level ID remains available as result["ID"].
+        result["original_id"] = self.sv_id
 
         return result
 
