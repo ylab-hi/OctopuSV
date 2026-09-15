@@ -146,9 +146,11 @@ class MultiSampleWriter:
             return None
 
         if isinstance(sample_data, dict):
-            original_id = sample_data.get("original_id", sample_data.get("ID"))
-            if original_id not in (None, "", ".", "unknown"):
-                return str(original_id)
+            # Evidence-block ID is the source record ID for this block.
+            # ``original_id`` is a compatibility fallback for older objects.
+            source_id = sample_data.get("ID", sample_data.get("original_id"))
+            if source_id not in (None, "", ".", "unknown"):
+                return str(source_id)
             return None
 
         if "ID" not in format_keys:
@@ -228,13 +230,17 @@ class MultiSampleWriter:
         for sample_data in ordered_samples:
             if sample_data is not None:
                 if isinstance(sample_data, dict):
-                    values = [str(sample_data.get(key, ".")) for key in format_keys]
+                    values = []
+                    for key in format_keys:
+                        value = sample_data.get(key, ".")
+                        if isinstance(value, list):
+                            value = ",".join(map(str, value))
+                        elif value is None:
+                            value = "."
+                        values.append(str(value))
                     sample_str = ":".join(values)
                 else:
                     sample_str = str(sample_data)
-
-                if sample_str.endswith(":.:."):
-                    sample_str = sample_str[:-4]
 
                 sample_columns.append(sample_str)
             else:

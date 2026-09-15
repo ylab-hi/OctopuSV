@@ -157,6 +157,25 @@ def split_info_list(value) -> list[str]:
     return items
 
 
+def split_positional_info_list(value) -> list[str]:
+    """Split a positional INFO list while preserving missing-value slots.
+
+    This is intentionally narrower than ``split_info_list``. It is for INFO
+    fields whose item positions are meaningful, especially SOURCE_IDS where
+    ``a,.,c`` means that the second evidence block exists but its source ID is
+    missing. Dropping the dot would shift all later IDs out of alignment.
+    """
+    if value is None or value is True or value == "":
+        return []
+
+    items = []
+    for item in str(value).split(","):
+        item = item.strip()
+        items.append(item if item else ".")
+
+    return items
+
+
 def update_info_string(info_string: str, updates: dict[str, str]) -> str:
     """Update INFO while preserving existing field order as much as possible."""
     if info_string in MISSING_VALUES:
@@ -534,7 +553,7 @@ class SVCFSubset:
         retained_sources: list[str],
     ) -> str:
         sources = split_info_list(info.get("SOURCES"))
-        source_ids = split_info_list(info.get("SOURCE_IDS"))
+        source_ids = split_positional_info_list(info.get("SOURCE_IDS"))
 
         if "SOURCE_IDS" not in info:
             return "."
@@ -575,7 +594,7 @@ class SVCFSubset:
         info = parse_info(info_string)
         sources = split_info_list(info.get("SOURCES"))
 
-        for source in sources:
+        for source in dict.fromkeys(sources):
             self.available_callers_counter[source] += 1
 
         selected_set = set(self.config.selected_callers)
@@ -625,7 +644,7 @@ class SVCFSubset:
         retained_sources = [sources[index] for index in retained_indices]
         selected_evidence = [evidence_fields[index] for index in retained_indices]
 
-        for source in retained_sources:
+        for source in dict.fromkeys(retained_sources):
             self.retained_callers_counter[source] += 1
 
         if not retained_sources and not self.config.keep_empty:
@@ -665,7 +684,7 @@ class SVCFSubset:
         sources: list[str],
         retained_indices: list[int],
     ) -> str:
-        source_ids = split_info_list(info.get("SOURCE_IDS"))
+        source_ids = split_positional_info_list(info.get("SOURCE_IDS"))
 
         if "SOURCE_IDS" not in info:
             return "."

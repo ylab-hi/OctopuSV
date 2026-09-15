@@ -13,10 +13,7 @@ class MergeWriterMixin:
                 value = "."
             values.append(str(value))
 
-        result = ":".join(values)
-        if result.endswith(":.:."):
-            result = result[:-4]
-        return result
+        return ":".join(values)
 
     def _input_file_matches_event_sources(self, input_file, event_source_tokens):
         """Return whether an input file belongs to an event source set.
@@ -180,9 +177,12 @@ class MergeWriterMixin:
         if not isinstance(sample_data, dict):
             return "."
 
+        # The evidence-block ID is the source record ID represented by this
+        # block. ``original_id`` is retained only as a compatibility fallback
+        # for older/manually-created objects that do not carry ID.
         source_id = sample_data.get(
-            "original_id",
-            sample_data.get("ID", "."),
+            "ID",
+            sample_data.get("original_id", "."),
         )
 
         if source_id in (None, "", "unknown"):
@@ -623,8 +623,6 @@ class MergeWriterMixin:
                                 )
                             else:
                                 sample_str = str(sample_data)
-                                if sample_str.endswith(":.:."):
-                                    sample_str = sample_str[:-4]
 
                             sample_strings.append(sample_str)
 
