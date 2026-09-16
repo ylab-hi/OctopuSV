@@ -19,6 +19,15 @@ def svcf2vcf(
         "-o",
         help="Output VCF file.",
     ),
+    unobserved_sample_gt: str = typer.Option(
+        "missing",
+        "--unobserved-sample-gt",
+        help=(
+            "How sample-mode no-event placeholders are exported: "
+            "missing -> ./.; ref -> 0/0. Use ref only when your cohort "
+            "analysis intentionally treats an unobserved event as absence."
+        ),
+    ),
 ):
     """Convert SVCF file to VCF format."""
     try:
@@ -30,6 +39,7 @@ def svcf2vcf(
         converter = SVCFtoVCFConverter(
             events=None,
             input_svcf_file=resolved_input,
+            unobserved_sample_gt=unobserved_sample_gt,
         )
         converter.convert_to_file(output_file)
 

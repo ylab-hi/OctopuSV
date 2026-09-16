@@ -4,9 +4,12 @@ from typing import List, Optional
 from .name_mapper import NameMapper
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.vcf_info import format_vcf_info_item
-
-
-SAMPLE_FORMAT_V11 = "GT:AD:UC:UV:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+from octopusv.utils.svcf_schema import (
+    SAMPLE_FORMAT as SAMPLE_FORMAT_V11,
+    MODE_MULTI,
+    mode_header,
+    version_header,
+)
 
 
 class MultiSampleWriter:
@@ -40,7 +43,8 @@ class MultiSampleWriter:
     def _write_header(self, file_handle, contigs):
         """Write SVCF header for sample mode."""
         file_handle.write("##fileformat=VCFv4.2\n")
-        file_handle.write("##OctopuSV_mode=multi\n")
+        file_handle.write(version_header() + "\n")
+        file_handle.write(mode_header(MODE_MULTI) + "\n")
 
         file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
         file_handle.write(f"##fileDate={file_date}\n")

@@ -215,6 +215,20 @@ class SVStater:
             for gt, count in g["overall"].items():
                 pct = (count / tot * 100) if tot else 0.0
                 L.append(f"  {gt:28} = {count} ({pct:.2f}%)")
+
+            no_evidence = g.get("no_evidence", {})
+            if no_evidence.get("overall", 0):
+                L.append("")
+                L.append(
+                    "No-evidence sample/event cells "
+                    "(subset of ./. under default export semantics):"
+                )
+                for name in self.sample_names:
+                    count = no_evidence.get("per_sample", {}).get(name, 0)
+                    L.append(f"  {name:28} = {count}")
+                L.append(
+                    f"  {'Overall':28} = {no_evidence.get('overall', 0)}"
+                )
         else:
             tot = sum(g["overall"].values())
             for gt, count in g["overall"].items():
@@ -269,6 +283,7 @@ class SVStater:
             "avg_read_support": qc["support"]["mean"] or 0.0,
             "genotype_dist": genotype_dist,
             "sample_genotypes": g.get("per_sample", {}),
+            "no_evidence": g.get("no_evidence", {}),
             "population_genotypes": {},
         }
 

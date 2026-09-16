@@ -5,6 +5,7 @@ from octopusv.utils.sample_consensus import resolve_sample_consensus
 from octopusv.utils.source_path import normalize_source_path
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.vcf_info import format_vcf_info_item
+from octopusv.utils.svcf_schema import MODE_CALLER, mode_header, version_header
 
 
 class MergeWriterMixin:
@@ -816,66 +817,55 @@ class MergeWriterMixin:
             }
 
     def _write_vcf_header(self, file_handle, contigs, input_files):
-        """Write VCF header with dynamic field definitions extracted from ALL input files.
+        """Write the caller-mode SVCF 1.1 header.
 
-        Args:
-            file_handle: File handle to write to
-            contigs: Dictionary of contig information
-            input_files: List of input file paths for extracting original definitions
+        Header generation is part of the SVCF contract. If dynamic header
+        extraction fails, abort rather than appending a second fallback header
+        to a partially written file.
         """
-        try:
-            # Extract and merge header definitions from all input files
-            merged_definitions = self._extract_and_merge_all_headers(input_files)
+        # Extract and merge header definitions from all input files.
+        merged_definitions = self._extract_and_merge_all_headers(input_files)
 
-            # Write basic header info
-            import datetime
-            file_handle.write("##fileformat=VCFv4.2\n")
-            file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
-            file_handle.write(f"##fileDate={file_date}\n")
-            file_handle.write("##source=OctopuSV\n")
+        import datetime
 
-            # Write contig information
-            for contig_id, contig_length in contigs.items():
-                file_handle.write(f"##contig=<ID={contig_id},length={contig_length}>\n")
+        file_handle.write("##fileformat=VCFv4.2\n")
+        file_handle.write(version_header() + "\n")
+        file_handle.write(mode_header(MODE_CALLER) + "\n")
+        file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
+        file_handle.write(f"##fileDate={file_date}\n")
+        file_handle.write("##source=OctopuSV\n")
 
-            # Write ALT definitions
-            for alt_line in merged_definitions['alt_lines']:
-                file_handle.write(alt_line + "\n")
-
-            # Write INFO definitions, except merged-source fields that are
-            # defined exactly once below.
-            for info_line in merged_definitions['info_lines']:
-                info_id = self._extract_id_from_line(info_line, 'INFO')
-                if info_id in {"SOURCES", "SOURCE_IDS"}:
-                    continue
-                file_handle.write(info_line + "\n")
-
-            # Write FILTER definitions (original + basic PASS)
-            for filter_line in merged_definitions['filter_lines']:
-                file_handle.write(filter_line + "\n")
-
-            # Write FORMAT definitions
-            for format_line in merged_definitions['format_lines']:
-                file_handle.write(format_line + "\n")
-
-            # Add SOURCES field definition for merged results
+        for contig_id, contig_length in contigs.items():
             file_handle.write(
-                '##INFO=<ID=SOURCES,Number=.,Type=String,Description="Input source for each merged evidence block, in output order">\n')
+                f"##contig=<ID={contig_id},length={contig_length}>\n"
+            )
 
-            # Add SOURCE_IDS field definition for merged results
-            file_handle.write(
-                '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original record ID for each merged evidence block, in output order">\n')
+        for alt_line in merged_definitions["alt_lines"]:
+            file_handle.write(alt_line + "\n")
 
-            # Write the column header line
-            sample_names = ["SAMPLE"]
-            header_line = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(sample_names) + "\n"
-            file_handle.write(header_line)
+        # SOURCES / SOURCE_IDS are defined exactly once below.
+        for info_line in merged_definitions["info_lines"]:
+            info_id = self._extract_id_from_line(info_line, "INFO")
+            if info_id in {"SOURCES", "SOURCE_IDS"}:
+                continue
+            file_handle.write(info_line + "\n")
 
-        except Exception as e:
-            # Fallback to basic header if dynamic generation fails
-            import logging
-            logging.warning(f"Failed to generate dynamic VCF header: {e}. Using basic header.")
-            self._write_basic_vcf_header(file_handle, contigs)
+        for filter_line in merged_definitions["filter_lines"]:
+            file_handle.write(filter_line + "\n")
+
+        for format_line in merged_definitions["format_lines"]:
+            file_handle.write(format_line + "\n")
+
+        file_handle.write(
+            '##INFO=<ID=SOURCES,Number=.,Type=String,Description="Input source for each merged evidence block, in output order">\n'
+        )
+        file_handle.write(
+            '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original record ID for each merged evidence block, in output order">\n'
+        )
+
+        file_handle.write(
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        )
 
     def _extract_and_merge_all_headers(self, input_files):
         """Extract header definitions from all input files and merge them.
@@ -906,44 +896,40 @@ class MergeWriterMixin:
         seen_format_ids = set()
         seen_alt_ids = set()
 
-        # Extract definitions from each input file
+        # Extract definitions from each input file. Header extraction is part
+        # of the output contract: if one input header cannot be read, abort
+        # instead of silently dropping its custom definitions.
         if input_files:
             for input_file in input_files:
-                try:
-                    file_headers = extract_original_header_definitions(input_file)
+                file_headers = extract_original_header_definitions(input_file)
 
-                    # Add FILTER definitions (avoid duplicates)
-                    for line in file_headers.get('filter_lines', []):
-                        filter_id = self._extract_id_from_line(line, 'FILTER')
-                        if filter_id and filter_id not in seen_filter_ids:
-                            all_original_definitions['filter_lines'].append(line)
-                            seen_filter_ids.add(filter_id)
+                # Add FILTER definitions (avoid duplicates)
+                for line in file_headers.get('filter_lines', []):
+                    filter_id = self._extract_id_from_line(line, 'FILTER')
+                    if filter_id and filter_id not in seen_filter_ids:
+                        all_original_definitions['filter_lines'].append(line)
+                        seen_filter_ids.add(filter_id)
 
-                    # Add INFO definitions (avoid duplicates)
-                    for line in file_headers.get('info_lines', []):
-                        info_id = self._extract_id_from_line(line, 'INFO')
-                        if info_id and info_id not in seen_info_ids:
-                            all_original_definitions['info_lines'].append(line)
-                            seen_info_ids.add(info_id)
+                # Add INFO definitions (avoid duplicates)
+                for line in file_headers.get('info_lines', []):
+                    info_id = self._extract_id_from_line(line, 'INFO')
+                    if info_id and info_id not in seen_info_ids:
+                        all_original_definitions['info_lines'].append(line)
+                        seen_info_ids.add(info_id)
 
-                    # Add FORMAT definitions (avoid duplicates)
-                    for line in file_headers.get('format_lines', []):
-                        format_id = self._extract_id_from_line(line, 'FORMAT')
-                        if format_id and format_id not in seen_format_ids:
-                            all_original_definitions['format_lines'].append(line)
-                            seen_format_ids.add(format_id)
+                # Add FORMAT definitions (avoid duplicates)
+                for line in file_headers.get('format_lines', []):
+                    format_id = self._extract_id_from_line(line, 'FORMAT')
+                    if format_id and format_id not in seen_format_ids:
+                        all_original_definitions['format_lines'].append(line)
+                        seen_format_ids.add(format_id)
 
-                    # Add ALT definitions (avoid duplicates)
-                    for line in file_headers.get('alt_lines', []):
-                        alt_id = self._extract_id_from_line(line, 'ALT')
-                        if alt_id and alt_id not in seen_alt_ids:
-                            all_original_definitions['alt_lines'].append(line)
-                            seen_alt_ids.add(alt_id)
-
-                except Exception as e:
-                    import logging
-                    logging.warning(f"Failed to extract headers from {input_file}: {e}")
-                    continue
+                # Add ALT definitions (avoid duplicates)
+                for line in file_headers.get('alt_lines', []):
+                    alt_id = self._extract_id_from_line(line, 'ALT')
+                    if alt_id and alt_id not in seen_alt_ids:
+                        all_original_definitions['alt_lines'].append(line)
+                        seen_alt_ids.add(alt_id)
 
         # Merge with OctopuSV defaults
         return merge_header_definitions(all_original_definitions, octopus_defaults)
@@ -976,6 +962,8 @@ class MergeWriterMixin:
 
         # Basic header information
         file_handle.write("##fileformat=VCFv4.2\n")
+        file_handle.write(version_header() + "\n")
+        file_handle.write(mode_header(MODE_CALLER) + "\n")
         file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
         file_handle.write(f"##fileDate={file_date}\n")
         file_handle.write("##source=OctopuSV\n")

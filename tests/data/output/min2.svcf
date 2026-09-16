@@ -1,5 +1,7 @@
 ##fileformat=VCFv4.2
-##fileDate=2026-09-15|09:51:33PM|
+##SVCFVersion=1.1
+##OctopuSV_mode=caller
+##fileDate=2026-09-16|08:58:41AM|
 ##source=OctopuSV
 ##contig=<ID=1,length=249250621>
 ##contig=<ID=2,length=243199373>

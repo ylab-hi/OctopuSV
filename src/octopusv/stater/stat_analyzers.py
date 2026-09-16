@@ -19,6 +19,10 @@ from collections import Counter, defaultdict
 
 from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.sample_mode_semantics import (
+    downstream_sample_gt,
+    is_unobserved_sample,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -288,18 +292,40 @@ class GenotypeAnalyzer:
 
     def _analyze_sample_mode(self):
         per_sample = {name: Counter() for name in self.sample_names}
+        no_evidence_per_sample = Counter()
+
         for r in self.records:
             cols = r.sample_cols[:len(self.sample_names)]
             for i, name in enumerate(self.sample_names):
                 if i < len(cols):
-                    gt = self._gt_from_segment(r.format, cols[i])
+                    parsed = parse_svcf_sample_block(r.format, cols[i])
+
+                    # Keep no-event layout placeholders visible as a separate
+                    # statistic.  They remain a subset of the downstream ./.
+                    # count under the default missing policy, so existing
+                    # genotype distributions retain their established shape.
+                    if is_unobserved_sample(parsed):
+                        no_evidence_per_sample[name] += 1
+
+                    gt = downstream_sample_gt(parsed)
                     if gt:
                         per_sample[name][gt] += 1
+
         overall = Counter()
         for c in per_sample.values():
             overall.update(c)
+
+        no_evidence = {
+            "overall": sum(no_evidence_per_sample.values()),
+            "per_sample": {
+                name: no_evidence_per_sample.get(name, 0)
+                for name in self.sample_names
+            },
+        }
+
         return {
             "mode": "sample",
             "per_sample": {name: dict(c) for name, c in per_sample.items()},
             "overall": dict(overall),
+            "no_evidence": no_evidence,
         }

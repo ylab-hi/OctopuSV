@@ -12,6 +12,14 @@ from octopusv.utils.SV_classifier_by_chromosome import SVClassifiedByChromosome
 from octopusv.utils.SV_classifier_by_type import SVClassifierByType
 from octopusv.utils.source_path import normalize_source_path
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
+from octopusv.utils.svcf_schema import (
+    MODE_CALLER,
+    MODE_MULTI,
+    parse_identity_from_meta_lines,
+    validate_format_for_identity,
+    validate_header_columns_for_identity,
+    validate_versioned_identity,
+)
 
 
 def _echo(message: str = "") -> None:
@@ -95,44 +103,54 @@ def _validate_unique_display_labels(
 
 
 def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
-    """Reject input layouts that the selected merge mode cannot preserve.
+    """Reject merge inputs that are not caller-evidence SVCF.
 
-    This is intentionally a lightweight byte-level scan: it checks only the
-    #CHROM layout and tab counts, without splitting or parsing full records.
-
-    Caller mode requires every input record to carry exactly one trailing
-    evidence/sample column. Re-merging a variable-width caller-merged SVCF
-    would otherwise discard nested evidence.
-
-    Sample mode intentionally allows a caller-merged SVCF with one header
-    sample label and multiple caller evidence blocks per record. This is the
-    supported per-sample-caller-merge -> population-merge workflow. Previously
-    synthesized sample/multi SVCF output is rejected explicitly, even if it
-    currently contains only one sample column, because layout placeholders are
-    not caller evidence and must never enter sample consensus.
+    Merge consumes caller evidence.  It may accept legacy unversioned SVCF or
+    explicit SVCF 1.1 caller-mode files, but it must never accept synthesized
+    sample/multi SVCF as caller evidence.  FORMAT schema is checked directly so
+    stripping a mode marker cannot make synthesized sample calls mergeable.
     """
     found_chrom_header = False
-    is_synthesized_sample_svcf = False
+    meta_lines: list[str] = []
+    identity = None
+    header_sample_count = None
 
     with open(input_file, "rb") as handle:
         for line_number, line in enumerate(handle, 1):
-            if line.rstrip(b"\r\n") == b"##OctopuSV_mode=multi":
-                is_synthesized_sample_svcf = True
+            if line.startswith(b"##"):
+                meta_lines.append(line.decode("utf-8", errors="replace").rstrip("\r\n"))
                 continue
 
             if line.startswith(b"#CHROM"):
-                if is_synthesized_sample_svcf:
+                try:
+                    identity = parse_identity_from_meta_lines(meta_lines)
+                    validate_versioned_identity(identity)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid SVCF identity in {str(input_file)!r}: {exc}"
+                    ) from exc
+
+                if identity.mode == MODE_MULTI:
                     raise ValueError(
                         f"Input {str(input_file)!r} is a synthesized sample/multi "
-                        "SVCF (##OctopuSV_mode=multi). Merge inputs must be "
-                        "single-caller or per-sample caller-merged SVCFs, not "
-                        "previously synthesized sample/multi output. Use the "
-                        "original per-sample caller-mode SVCF input instead."
+                        "SVCF. Merge inputs must be single-caller or per-sample "
+                        "caller-merged SVCFs, not previously synthesized "
+                        "sample/multi output. Use the original per-sample "
+                        "caller-mode SVCF input instead."
                     )
+
                 found_chrom_header = True
-                # A valid SVCF has nine fixed columns through FORMAT.
-                # fields = tabs + 1, so trailing columns = tabs - 8.
                 header_sample_count = max(0, line.count(b"\t") - 8)
+
+                try:
+                    validate_header_columns_for_identity(
+                        identity,
+                        header_sample_count,
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid SVCF header in {str(input_file)!r}: {exc}"
+                    ) from exc
 
                 if mode == "sample" and header_sample_count > 1:
                     raise ValueError(
@@ -153,22 +171,53 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
                     "before its data records."
                 )
 
-            if mode == "caller":
-                evidence_count = max(0, line.count(b"\t") - 8)
-                if evidence_count > 1:
-                    raise ValueError(
-                        f"Input {str(input_file)!r} contains {evidence_count} "
-                        f"evidence/sample columns on data line {line_number}. "
-                        "Caller-mode re-merge of multi-evidence SVCF records "
-                        "is not supported because nested evidence cannot be "
-                        "preserved unambiguously. Use single-evidence SVCF "
-                        "inputs for `merge --mode caller`."
-                    )
-            else:
-                # In sample mode the header determines whether this is a true
-                # multi-sample input. Variable-width caller evidence below a
-                # single SAMPLE header is intentionally allowed.
-                break
+            fields = line.rstrip(b"\r\n").split(b"\t")
+            if len(fields) < 10:
+                raise ValueError(
+                    f"Input {str(input_file)!r} has a malformed data record on "
+                    f"line {line_number}: expected at least 10 columns."
+                )
+
+            format_field = fields[8].decode("utf-8", errors="replace")
+            try:
+                schema_mode = validate_format_for_identity(
+                    identity,
+                    format_field,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid SVCF schema in {str(input_file)!r} on data line "
+                    f"{line_number}: {exc}"
+                ) from exc
+
+            if schema_mode is None:
+                raise ValueError(
+                    f"Input {str(input_file)!r} is not recognized as SVCF on "
+                    f"data line {line_number}: FORMAT={format_field!r}. "
+                    "Run `octopusv correct` on ordinary caller VCF input first."
+                )
+
+            if schema_mode == MODE_MULTI:
+                raise ValueError(
+                    f"Input {str(input_file)!r} contains the synthesized "
+                    f"sample-mode SVCF schema on data line {line_number}. "
+                    "Sample-level calls must not be re-used as caller evidence."
+                )
+
+            evidence_count = max(0, len(fields) - 9)
+            if mode == "caller" and evidence_count > 1:
+                raise ValueError(
+                    f"Input {str(input_file)!r} contains {evidence_count} "
+                    f"evidence/sample columns on data line {line_number}. "
+                    "Caller-mode re-merge of multi-evidence SVCF records "
+                    "is not supported because nested evidence cannot be "
+                    "preserved unambiguously. Use single-evidence SVCF "
+                    "inputs for `merge --mode caller`."
+                )
+
+            # Continue scanning every record.  Sample-mode input may contain
+            # variable-width caller evidence, but every record must still use
+            # the caller SVCF schema.
 
     if not found_chrom_header:
         raise ValueError(

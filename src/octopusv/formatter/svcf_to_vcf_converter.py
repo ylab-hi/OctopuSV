@@ -8,6 +8,17 @@ from pathlib import Path
 from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
 from octopusv.utils.svcf_parser import SVCFEvent
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.svcf_schema import (
+    MODE_MULTI,
+    parse_identity_from_meta_lines,
+    validate_format_for_identity,
+    validate_header_columns_for_identity,
+    validate_versioned_identity,
+)
+from octopusv.utils.sample_mode_semantics import (
+    downstream_sample_gt,
+    normalize_unobserved_sample_gt,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -98,25 +109,57 @@ class SVCFtoVCFConverter:
         '##FORMAT=<ID=UV,Number=1,Type=Integer,Description="Number of unique callers contributing a valid presence vote for this synthesized sample call">',
     ]
 
-    def __init__(self, events=None, input_svcf_file=None):
+    def __init__(
+        self,
+        events=None,
+        input_svcf_file=None,
+        *,
+        unobserved_sample_gt="missing",
+    ):
         if input_svcf_file is None:
             raise ValueError("input_svcf_file is required")
 
         self.events = events
         self.input_svcf_file = str(input_svcf_file)
+        self.unobserved_sample_gt = normalize_unobserved_sample_gt(
+            unobserved_sample_gt
+        )
 
         (
             self._meta_lines,
             self._contig_lines,
             self._original_definitions,
             self.sample_names,
+            self._header_trailing_count,
         ) = self._read_header_metadata()
 
-        self._has_multi_marker = any(
-            line == "##OctopuSV_mode=multi" for line in self._meta_lines
-        )
+        try:
+            self._identity = parse_identity_from_meta_lines(self._meta_lines)
+            validate_versioned_identity(self._identity)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid SVCF identity in {self.input_svcf_file!r}: {exc}"
+            ) from exc
 
-        if self._has_multi_marker:
+        try:
+            validate_header_columns_for_identity(
+                self._identity,
+                self._header_trailing_count,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid SVCF header in {self.input_svcf_file!r}: {exc}"
+            ) from exc
+
+        self._has_multi_marker = self._identity.mode == MODE_MULTI
+
+        if self._identity.is_versioned:
+            # Versioned SVCF identity is explicit. Never fall back to column-
+            # count inference after a file has declared its schema.
+            self.mode = "multi" if self._identity.mode == MODE_MULTI else "single"
+        elif self._has_multi_marker:
+            # Historical multi-sample files may carry the old mode marker
+            # without an SVCFVersion declaration.
             self.mode = "multi"
         elif len(self.sample_names) > 1:
             self.mode = "legacy_multi"
@@ -127,6 +170,63 @@ class SVCFtoVCFConverter:
             )
         else:
             self.mode = "single"
+
+        self._first_record_format = self._read_first_record_format()
+        if self._first_record_format is not None:
+            self._validate_versioned_record_format(self._first_record_format)
+        self._supports_unobserved_sample_policy = (
+            self.mode == "multi"
+            and self._format_has_consensus_fields(self._first_record_format)
+        )
+
+        if (
+            self.unobserved_sample_gt == "ref"
+            and not self._supports_unobserved_sample_policy
+        ):
+            logging.warning(
+                "--unobserved-sample-gt=ref has no effect because this "
+                "input does not contain SVCF 1.1 sample consensus fields "
+                "(UC/UV)."
+            )
+
+    def _read_first_record_format(self) -> str | None:
+        """Return FORMAT from the first data record, if one exists.
+
+        The unobserved-sample export policy is meaningful only for SVCF 1.1
+        sample-mode records that actually carry UC/UV.  Mode alone is not
+        sufficient because legacy multi-sample files can carry the multi
+        marker while still using the older 11-field sample schema.
+        """
+        with open(self.input_svcf_file, encoding="utf-8-sig") as handle:
+            for raw_line in handle:
+                if not raw_line or raw_line.startswith("#"):
+                    continue
+                parts = raw_line.rstrip("\r\n").split("\t")
+                if len(parts) > 8:
+                    return parts[8]
+                return None
+        return None
+
+    @staticmethod
+    def _format_has_consensus_fields(format_field: str | None) -> bool:
+        if not format_field:
+            return False
+        keys = set(format_field.split(":"))
+        return {"UC", "UV"}.issubset(keys)
+
+    def _validate_versioned_record_format(self, format_field: str) -> None:
+        """Enforce the declared SVCF 1.1 schema for one record.
+
+        Unversioned inputs remain on the legacy compatibility path.
+        """
+        if not self._identity.is_versioned:
+            return
+        try:
+            validate_format_for_identity(self._identity, format_field)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid SVCF schema in {self.input_svcf_file!r}: {exc}"
+            ) from exc
 
     @staticmethod
     def _header_id(line: str, kind: str) -> str | None:
@@ -153,9 +253,10 @@ class SVCFtoVCFConverter:
     def _read_header_metadata(self):
         """Read SVCF header metadata once.
 
-        Returns meta lines, contig lines, preserved original definitions, and
-        the trailing #CHROM sample/evidence-column names.  This replaces the
-        previous repeated header scans without changing header semantics.
+        Returns meta lines, contig lines, preserved original definitions,
+        trailing #CHROM sample/evidence-column names, and the exact number of
+        trailing header columns.  The explicit count lets versioned SVCF
+        validate caller/multi header shape without legacy inference.
         """
         meta_lines = []
         contig_lines = []
@@ -165,6 +266,7 @@ class SVCFtoVCFConverter:
             "format_lines": [],
         }
         sample_names = ["Sample"]
+        header_trailing_count = 0
 
         with open(self.input_svcf_file, encoding="utf-8-sig") as handle:
             for raw_line in handle:
@@ -172,6 +274,7 @@ class SVCFtoVCFConverter:
 
                 if line.startswith("#CHROM"):
                     parts = line.split("\t")
+                    header_trailing_count = max(0, len(parts) - 9)
                     if len(parts) > 9:
                         sample_names = parts[9:]
                     break
@@ -199,7 +302,13 @@ class SVCFtoVCFConverter:
                     if format_id is None or format_id not in self.DEFAULT_FORMAT_IDS:
                         original_definitions["format_lines"].append(line)
 
-        return meta_lines, contig_lines, original_definitions, sample_names
+        return (
+            meta_lines,
+            contig_lines,
+            original_definitions,
+            sample_names,
+            header_trailing_count,
+        )
 
     def _detect_mode_and_samples(self):
         """Backward-compatible helper returning cached header information."""
@@ -356,6 +465,12 @@ class SVCFtoVCFConverter:
 
         header = "##fileformat=VCFv4.2\n"
 
+        if self._supports_unobserved_sample_policy:
+            header += (
+                "##OctopuSV_unobserved_sample_gt="
+                f"{self.unobserved_sample_gt}\n"
+            )
+
         for contig_line in contig_lines:
             header += contig_line + "\n"
 
@@ -440,6 +555,8 @@ class SVCFtoVCFConverter:
         info_fields.append(f"{key}={self._format_info_value(value)}")
 
     def _convert_event_to_vcf(self, event):
+        self._validate_versioned_record_format(event.format)
+
         chrom = event.chrom
         pos = event.pos
         record_id = event.sv_id
@@ -604,7 +721,19 @@ class SVCFtoVCFConverter:
         """Convert one SVCF block using FORMAT keys rather than positions."""
         parsed = parse_svcf_sample_block(format_field, svcf_sample)
 
-        gt = self._normalized_sample_value(parsed.get("GT"), "./.")
+        if include_consensus_fields:
+            # SVCF 1.1 sample-mode layout placeholders use GT=0/0, UC=0,
+            # UV=0 to preserve fixed-width columns.  UV=0 explicitly means
+            # there was no valid caller vote, so downstream VCF must expose
+            # that state as missing rather than homozygous reference.  Legacy
+            # sample layouts without UV are intentionally left unchanged.
+            gt = downstream_sample_gt(
+                parsed,
+                unobserved_sample_gt=self.unobserved_sample_gt,
+            )
+        else:
+            gt = self._normalized_sample_value(parsed.get("GT"), "./.")
+
         ad = self._normalized_sample_value(parsed.get("AD"), ".,.")
         ln = self._normalized_sample_value(parsed.get("LN"), ".")
         dp = self._calculate_dp(ad)

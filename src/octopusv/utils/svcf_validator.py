@@ -20,10 +20,18 @@ from dataclasses import dataclass
 
 from octopusv.utils.svcf_coordinate_parser import parse_svcf_co
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.svcf_schema import (
+    CALLER_FORMAT,
+    SAMPLE_FORMAT,
+    MODE_CALLER,
+    MODE_MULTI,
+    SVCFIdentity,
+    parse_identity_from_meta_lines,
+    validate_format_for_identity,
+    validate_header_columns_for_identity,
+    validate_versioned_identity,
+)
 
-
-CALLER_FORMAT = "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
-SAMPLE_FORMAT = "GT:AD:UC:UV:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
 
 CALLER_FORMAT_KEYS = CALLER_FORMAT.split(":")
 SAMPLE_FORMAT_KEYS = SAMPLE_FORMAT.split(":")
@@ -54,8 +62,6 @@ REQUIRED_INFO_KEYS = {
     "STRAND",
     "RNAMES",
 }
-
-MODE_MULTI_MARKER = "##OctopuSV_mode=multi"
 
 # Matching bracket forms only.  The local replacement sequence is deliberately
 # not restricted to A/C/G/T/N here; the structural requirement is the bracketed
@@ -182,9 +188,13 @@ class SVCFValidator:
         self.unreadable = False
 
         self._has_multi_marker = False
+        self.svcf_version: str | None = None
+        self.declared_mode: str | None = None
+        self._meta_lines: list[str] = []
         self._mode_source_flag: bool | None = None
         self._mixed_mode_reported = False
         self._mode_observations = 0
+        self._identity: SVCFIdentity | None = None
 
     # ------------------------------------------------------------------
     # Issue helpers
@@ -240,9 +250,13 @@ class SVCFValidator:
         self.declared_samples = []
         self.unreadable = False
         self._has_multi_marker = False
+        self.svcf_version: str | None = None
+        self.declared_mode: str | None = None
+        self._meta_lines: list[str] = []
         self._mode_source_flag = None
         self._mixed_mode_reported = False
         self._mode_observations = 0
+        self._identity = None
 
         if not os.path.exists(self.path) or os.path.getsize(self.path) == 0:
             self.unreadable = True
@@ -261,12 +275,12 @@ class SVCFValidator:
 
                     if not header_complete:
                         if line.startswith("##"):
-                            if line.strip() == MODE_MULTI_MARKER:
-                                self._has_multi_marker = True
+                            self._meta_lines.append(line)
                             continue
 
                         if line.startswith("#CHROM"):
                             chrom_line = line
+                            self._initialize_declared_identity()
                             self._check_header(chrom_line)
                             self._initialize_mode_from_header(chrom_line)
                             header_complete = True
@@ -316,6 +330,32 @@ class SVCFValidator:
     # Header / mode
     # ------------------------------------------------------------------
 
+    def _initialize_declared_identity(self) -> None:
+        """Parse explicit SVCF version/mode declarations once per file."""
+        try:
+            identity = parse_identity_from_meta_lines(self._meta_lines)
+        except ValueError as exc:
+            self._err(
+                "E_HDR_003",
+                str(exc),
+                blocking=True,
+            )
+            return
+
+        self._identity = identity
+        self.svcf_version = identity.version
+        self.declared_mode = identity.mode
+        self._has_multi_marker = identity.mode == MODE_MULTI
+
+        try:
+            validate_versioned_identity(identity)
+        except ValueError as exc:
+            self._err(
+                "E_VER_001",
+                str(exc),
+                blocking=True,
+            )
+
     def _check_header(self, chrom_line: str | None) -> None:
         if chrom_line is None:
             self._err(
@@ -335,10 +375,24 @@ class SVCFValidator:
 
     def _initialize_mode_from_header(self, chrom_line: str) -> None:
         columns = chrom_line.split("\t")
+        trailing_columns = columns[9:]
 
-        if self._has_multi_marker:
+        if self._identity is not None and self._identity.is_versioned:
+            try:
+                validate_header_columns_for_identity(
+                    self._identity,
+                    len(trailing_columns),
+                )
+            except ValueError as exc:
+                self._err(
+                    "E_MODE_001",
+                    str(exc),
+                    blocking=True,
+                )
+
+        if self.declared_mode == MODE_MULTI or self._has_multi_marker:
             self.mode = "sample_multi"
-            self.declared_samples = columns[9:]
+            self.declared_samples = trailing_columns
             if not self.declared_samples:
                 self._err(
                     "E_MODE_001",
@@ -348,7 +402,7 @@ class SVCFValidator:
 
     def _update_nonmulti_mode(self, info: dict) -> None:
         """Update no-marker mode without storing prior records."""
-        if self._has_multi_marker:
+        if self.declared_mode == MODE_MULTI or self._has_multi_marker:
             return
 
         has_sources = _has_sources(info)
@@ -445,17 +499,30 @@ class SVCFValidator:
             )
 
     def _expected_format(self) -> str:
-        """Return the fixed FORMAT schema for the current SVCF mode."""
-        if self.mode == "sample_multi":
+        """Return the fixed FORMAT schema for the declared/inferred mode."""
+        if self.declared_mode == MODE_MULTI or self.mode == "sample_multi":
             return SAMPLE_FORMAT
         return CALLER_FORMAT
 
     def _expected_format_keys(self) -> list[str]:
-        if self.mode == "sample_multi":
+        if self.declared_mode == MODE_MULTI or self.mode == "sample_multi":
             return SAMPLE_FORMAT_KEYS
         return CALLER_FORMAT_KEYS
 
     def _check_format(self, fmt: str, sv_id: str, line_no: int) -> None:
+        if self._identity is not None and self._identity.is_versioned:
+            try:
+                validate_format_for_identity(self._identity, fmt)
+            except ValueError as exc:
+                self._err(
+                    "E_FMT_001",
+                    str(exc),
+                    sv_id,
+                    line_no,
+                    blocking=True,
+                )
+            return
+
         expected = self._expected_format()
         if fmt != expected:
             self._err(
@@ -864,6 +931,7 @@ class SVCFValidator:
         lines = [
             "SVCF validation summary",
             f"Input: {self.path}",
+            f"SVCF Version: {self.svcf_version or 'legacy/unversioned'}",
             f"Mode: {self.mode}",
             f"Records: {self.records_total}",
             f"Errors: {len(self.errors)}",
@@ -914,6 +982,8 @@ class SVCFValidator:
         return json.dumps(
             {
                 "input": self.path,
+                "svcf_version": self.svcf_version,
+                "declared_mode": self.declared_mode,
                 "mode": self.mode,
                 "valid": not self.errors and not self.unreadable,
                 "status": self.status(),
