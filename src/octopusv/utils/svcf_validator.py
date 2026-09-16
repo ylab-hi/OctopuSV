@@ -29,6 +29,8 @@ from octopusv.utils.svcf_schema import (
     parse_identity_from_meta_lines,
     validate_format_for_identity,
     validate_header_columns_for_identity,
+    validate_source_id,
+    validate_source_label,
     validate_versioned_identity,
 )
 
@@ -468,6 +470,7 @@ class SVCFValidator:
         self._check_info_keys(info, sv_id, line_no)
         self._check_support(info, sv_id, line_no)
         self._check_sources_by_mode(info, sv_id, line_no)
+        self._check_versioned_source_items(info, sv_id, line_no)
         self._check_column_count(info, sample_cols, sv_id, line_no)
         self._check_source_ids(info, fmt, sample_cols, sv_id, line_no)
         self._check_svtype_and_coords(info, alt, pos, sv_id, line_no)
@@ -612,6 +615,48 @@ class SVCFValidator:
                 self._err(
                     "E_SRC_002",
                     f"{self.mode} mode requires non-empty SOURCES.",
+                    sv_id,
+                    line_no,
+                    blocking=True,
+                )
+
+    def _check_versioned_source_items(
+        self,
+        info: dict,
+        sv_id: str,
+        line_no: int,
+    ) -> None:
+        """Enforce SVCF 1.1 atom grammar for positional source lists.
+
+        Legacy/unversioned files keep their compatibility behavior.  Once a
+        file declares SVCF 1.1, however, SOURCES and SOURCE_IDS must be
+        unambiguous under the delimiter-based encoding defined by the format.
+        """
+        if self._identity is None or not self._identity.is_versioned:
+            return
+
+        for index, source in enumerate(_parse_sources(info), start=1):
+            try:
+                validate_source_label(source)
+            except ValueError as exc:
+                self._err(
+                    "E_SRC_005",
+                    f"SOURCES item {index}: {exc}",
+                    sv_id,
+                    line_no,
+                    blocking=True,
+                )
+
+        if not _source_ids_present(info):
+            return
+
+        for index, source_id in enumerate(_parse_source_ids(info), start=1):
+            try:
+                validate_source_id(source_id)
+            except ValueError as exc:
+                self._err(
+                    "E_SRC_006",
+                    f"SOURCE_IDS item {index}: {exc}",
                     sv_id,
                     line_no,
                     blocking=True,

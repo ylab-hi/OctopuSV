@@ -12,6 +12,8 @@ from octopusv.utils.svcf_schema import (
     CALLER_FORMAT,
     SAMPLE_FORMAT,
     SVCF_VERSION,
+    validate_source_id,
+    validate_source_label,
 )
 from octopusv.utils.svcf_validator import SVCFValidator
 
@@ -621,3 +623,181 @@ def test_subset_preserves_versioned_caller_evidence_contract(tmp_path):
     ).run()
 
     _assert_v11_caller_contract(output_path)
+
+
+@pytest.mark.parametrize("unsafe", ["bad,name", "bad;name", "bad=name", "bad name"])
+def test_svcf11_source_atom_contract_rejects_reserved_characters(unsafe):
+    with pytest.raises(ValueError, match="cannot be represented safely"):
+        validate_source_label(unsafe)
+
+    with pytest.raises(ValueError, match="cannot be represented safely"):
+        validate_source_id(unsafe)
+
+
+def test_svcf11_source_atom_contract_reserves_dot_for_missing_ids_only():
+    assert validate_source_id(".") == "."
+    with pytest.raises(ValueError, match="reserved for missing values"):
+        validate_source_label(".")
+
+
+def _minimal_caller_event():
+    return SimpleNamespace(
+        info={},
+        format=CALLER_FORMAT,
+    )
+
+
+@pytest.mark.parametrize("unsafe", ["bad,name", "bad;name", "bad=name", "bad name"])
+def test_caller_writer_rejects_unsafe_source_labels(monkeypatch, tmp_path, unsafe):
+    writer = _Writer()
+    monkeypatch.setattr(writer, "_write_vcf_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        writer,
+        "_prepare_caller_records",
+        lambda *args, **kwargs: [
+            {
+                "source_name": unsafe,
+                "source_id": "caller.1",
+                "sample_data": {},
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="SOURCES item"):
+        writer.write_results(
+            tmp_path / "caller_bad_source.svcf",
+            [_minimal_caller_event()],
+            {},
+            mode="caller",
+            input_files=[],
+        )
+
+
+@pytest.mark.parametrize("unsafe", ["bad,id", "bad;id", "bad=id", "bad id"])
+def test_caller_writer_rejects_unsafe_source_ids(monkeypatch, tmp_path, unsafe):
+    writer = _Writer()
+    monkeypatch.setattr(writer, "_write_vcf_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        writer,
+        "_prepare_caller_records",
+        lambda *args, **kwargs: [
+            {
+                "source_name": "caller",
+                "source_id": unsafe,
+                "sample_data": {},
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="SOURCE_IDS item"):
+        writer.write_results(
+            tmp_path / "caller_bad_id.svcf",
+            [_minimal_caller_event()],
+            {},
+            mode="caller",
+            input_files=[],
+        )
+
+
+def _sample_mode_event(source_id="sample.1"):
+    return SimpleNamespace(
+        chrom="chr1",
+        pos=100,
+        sv_id="event.1",
+        ref="N",
+        alt="<INS>",
+        quality=60,
+        filter="PASS",
+        info={},
+        ordered_samples=[{
+            "GT": "0/1",
+            "AD": ".,.",
+            "UC": "1",
+            "UV": "1",
+            "LN": "10",
+            "ST": ".",
+            "QV": "60",
+            "TY": "INS",
+            "ID": source_id,
+            "SC": "OctopuSV",
+            "REF": "N",
+            "ALT": "<INS>",
+            "CO": "chr1_100-chr1_110",
+        }],
+    )
+
+
+@pytest.mark.parametrize("unsafe", ["bad,name", "bad;name", "bad=name", "bad name"])
+def test_multi_writer_rejects_unsafe_source_labels(tmp_path, unsafe):
+    mapper = NameMapper(
+        [str(tmp_path / "sample.svcf")],
+        mode="sample",
+        custom_names=[unsafe],
+    )
+    writer = MultiSampleWriter(mapper)
+
+    with pytest.raises(ValueError, match="SOURCES item"):
+        writer._write_event(StringIO(), _sample_mode_event())
+
+
+@pytest.mark.parametrize("unsafe", ["bad,id", "bad;id", "bad=id", "bad id"])
+def test_multi_writer_rejects_unsafe_source_ids(tmp_path, unsafe):
+    mapper = NameMapper([str(tmp_path / "sample.svcf")], mode="sample")
+    writer = MultiSampleWriter(mapper)
+
+    with pytest.raises(ValueError, match="SOURCE_IDS item"):
+        writer._write_event(StringIO(), _sample_mode_event(source_id=unsafe))
+
+
+def test_validator_rejects_unsafe_versioned_source_label(tmp_path):
+    path = _write_record_file(
+        tmp_path / "unsafe_source.svcf",
+        meta=[
+            "##fileformat=VCFv4.2",
+            f"##SVCFVersion={SVCF_VERSION}",
+            "##OctopuSV_mode=caller",
+        ],
+        fmt=CALLER_FORMAT,
+        blocks=[CALLER_BLOCK],
+        info_suffix="SOURCES=bad=name;SOURCE_IDS=caller.1",
+    )
+
+    validator = SVCFValidator(str(path))
+    validator.validate()
+
+    assert "E_SRC_005" in {issue.code for issue in validator.errors}
+
+
+def test_validator_rejects_unsafe_versioned_source_id(tmp_path):
+    bad_block = CALLER_BLOCK.replace("caller.1", "bad=id")
+    path = _write_record_file(
+        tmp_path / "unsafe_source_id.svcf",
+        meta=[
+            "##fileformat=VCFv4.2",
+            f"##SVCFVersion={SVCF_VERSION}",
+            "##OctopuSV_mode=caller",
+        ],
+        fmt=CALLER_FORMAT,
+        blocks=[bad_block],
+        info_suffix="SOURCES=caller;SOURCE_IDS=bad=id",
+    )
+
+    validator = SVCFValidator(str(path))
+    validator.validate()
+
+    assert "E_SRC_006" in {issue.code for issue in validator.errors}
+
+
+def test_legacy_validator_does_not_retroactively_apply_v11_source_atom_rule(tmp_path):
+    path = _write_record_file(
+        tmp_path / "legacy_unsafe_label.svcf",
+        meta=["##fileformat=VCFv4.2"],
+        fmt=CALLER_FORMAT,
+        blocks=[CALLER_BLOCK],
+        info_suffix="SOURCES=bad=name;SOURCE_IDS=caller.1",
+    )
+
+    validator = SVCFValidator(str(path))
+    validator.validate()
+
+    assert "E_SRC_005" not in {issue.code for issue in validator.errors}

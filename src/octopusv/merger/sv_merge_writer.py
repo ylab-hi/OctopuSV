@@ -5,7 +5,13 @@ from octopusv.utils.sample_consensus import resolve_sample_consensus
 from octopusv.utils.source_path import normalize_source_path
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.vcf_info import format_vcf_info_item
-from octopusv.utils.svcf_schema import MODE_CALLER, mode_header, version_header
+from octopusv.utils.svcf_schema import (
+    MODE_CALLER,
+    mode_header,
+    validate_source_id,
+    validate_source_label,
+    version_header,
+)
 
 
 class MergeWriterMixin:
@@ -728,6 +734,19 @@ class MergeWriterMixin:
                     source_ids_in_order = [
                         record["source_id"]
                         for record in ordered_records
+                    ]
+
+                    # SVCF 1.1 positional INFO lists deliberately have no
+                    # escaping layer.  Reject source labels/IDs that would
+                    # make SOURCES or SOURCE_IDS ambiguous or syntactically
+                    # invalid rather than silently emitting a corrupt file.
+                    sources_in_order = [
+                        validate_source_label(value)
+                        for value in sources_in_order
+                    ]
+                    source_ids_in_order = [
+                        validate_source_id(value)
+                        for value in source_ids_in_order
                     ]
 
                     display_sources = (

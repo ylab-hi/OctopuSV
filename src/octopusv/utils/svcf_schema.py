@@ -51,6 +51,65 @@ def mode_header(mode: str) -> str:
     return f"{MODE_PREFIX}{mode}"
 
 
+
+
+def validate_positional_info_item(
+    value,
+    *,
+    field_name: str,
+    allow_dot: bool = False,
+) -> str:
+    """Validate one atom used in SVCF positional INFO lists.
+
+    SVCF 1.1 uses commas to separate positional items inside SOURCES and
+    SOURCE_IDS, while semicolons and equals signs delimit INFO fields.  The
+    format intentionally defines no escaping layer for these atoms.
+
+    ``.`` is allowed only where the caller explicitly permits a positional
+    missing value (SOURCE_IDS).  Known identities must be represented
+    explicitly rather than by an ambiguous placeholder.
+    """
+    text = str(value)
+
+    if text == "":
+        raise ValueError(f"{field_name} item must not be empty.")
+
+    if text == ".":
+        if allow_dot:
+            return text
+        raise ValueError(
+            f"{field_name} item '.' is reserved for missing values and "
+            "cannot be used as a source identity."
+        )
+
+    if any(ch in text for ch in ",;=") or any(ch.isspace() for ch in text):
+        raise ValueError(
+            f"{field_name} item {text!r} cannot be represented safely in "
+            "SVCF 1.1 positional INFO lists; items must not contain ',', "
+            "';', '=', or whitespace."
+        )
+
+    return text
+
+
+def validate_source_label(value) -> str:
+    """Validate one SOURCES item and return its string representation."""
+    return validate_positional_info_item(
+        value,
+        field_name="SOURCES",
+        allow_dot=False,
+    )
+
+
+def validate_source_id(value) -> str:
+    """Validate one SOURCE_IDS item; ``.`` is a legal positional placeholder."""
+    return validate_positional_info_item(
+        value,
+        field_name="SOURCE_IDS",
+        allow_dot=True,
+    )
+
+
 def parse_identity_from_meta_lines(meta_lines) -> SVCFIdentity:
     """Parse SVCF version/mode declarations from meta-header lines.
 

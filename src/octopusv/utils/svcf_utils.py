@@ -1,5 +1,12 @@
 from datetime import datetime
 
+from octopusv.utils.svcf_schema import (
+    MODE_CALLER,
+    MODE_MULTI,
+    mode_header,
+    version_header,
+)
+
 
 def extract_original_header_definitions(input_vcf_file):
     """
@@ -187,11 +194,19 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
     Generate SVCF file header lines according to SVCF specification.
     If input_vcf_file is provided, extract and preserve original header definitions.
 
-    🔴 CHANGED: When the input VCF has more than one sample column, the
-    generated header includes a ##OctopuSV_mode=multi marker and the #CHROM
-    line lists all original sample names. Single-sample behavior is
-    unchanged (the #CHROM line ends with the original sample name, falling
-    back to "Sample" if no input file is provided).
+    SVCF identity follows the data model, not merely the command that wrote
+    the file:
+
+    * a single-sample ``correct`` output is caller-evidence SVCF 1.1 and
+      explicitly declares ``SVCFVersion=1.1`` plus ``OctopuSV_mode=caller``;
+    * a multi-sample raw-VCF ``correct`` output keeps the historical
+      unversioned ``OctopuSV_mode=multi`` marker.  Its columns are biological
+      samples carrying caller-style evidence blocks, so it is neither the
+      caller-evidence matrix nor the synthesized multi-sample model defined by
+      SVCF 1.1.
+
+    The #CHROM line always preserves the original input sample names (falling
+    back to ``Sample`` only when no input file is supplied).
     """
     current_time_str = datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|%Z")
 
@@ -224,11 +239,18 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
         # Use only OctopuSV defaults
         merged_definitions = octopus_defaults
 
-    # 🔴 CHANGED: insert a multi-sample mode marker so downstream tools
-    # (e.g. svcf2vcf) know to preserve all sample columns.
+    # Identity is explicit only when this output genuinely satisfies one of
+    # the SVCF 1.1 data models.  Single-sample correct output is one caller
+    # observation/evidence column and therefore qualifies as caller mode.
+    # Historical multi-sample correct output is intentionally left
+    # unversioned: its columns are biological samples, but its blocks still use
+    # caller evidence FORMAT rather than synthesized UC/UV sample calls.
     final_header = list(basic_header)
     if is_multi_sample:
-        final_header.append("##OctopuSV_mode=multi")
+        final_header.append(mode_header(MODE_MULTI))
+    else:
+        final_header.append(version_header())
+        final_header.append(mode_header(MODE_CALLER))
 
     final_header.extend(contig_lines)
 

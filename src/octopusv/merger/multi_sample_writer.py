@@ -8,6 +8,8 @@ from octopusv.utils.svcf_schema import (
     SAMPLE_FORMAT as SAMPLE_FORMAT_V11,
     MODE_MULTI,
     mode_header,
+    validate_source_id,
+    validate_source_label,
     version_header,
 )
 
@@ -206,6 +208,13 @@ class MultiSampleWriter:
 
                 source_id = self._sample_id_from_data(sample_data, format_keys)
                 source_ids.append(source_id if source_id else ".")
+
+        # SVCF 1.1 positional INFO lists have no escaping layer.  Fail
+        # loudly if a sample/source label or retained source ID contains an
+        # INFO/list delimiter or whitespace rather than writing an ambiguous
+        # file.
+        sources = [validate_source_label(value) for value in sources]
+        source_ids = [validate_source_id(value) for value in source_ids]
 
         sources_str = ",".join(sources) if sources else "."
         source_ids_str = ",".join(source_ids) if source_ids else "."
