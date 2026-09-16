@@ -1,6 +1,11 @@
 import logging
 import os
 
+from octopusv.utils.sample_consensus import resolve_sample_consensus
+from octopusv.utils.source_path import normalize_source_path
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.vcf_info import format_vcf_info_item
+
 
 class MergeWriterMixin:
     def format_sample_values(self, format_keys, sample_dict):
@@ -157,11 +162,7 @@ class MergeWriterMixin:
     @staticmethod
     def _normalize_source_path(source_file):
         """Return a stable key for exact input-file matching."""
-        return os.path.normcase(
-            os.path.realpath(
-                os.path.abspath(str(source_file))
-            )
-        )
+        return normalize_source_path(source_file)
 
     def _display_name_for_input(self, input_file, name_mapper=None):
         """Return the output label for one input file."""
@@ -399,34 +400,147 @@ class MergeWriterMixin:
         )
 
     @staticmethod
-    def _embedded_collapse_count(sample_data):
-        """Return additional evidence already collapsed into one sample block."""
+    def _payload_from_sample_data(sample_data):
         if not isinstance(sample_data, dict):
-            return 0
+            return None
+        payload = sample_data.get("_octopusv_evidence_payload")
+        return payload if isinstance(payload, dict) else None
 
-        value = sample_data.get(
-            "_octopusv_collapsed_evidence_count",
-            0,
-        )
-        try:
-            return max(0, int(value))
-        except (TypeError, ValueError):
-            return 0
+    @staticmethod
+    def _split_explicit_sources(source_value):
+        """Split positional SOURCES without dropping placeholders."""
+        if source_value in (None, ""):
+            return []
+        return [token.strip() for token in str(source_value).split(",")]
+
+    def _caller_genotypes_from_payload(self, payload):
+        """Return exact ``(caller, GT)`` pairs from one caller-mode payload.
+
+        Source identity comes only from explicit SVCF data: INFO/SOURCES when
+        present, otherwise the evidence block's SC field.  We never derive a
+        caller from record ID, filename, or evidence order.
+        """
+        format_field = str(payload.get("format", "") or "")
+        blocks = list(payload.get("blocks", ()) or ())
+        if not format_field or not blocks:
+            raise ValueError(
+                "Sample consensus requires preserved caller evidence blocks."
+            )
+
+        parsed_blocks = [
+            parse_svcf_sample_block(format_field, block)
+            for block in blocks
+        ]
+
+        sources = self._split_explicit_sources(payload.get("sources"))
+        if sources and len(sources) != len(parsed_blocks):
+            raise ValueError(
+                "Cannot synthesize sample consensus: SOURCES lists "
+                f"{len(sources)} item(s), but the input record contains "
+                f"{len(parsed_blocks)} caller evidence block(s)."
+            )
+
+        caller_genotypes = []
+        for index, parsed in enumerate(parsed_blocks):
+            source = sources[index] if sources else None
+            if source in (None, "", "."):
+                source = parsed.get("SC")
+
+            if source in (None, "", ".", "OctopuSV"):
+                raise ValueError(
+                    "Cannot synthesize sample consensus because one caller "
+                    "evidence block has no explicit caller identity."
+                )
+
+            caller_genotypes.append((str(source), parsed.get("GT", ".")))
+
+        return caller_genotypes
+
+    @staticmethod
+    def _sample_length_from_record(record):
+        svlen = record.get("svlen", ".")
+        if svlen not in (None, "", "."):
+            try:
+                return str(abs(int(svlen)))
+            except (TypeError, ValueError):
+                pass
+        return "."
+
+    @staticmethod
+    def _sample_coordinate_from_record(record):
+        chrom = record.get("chrom", ".")
+        pos = record.get("pos", ".")
+        end_chrom = record.get("end_chrom", ".")
+        end_pos = record.get("end_pos", ".")
+        if any(value in (None, "", ".") for value in (chrom, pos, end_chrom, end_pos)):
+            return "."
+        return f"{chrom}_{pos}-{end_chrom}_{end_pos}"
+
+    def _synthesize_sample_data(self, sample_records):
+        """Synthesize one sample-mode column from exact caller evidence.
+
+        ``sample_records`` contains one or more source records from the same
+        biological-sample input that core merge placed in the same merged event.
+        All underlying caller evidence contributes to genotype consensus, while
+        record-level representation fields come from the first deterministic
+        input record already chosen by the core merge ordering.  This function
+        runs only after core grouping/representative selection, so it cannot
+        change merge topology or representative-event selection.
+        """
+        if not sample_records:
+            return None
+
+        caller_genotypes = []
+        payloads = []
+        for sample_data in sample_records:
+            payload = self._payload_from_sample_data(sample_data)
+            if payload is None:
+                raise ValueError(
+                    "Sample-mode consensus requires preserved caller evidence "
+                    "for every fresh merge record."
+                )
+            payloads.append(payload)
+            caller_genotypes.extend(
+                self._caller_genotypes_from_payload(payload)
+            )
+
+        consensus = resolve_sample_consensus(caller_genotypes)
+        record = payloads[0].get("record")
+        if not isinstance(record, dict):
+            raise ValueError(
+                "Sample-mode consensus is missing preserved record-level data."
+            )
+
+        return {
+            "GT": consensus.gt,
+            "AD": ".,.",
+            "UC": str(consensus.unique_carrier_callers),
+            "UV": str(consensus.valid_caller_votes),
+            "LN": self._sample_length_from_record(record),
+            "ST": str(record.get("strand", ".") or "."),
+            "QV": str(record.get("quality", ".") or "."),
+            "TY": str(record.get("svtype", ".") or "."),
+            "ID": str(record.get("id", ".") or "."),
+            "SC": "OctopuSV",
+            "REF": str(record.get("ref", ".") or "."),
+            "ALT": str(record.get("alt", ".") or "."),
+            "CO": self._sample_coordinate_from_record(record),
+        }
 
     def _prepare_events_for_sample_mode(self, events, name_mapper):
-        """Prepare merged events for sample-mode output.
+        """Prepare exact synthesized sample columns after core merge.
 
-        Freshly merged events carry ``merged_sample_records`` entries shaped as:
+        Fresh merge events carry ``merged_sample_records`` entries shaped as::
+
             (source_file, sample_name, sample_format, sample_data)
 
-        Exact source paths determine sample columns. A sample-mode output has one
-        column per input file, so multiple evidence records from the same input
-        are represented by the first deterministic evidence record. Any such
-        compression is counted and reported by the CLI instead of being silent.
+        Exact source paths determine biological-sample columns.  For each input
+        sample, every preserved caller evidence block from every contributing
+        input record is reduced by the shared sample-consensus resolver.  No
+        caller is selected merely because it appeared first.
 
-        Legacy/manual events without exact source bindings retain the historical
-        best-effort inference path, but unresolved evidence is counted and
-        summarized once after writing.
+        Legacy/manual events without exact bindings retain the historical
+        best-effort mapping path and are reported in the returned summary.
         """
         processed_events = []
         input_files = [str(input_file) for input_file in self.all_input_files]
@@ -437,8 +551,6 @@ class MergeWriterMixin:
             input_indices_by_path.setdefault(normalized_path, []).append(index)
 
         stats = {
-            "sample_collapse_records": 0,
-            "sample_collapsed_evidence_blocks": 0,
             "legacy_sample_events": 0,
             "legacy_sample_unresolved_evidence_blocks": 0,
         }
@@ -447,9 +559,8 @@ class MergeWriterMixin:
             merged_samples = list(getattr(event, "merged_samples", []))
             merged_sample_records = getattr(event, "merged_sample_records", None)
 
-            source_to_sample = {}
+            source_to_records = {}
             unresolved_samples = []
-            event_had_collapse = False
 
             records_are_valid = (
                 merged_sample_records is not None
@@ -480,29 +591,15 @@ class MergeWriterMixin:
                         )
 
                     target_index = candidate_indices[0]
-                    embedded_collapsed = self._embedded_collapse_count(
-                        sample_data
-                    )
-
-                    if target_index not in source_to_sample:
-                        source_to_sample[target_index] = sample_data
-                        if embedded_collapsed:
-                            stats["sample_collapsed_evidence_blocks"] += (
-                                embedded_collapsed
-                            )
-                            event_had_collapse = True
-                    else:
-                        # One sample-mode column represents one input sample.
-                        # Keep the first deterministic evidence block already
-                        # assigned to this column and count every additional
-                        # underlying block represented by it.
-                        stats["sample_collapsed_evidence_blocks"] += (
-                            1 + embedded_collapsed
-                        )
-                        event_had_collapse = True
+                    source_to_records.setdefault(target_index, []).append(sample_data)
             else:
                 stats["legacy_sample_events"] += 1
                 unresolved_samples.extend(merged_samples)
+
+            source_to_sample = {
+                target_index: self._synthesize_sample_data(sample_records)
+                for target_index, sample_records in source_to_records.items()
+            }
 
             if unresolved_samples:
                 event_source_tokens = self._event_source_tokens(event)
@@ -534,7 +631,6 @@ class MergeWriterMixin:
                     )
 
                     target_index = None
-
                     if inferred_basename is not None:
                         for index in candidate_indices:
                             if index in source_to_sample:
@@ -559,9 +655,6 @@ class MergeWriterMixin:
                         stats[
                             "legacy_sample_unresolved_evidence_blocks"
                         ] += 1
-
-            if event_had_collapse:
-                stats["sample_collapse_records"] += 1
 
             event.ordered_samples = [
                 source_to_sample.get(index)
@@ -654,7 +747,7 @@ class MergeWriterMixin:
                     for key, value in event.info.items():
                         if key in {"SOURCES", "SOURCE_IDS"}:
                             continue
-                        info_items.append(f"{key}={value}")
+                        info_items.append(format_vcf_info_item(key, value))
 
                     info_items.append(
                         f"SOURCES={display_sources}"

@@ -4,12 +4,12 @@ from types import SimpleNamespace
 import pytest
 
 from octopusv.cli.merge import (
-    _mark_sample_input_collapses,
+    _preserve_sample_input_evidence,
     _preflight_merge_inputs,
 )
 
 
-def _write_svcf(path: Path, *, header_samples, evidence_blocks):
+def _write_svcf(path: Path, *, header_samples, evidence_blocks, multi_marker=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     header = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT"
     if header_samples:
@@ -28,8 +28,12 @@ def _write_svcf(path: Path, *, header_samples, evidence_blocks):
     ]
     fields.extend(evidence_blocks)
 
+    meta = "##fileformat=VCFv4.2\n"
+    if multi_marker:
+        meta += "##OctopuSV_mode=multi\n"
+
     path.write_text(
-        "##fileformat=VCFv4.2\n"
+        meta
         + header
         + "\n"
         + "\t".join(fields)
@@ -123,7 +127,45 @@ def test_sample_mode_rejects_true_multi_sample_input(tmp_path):
         )
 
 
-def test_mark_sample_input_collapses_preserves_full_evidence_payload():
+
+
+def test_merge_rejects_synthesized_sample_multi_input_even_with_one_sample(tmp_path):
+    """A one-column synthesized sample SVCF is still not caller evidence."""
+    population_subset = tmp_path / "population_subset.svcf"
+    _write_svcf(
+        population_subset,
+        header_samples=["sample1"],
+        evidence_blocks=[BLOCK_A],
+        multi_marker=True,
+    )
+
+    with pytest.raises(ValueError, match="synthesized sample/multi SVCF"):
+        _preflight_merge_inputs(
+            input_files=[population_subset],
+            labels=["sample1"],
+            mode="sample",
+        )
+
+
+def test_caller_merge_also_rejects_synthesized_sample_multi_input(tmp_path):
+    """A synthesized sample call must not masquerade as caller evidence."""
+    population_subset = tmp_path / "population_subset.svcf"
+    _write_svcf(
+        population_subset,
+        header_samples=["sample1"],
+        evidence_blocks=[BLOCK_A],
+        multi_marker=True,
+    )
+
+    with pytest.raises(ValueError, match="synthesized sample/multi SVCF"):
+        _preflight_merge_inputs(
+            input_files=[population_subset],
+            labels=["sample1"],
+            mode="caller",
+        )
+
+
+def test_preserve_sample_input_evidence_keeps_full_payload():
     sample = {"ID": "a.1", "GT": "0/1"}
     event = SimpleNamespace(
         sample=sample,
@@ -135,21 +177,20 @@ def test_mark_sample_input_collapses_preserves_full_evidence_payload():
         raw_sample_columns=[BLOCK_A, BLOCK_B, BLOCK_B],
     )
 
-    _mark_sample_input_collapses([event])
+    _preserve_sample_input_evidence([event])
 
-    assert sample["_octopusv_collapsed_evidence_count"] == 2
     assert sample["ID"] == "a.1"
+    assert "_octopusv_collapsed_evidence_count" not in sample
 
     payload = sample["_octopusv_evidence_payload"]
-    assert payload == {
-        "format": "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO",
-        "blocks": (BLOCK_A, BLOCK_B, BLOCK_B),
-        "sources": "cuteSV,svim,svim",
-        "source_ids": "a.1,b.1,b.2",
-    }
+    assert payload["format"] == "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+    assert payload["blocks"] == (BLOCK_A, BLOCK_B, BLOCK_B)
+    assert payload["sources"] == "cuteSV,svim,svim"
+    assert payload["source_ids"] == "a.1,b.1,b.2"
+    assert payload["record"]["id"] == "."
 
 
-def test_mark_sample_input_collapses_preserves_single_evidence_too():
+def test_preserve_sample_input_evidence_keeps_single_evidence_too():
     sample = {"ID": "a.1", "GT": "0/1"}
     event = SimpleNamespace(
         sample=sample,
@@ -158,7 +199,7 @@ def test_mark_sample_input_collapses_preserves_single_evidence_too():
         raw_sample_columns=[BLOCK_A],
     )
 
-    _mark_sample_input_collapses([event])
+    _preserve_sample_input_evidence([event])
 
     assert "_octopusv_collapsed_evidence_count" not in sample
     assert sample["_octopusv_evidence_payload"]["blocks"] == (BLOCK_A,)
@@ -214,3 +255,86 @@ def test_preflight_rejects_missing_chrom_header(tmp_path):
             labels=["missing_header"],
             mode="caller",
         )
+
+
+def test_preflight_rejects_unknown_specific_before_shape_scan(tmp_path, monkeypatch):
+    input_file = tmp_path / "input.svcf"
+    unknown = tmp_path / "unknown.svcf"
+    _write_svcf(input_file, header_samples=["SAMPLE"], evidence_blocks=[BLOCK_A])
+
+    import octopusv.cli.merge as merge_module
+
+    calls = []
+    original = merge_module._preflight_svcf_shape
+
+    def counted_shape(path, mode):
+        calls.append(str(path))
+        return original(path, mode)
+
+    monkeypatch.setattr(merge_module, "_preflight_svcf_shape", counted_shape)
+
+    with pytest.raises(ValueError, match="not one of the merge inputs"):
+        _preflight_merge_inputs(
+            input_files=[input_file],
+            labels=["input"],
+            mode="caller",
+            specific=[unknown],
+        )
+
+    assert calls == []
+
+
+def test_preflight_rejects_expression_basename_collision_before_shape_scan(tmp_path, monkeypatch):
+    source_a = tmp_path / "d1" / "shared.svcf"
+    source_b = tmp_path / "d2" / "shared.svcf"
+    _write_svcf(source_a, header_samples=["SAMPLE"], evidence_blocks=[BLOCK_A])
+    _write_svcf(source_b, header_samples=["SAMPLE"], evidence_blocks=[BLOCK_B])
+
+    import octopusv.cli.merge as merge_module
+
+    calls = []
+    original = merge_module._preflight_svcf_shape
+
+    def counted_shape(path, mode):
+        calls.append(str(path))
+        return original(path, mode)
+
+    monkeypatch.setattr(merge_module, "_preflight_svcf_shape", counted_shape)
+
+    with pytest.raises(ValueError, match="share the basename"):
+        _preflight_merge_inputs(
+            input_files=[source_a, source_b],
+            labels=["a", "b"],
+            mode="caller",
+            expression="shared.svcf",
+        )
+
+    assert calls == []
+
+
+def test_preflight_rejects_expression_identifier_collision_before_shape_scan(tmp_path, monkeypatch):
+    source_a = tmp_path / "a-b.svcf"
+    source_b = tmp_path / "a_b.svcf"
+    _write_svcf(source_a, header_samples=["SAMPLE"], evidence_blocks=[BLOCK_A])
+    _write_svcf(source_b, header_samples=["SAMPLE"], evidence_blocks=[BLOCK_B])
+
+    import octopusv.cli.merge as merge_module
+
+    calls = []
+    original = merge_module._preflight_svcf_shape
+
+    def counted_shape(path, mode):
+        calls.append(str(path))
+        return original(path, mode)
+
+    monkeypatch.setattr(merge_module, "_preflight_svcf_shape", counted_shape)
+
+    with pytest.raises(ValueError, match="same expression identifier"):
+        _preflight_merge_inputs(
+            input_files=[source_a, source_b],
+            labels=["a", "b"],
+            mode="caller",
+            expression="a-b.svcf OR a_b.svcf",
+        )
+
+    assert calls == []

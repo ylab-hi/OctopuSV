@@ -5,10 +5,12 @@ from pathlib import Path
 import typer
 
 from octopusv.merger.name_mapper import NameMapper
+from octopusv.merger.sv_merge_selection import validate_selection_inputs
 from octopusv.merger.sv_merger import SVMerger
 from octopusv.merger.upset_plotter import UpSetPlotter
 from octopusv.utils.SV_classifier_by_chromosome import SVClassifiedByChromosome
 from octopusv.utils.SV_classifier_by_type import SVClassifierByType
+from octopusv.utils.source_path import normalize_source_path
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
 
 
@@ -42,11 +44,7 @@ def _labels_match_default(labels: list[str], input_files: list[Path | str]) -> b
 
 def _normalize_input_path(path: Path | str) -> str:
     """Return a stable real-path identity for one merge input."""
-    return os.path.normcase(
-        os.path.realpath(
-            os.path.abspath(str(path))
-        )
-    )
+    return normalize_source_path(path)
 
 
 def _validate_distinct_input_files(input_files: list[Path | str]) -> None:
@@ -108,14 +106,29 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
 
     Sample mode intentionally allows a caller-merged SVCF with one header
     sample label and multiple caller evidence blocks per record. This is the
-    supported per-sample-caller-merge -> population-merge workflow. It does
-    not allow a true multi-sample SVCF to be nested as one input file.
+    supported per-sample-caller-merge -> population-merge workflow. Previously
+    synthesized sample/multi SVCF output is rejected explicitly, even if it
+    currently contains only one sample column, because layout placeholders are
+    not caller evidence and must never enter sample consensus.
     """
     found_chrom_header = False
+    is_synthesized_sample_svcf = False
 
     with open(input_file, "rb") as handle:
         for line_number, line in enumerate(handle, 1):
+            if line.rstrip(b"\r\n") == b"##OctopuSV_mode=multi":
+                is_synthesized_sample_svcf = True
+                continue
+
             if line.startswith(b"#CHROM"):
+                if is_synthesized_sample_svcf:
+                    raise ValueError(
+                        f"Input {str(input_file)!r} is a synthesized sample/multi "
+                        "SVCF (##OctopuSV_mode=multi). Merge inputs must be "
+                        "single-caller or per-sample caller-merged SVCFs, not "
+                        "previously synthesized sample/multi output. Use the "
+                        "original per-sample caller-mode SVCF input instead."
+                    )
                 found_chrom_header = True
                 # A valid SVCF has nine fixed columns through FORMAT.
                 # fields = tabs + 1, so trailing columns = tabs - 8.
@@ -168,40 +181,42 @@ def _preflight_merge_inputs(
     input_files: list[Path | str],
     labels: list[str],
     mode: str,
+    specific: list[Path | str] | None = None,
+    expression: str | None = None,
 ) -> None:
-    """Run merge-specific identity and input-shape checks before parsing."""
+    """Run merge-specific identity, selection, and input-shape checks."""
     _validate_distinct_input_files(input_files)
     _validate_unique_display_labels(
         labels=labels,
         input_files=input_files,
         mode=mode,
     )
+    validate_selection_inputs(
+        input_files=input_files,
+        specific=specific,
+        expression=expression,
+    )
 
     for input_file in input_files:
         _preflight_svcf_shape(input_file, mode)
 
 
-def _mark_sample_input_collapses(events) -> None:
-    """Preserve sample-input evidence and annotate current collapse counts.
+def _preserve_sample_input_evidence(events) -> None:
+    """Preserve exact per-input caller evidence for later sample synthesis.
 
-    A caller-merged SVCF may legitimately be used as one biological-sample
-    input to a population/sample-mode merge. Until the 1.0 sample-consensus
-    synthesis is connected, the existing writer still uses the first evidence
-    block as the sample-level representation.
+    The historical function name is kept temporarily because it is internal and
+    already used by the merge command/tests, but 1.0 no longer performs a
+    first-evidence collapse here. Instead, every parsed sample-mode input record
+    receives one runtime-only payload containing:
 
-    This function therefore has two intentionally separate responsibilities:
+    * the original caller evidence blocks and explicit source mapping; and
+    * the record-level fields needed to build a synthesized sample call after
+      core merge/representative selection has finished.
 
-    1. Preserve the complete caller-evidence payload on the existing sample
-       dictionary under a private ``_octopusv_`` key so it survives selection
-       and reaches the sample-mode writer without changing merge semantics.
-    2. Keep the historical private collapse counter unchanged so current
-       output/warnings remain byte-for-byte compatible during this transport
-       step.
-
-    Runtime-only ``_octopusv_`` keys are not part of FORMAT and must never be
-    serialized into SVCF output.
+    No public sample field is changed at this stage. In particular, ``SC`` and
+    the first evidence block stay untouched so core merge behavior remains
+    identical. Runtime-only ``_octopusv_`` keys must never be serialized.
     """
-    collapse_key = "_octopusv_collapsed_evidence_count"
     payload_key = "_octopusv_evidence_payload"
 
     for event in events:
@@ -214,26 +229,25 @@ def _mark_sample_input_collapses(events) -> None:
         if not isinstance(info, dict):
             info = {}
 
-        # Transport only: keep the raw evidence and its explicit positional
-        # source fields intact. Do not interpret, collapse, or vote here.
         sample_data[payload_key] = {
             "format": getattr(event, "format", ""),
             "blocks": tuple(raw_columns),
             "sources": info.get("SOURCES"),
             "source_ids": info.get("SOURCE_IDS"),
+            "record": {
+                "id": getattr(event, "sv_id", "."),
+                "ref": getattr(event, "ref", "."),
+                "alt": getattr(event, "alt", "."),
+                "quality": getattr(event, "quality", "."),
+                "svtype": info.get("SVTYPE", "."),
+                "strand": info.get("STRAND", "."),
+                "svlen": info.get("SVLEN", "."),
+                "chrom": getattr(event, "chrom", "."),
+                "pos": getattr(event, "pos", "."),
+                "end_chrom": getattr(event, "end_chrom", info.get("CHR2", ".")),
+                "end_pos": getattr(event, "end_pos", info.get("END", ".")),
+            },
         }
-
-        additional = max(0, len(raw_columns) - 1)
-        if additional == 0:
-            continue
-
-        existing = sample_data.get(collapse_key, 0)
-        try:
-            existing = int(existing)
-        except (TypeError, ValueError):
-            existing = 0
-
-        sample_data[collapse_key] = max(0, existing) + additional
 
 
 def _describe_merge_rule(
@@ -647,6 +661,8 @@ def merge(
             input_files=all_input_files,
             labels=labels,
             mode=mode,
+            specific=specific,
+            expression=expression,
         )
     except (OSError, ValueError) as e:
         _echo(f"Error: {e}")
@@ -663,7 +679,7 @@ def merge(
     sv_event_creator.parse()
 
     if mode == "sample":
-        _mark_sample_input_collapses(sv_event_creator.events)
+        _preserve_sample_input_evidence(sv_event_creator.events)
 
     classifier = SVClassifierByType(sv_event_creator.events)
     classifier.classify()
@@ -685,50 +701,51 @@ def merge(
     )
     sv_merger.merge()
 
-    # Apply merge strategy.
-    if expression:
-        results = sv_merger.get_events_by_expression(expression)
-    elif intersect:
-        results = sv_merger.get_events_by_source([str(file) for file in all_input_files], operation="intersection")
-    elif union:
-        results = sv_merger.get_events_by_source([str(file) for file in all_input_files], operation="union")
-    elif specific:
-        specific_files = [str(file) for file in specific]
-        results = sv_merger.get_events_by_source(specific_files, operation="specific")
-    elif exact_support is not None:
-        results = sv_merger.get_events_by_exact_support(exact_support)
-    elif min_support is not None or max_support is not None:
-        results = sv_merger.get_events_by_support_range(min_support, max_support)
-    else:
-        raise ValueError(
-            "No merge strategy specified. Please use --intersect, --union, --specific, "
-            "--min-support, --exact-support, --max-support, or --expression."
-        )
+    # Apply merge strategy. Selection errors are user-facing CLI errors, not
+    # internal tracebacks. Most argument-only failures are already caught by
+    # preflight before parsing/merging; this guard also covers evaluation-time
+    # expression errors.
+    try:
+        if expression:
+            results = sv_merger.get_events_by_expression(expression)
+        elif intersect:
+            results = sv_merger.get_events_by_source(
+                [str(file) for file in all_input_files],
+                operation="intersection",
+            )
+        elif union:
+            results = sv_merger.get_events_by_source(
+                [str(file) for file in all_input_files],
+                operation="union",
+            )
+        elif specific:
+            specific_files = [str(file) for file in specific]
+            results = sv_merger.get_events_by_source(
+                specific_files,
+                operation="specific",
+            )
+        elif exact_support is not None:
+            results = sv_merger.get_events_by_exact_support(exact_support)
+        elif min_support is not None or max_support is not None:
+            results = sv_merger.get_events_by_support_range(min_support, max_support)
+        else:
+            raise ValueError(
+                "No merge strategy specified. Please use --intersect, --union, --specific, "
+                "--min-support, --exact-support, --max-support, or --expression."
+            )
+    except ValueError as exc:
+        _echo(f"Error: {exc}")
+        raise typer.Exit(code=1)
 
     # Write merged results.
-    write_summary = sv_merger.write_results(
+    sv_merger.write_results(
         output_file,
         results,
         contigs,
         mode,
         name_mapper,
         input_filenames,
-    ) or {}
-
-    if mode == "sample":
-        collapse_records = int(write_summary.get("sample_collapse_records", 0) or 0)
-        collapse_blocks = int(write_summary.get("sample_collapsed_evidence_blocks", 0) or 0)
-        if collapse_records > 0:
-            _echo(
-                "Warning: Sample-mode output collapsed multiple evidence blocks "
-                f"to one deterministic block per sample in {collapse_records} "
-                f"merged record(s); {collapse_blocks} additional evidence block(s) "
-                "were not serialized as separate sample columns. The retained "
-                "block is the first deterministic evidence block from each input; "
-                "for caller-merged per-sample inputs, this is the first evidence "
-                "column. If caller input order differs across samples, the retained "
-                "caller may also differ. The merged events were retained."
-            )
+    )
 
     _print_success_message(
         output_file=output_file,

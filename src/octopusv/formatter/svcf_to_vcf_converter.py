@@ -10,6 +10,7 @@ from octopusv.utils.genotype_resolver import (
     unique_source_segments,
 )
 from octopusv.utils.svcf_parser import SVCFEvent
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 logging.basicConfig(level=logging.INFO)
 
@@ -51,6 +52,8 @@ class SVCFtoVCFConverter:
         "GT",
         "AD",
         "DP",
+        "UC",
+        "UV",
         "LN",
         "ST",
         "QV",
@@ -93,6 +96,11 @@ class SVCFtoVCFConverter:
         '##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">',
     ]
 
+    SAMPLE_MODE_FORMAT_LINES = [
+        '##FORMAT=<ID=UC,Number=1,Type=Integer,Description="Number of unique callers supporting carrier presence for this synthesized sample call">',
+        '##FORMAT=<ID=UV,Number=1,Type=Integer,Description="Number of unique callers contributing a valid presence vote for this synthesized sample call">',
+    ]
+
     def __init__(self, events=None, input_svcf_file=None):
         if input_svcf_file is None:
             raise ValueError("input_svcf_file is required")
@@ -107,7 +115,21 @@ class SVCFtoVCFConverter:
             self.sample_names,
         ) = self._read_header_metadata()
 
-        self.mode = "multi" if len(self.sample_names) > 1 else "single"
+        self._has_multi_marker = any(
+            line == "##OctopuSV_mode=multi" for line in self._meta_lines
+        )
+
+        if self._has_multi_marker:
+            self.mode = "multi"
+        elif len(self.sample_names) > 1:
+            self.mode = "legacy_multi"
+            logging.warning(
+                "SVCF has multiple sample columns but no "
+                "##OctopuSV_mode=multi marker; treating it as legacy "
+                "sample-mode input."
+            )
+        else:
+            self.mode = "single"
 
     @staticmethod
     def _header_id(line: str, kind: str) -> str | None:
@@ -393,6 +415,14 @@ class SVCFtoVCFConverter:
             existing_format_ids,
         )
 
+        if self.mode in {"multi", "legacy_multi"}:
+            header = self._append_unique_header_lines(
+                header,
+                self.SAMPLE_MODE_FORMAT_LINES,
+                "FORMAT",
+                existing_format_ids,
+            )
+
         sample_header = "\t".join(self.sample_names)
         header += (
             "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t"
@@ -457,22 +487,28 @@ class SVCFtoVCFConverter:
             self._add_info_field(info_fields, event, key)
 
         info = ";".join(info_fields) if info_fields else "."
-        vcf_format = "GT:AD:DP:LN"
 
         raw_cols = getattr(event, "raw_sample_columns", None)
         if not raw_cols:
-            gt = event.sample.get("GT", "./.")
-            ad = event.sample.get("AD", ".,.")
-            ln = event.sample.get("LN", ".")
-            raw_cols = [f"{gt}:{ad}:{ln}"]
+            format_keys = (event.format or "GT:AD:LN").split(":")
+            raw_cols = [
+                ":".join(
+                    str(event.sample.get(key, "."))
+                    for key in format_keys
+                )
+            ]
 
         expected = len(self.sample_names)
+        is_sample_mode = self.mode in {"multi", "legacy_multi"}
 
-        if expected == 1:
-            sample_columns = [self._collapse_caller_blocks(event, raw_cols)]
-        else:
+        if is_sample_mode:
+            vcf_format = "GT:AD:DP:UC:UV:LN"
             sample_columns = [
-                self._convert_svcf_sample_to_vcf(sample)
+                self._convert_svcf_sample_to_vcf(
+                    sample,
+                    event.format,
+                    include_consensus_fields=True,
+                )
                 for sample in raw_cols
             ]
             if len(sample_columns) != expected:
@@ -481,6 +517,9 @@ class SVCFtoVCFConverter:
                     f"got {len(sample_columns)}, expected {expected} "
                     "(from #CHROM header)."
                 )
+        else:
+            vcf_format = "GT:AD:DP:LN"
+            sample_columns = [self._collapse_caller_blocks(event, raw_cols)]
 
         sample = "\t".join(sample_columns)
 
@@ -491,14 +530,15 @@ class SVCFtoVCFConverter:
 
     def _collapse_caller_blocks(self, event, raw_cols):
         """Collapse caller evidence blocks into one VCF sample column."""
-        if len(raw_cols) == 1:
-            return self._convert_svcf_sample_to_vcf(raw_cols[0])
-
         fmt = (
             event.format
             if getattr(event, "format", None)
             else "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
         )
+
+        if len(raw_cols) == 1:
+            return self._convert_svcf_sample_to_vcf(raw_cols[0], fmt)
+
         info_str = ";".join(
             f"{key}={value}" if value is not True else key
             for key, value in event.info.items()
@@ -512,26 +552,42 @@ class SVCFtoVCFConverter:
         # it carries the winning GT.
         if winning_gt is not None:
             for _index, col in selected_blocks:
-                parts = col.split(":")
-                if parts and parts[0] == winning_gt:
-                    return self._convert_svcf_sample_to_vcf(col)
+                parsed = parse_svcf_sample_block(fmt, col)
+                if parsed.get("GT") == winning_gt:
+                    return self._convert_svcf_sample_to_vcf(col, fmt)
 
         if selected_blocks:
-            return self._convert_svcf_sample_to_vcf(selected_blocks[0][1])
-        return self._convert_svcf_sample_to_vcf(raw_cols[0])
+            return self._convert_svcf_sample_to_vcf(
+                selected_blocks[0][1],
+                fmt,
+            )
+        return self._convert_svcf_sample_to_vcf(raw_cols[0], fmt)
 
-    def _convert_svcf_sample_to_vcf(self, svcf_sample):
-        """Convert one SVCF sample/evidence block to GT:AD:DP:LN."""
-        parts = svcf_sample.split(":")
+    @staticmethod
+    def _normalized_sample_value(value, default):
+        if value in (None, ""):
+            return default
+        return str(value)
 
-        if len(parts) < 3:
-            return "./.:.,.:0:."
+    def _convert_svcf_sample_to_vcf(
+        self,
+        svcf_sample,
+        format_field,
+        *,
+        include_consensus_fields=False,
+    ):
+        """Convert one SVCF block using FORMAT keys rather than positions."""
+        parsed = parse_svcf_sample_block(format_field, svcf_sample)
 
-        gt = parts[0] if parts[0] else "./."
-        ad = parts[1] if len(parts) > 1 else ".,."
-        ln = parts[2] if len(parts) > 2 else "."
-
+        gt = self._normalized_sample_value(parsed.get("GT"), "./.")
+        ad = self._normalized_sample_value(parsed.get("AD"), ".,.")
+        ln = self._normalized_sample_value(parsed.get("LN"), ".")
         dp = self._calculate_dp(ad)
+
+        if include_consensus_fields:
+            uc = self._normalized_sample_value(parsed.get("UC"), ".")
+            uv = self._normalized_sample_value(parsed.get("UV"), ".")
+            return f"{gt}:{ad}:{dp}:{uc}:{uv}:{ln}"
 
         return f"{gt}:{ad}:{dp}:{ln}"
 
@@ -541,11 +597,14 @@ class SVCFtoVCFConverter:
         return f"<{event.sv_type}>"
 
     def _calculate_dp(self, ad):
-        try:
-            return sum(
-                int(x)
-                for x in ad.split(",")
-                if x != "." and x.strip().isdigit()
-            )
-        except ValueError:
+        if ad in (None, "", "."):
             return "."
+
+        parts = str(ad).split(",")
+        if not parts or any(
+            part == "." or not part.strip().isdigit()
+            for part in parts
+        ):
+            return "."
+
+        return sum(int(part) for part in parts)

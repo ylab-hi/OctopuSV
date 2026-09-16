@@ -3,6 +3,10 @@ from typing import List, Optional
 
 from .name_mapper import NameMapper
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.vcf_info import format_vcf_info_item
+
+
+SAMPLE_FORMAT_V11 = "GT:AD:UC:UV:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
 
 
 class MultiSampleWriter:
@@ -103,7 +107,13 @@ class MultiSampleWriter:
             '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
         )
         file_handle.write(
-            '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles">\n'
+            '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles; unavailable for synthesized sample-mode calls">\n'
+        )
+        file_handle.write(
+            '##FORMAT=<ID=UC,Number=1,Type=Integer,Description="Number of unique callers supporting carrier presence for this synthesized sample call">\n'
+        )
+        file_handle.write(
+            '##FORMAT=<ID=UV,Number=1,Type=Integer,Description="Number of unique callers contributing a valid presence vote for this synthesized sample call">\n'
         )
         file_handle.write(
             '##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">\n'
@@ -177,7 +187,10 @@ class MultiSampleWriter:
         all_sample_names = self.name_mapper.get_all_display_names()
         ordered_samples = getattr(event, "ordered_samples", [])
 
-        format_field = event.format
+        # SVCF 1.1 sample mode has its own synthesized-call schema.
+        # Keep ID:SC:REF:ALT:CO as the final five fields so the shared parser
+        # remains robust to colon-containing IDs and BND/symbolic ALT values.
+        format_field = SAMPLE_FORMAT_V11
         format_keys = format_field.split(":")
 
         sources = []
@@ -202,7 +215,7 @@ class MultiSampleWriter:
         for key, value in event.info.items():
             if key in {"SOURCES", "SOURCE_IDS"}:
                 continue
-            info_items.append(f"{key}={value}")
+            info_items.append(format_vcf_info_item(key, value))
 
         info_items.append(f"SOURCES={sources_str}")
         info_items.append(f"SOURCE_IDS={source_ids_str}")
@@ -225,7 +238,9 @@ class MultiSampleWriter:
         """
         sample_columns = []
 
-        missing_data = "0/0" + ":" + ":".join(["."] * (len(format_keys) - 1))
+        missing_values = {key: "." for key in format_keys}
+        missing_values.update({"GT": "0/0", "AD": ".,.", "UC": "0", "UV": "0"})
+        missing_data = ":".join(missing_values[key] for key in format_keys)
 
         for sample_data in ordered_samples:
             if sample_data is not None:

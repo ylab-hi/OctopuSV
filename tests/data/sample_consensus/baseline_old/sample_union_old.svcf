@@ -1,0 +1,39 @@
+##fileformat=VCFv4.2
+##OctopuSV_mode=multi
+##fileDate=2026-09-15|08:58:31PM|
+##source=OctopuSV
+##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
+##contig=<ID=chr1,length=248956422>
+##contig=<ID=chrY,length=57227415>
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
+##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">
+##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Difference in length between REF and ALT alleles">
+##INFO=<ID=CHR2,Number=1,Type=String,Description="Chromosome for end coordinate">
+##INFO=<ID=SUPPORT,Number=1,Type=Integer,Description="Number of reads supporting this variant">
+##INFO=<ID=SVMETHOD,Number=1,Type=String,Description="Method used to detect SV">
+##INFO=<ID=RTID,Number=1,Type=String,Description="Related transcript or record ID">
+##INFO=<ID=AF,Number=1,Type=String,Description="Allele frequency">
+##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">
+##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">
+##INFO=<ID=SOURCES,Number=.,Type=String,Description="List of input samples/files that support this variant">
+##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different samples/files">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles">
+##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">
+##FORMAT=<ID=ST,Number=1,Type=String,Description="Strand orientation of SV">
+##FORMAT=<ID=QV,Number=1,Type=Integer,Description="Quality value">
+##FORMAT=<ID=TY,Number=1,Type=String,Description="Type of SV">
+##FORMAT=<ID=ID,Number=1,Type=String,Description="Unique identifier for the SV">
+##FORMAT=<ID=SC,Number=1,Type=String,Description="Source caller/method">
+##FORMAT=<ID=REF,Number=1,Type=String,Description="Reference allele sequence">
+##FORMAT=<ID=ALT,Number=1,Type=String,Description="Alternate allele sequence">
+##FORMAT=<ID=CO,Number=1,Type=String,Description="Coordinate information of the SV">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	sample_A	sample_B
+chr1	1000	B.ALL_HET	N	<DEL>	60	PASS	SVTYPE=DEL;END=1100;SVLEN=-100;CHR2=chr1;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e1,pbsv.DEL.e1	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:20,10:100:+-:60:DEL:cuteSV.DEL.e1:cuteSV:N:<DEL>:chr1_1000-chr1_1100	0/1:21,9:100:+-:60:DEL:pbsv.DEL.e1:pbsv:N:<DEL>:chr1_1000-chr1_1100
+chr1	2000	B.ALL_HOM	N	<DEL>	60	PASS	SVTYPE=DEL;END=2100;SVLEN=-100;CHR2=chr1;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e2,pbsv.DEL.e2	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	1/1:2,18:100:+-:60:DEL:cuteSV.DEL.e2:cuteSV:N:<DEL>:chr1_2000-chr1_2100	1/1:0,20:100:+-:60:DEL:pbsv.DEL.e2:pbsv:N:<DEL>:chr1_2000-chr1_2100
+chr1	3000	B.ZYG_DISCORD	N	<DEL>	60	PASS	SVTYPE=DEL;END=3100;SVLEN=-100;CHR2=chr1;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e3,pbsv.DEL.e3	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:20,10:100:+-:60:DEL:cuteSV.DEL.e3:cuteSV:N:<DEL>:chr1_3000-chr1_3100	1/1:2,18:100:+-:60:DEL:pbsv.DEL.e3:pbsv:N:<DEL>:chr1_3000-chr1_3100
+chr1	4000	B.MISSING_CALLER	N	<DEL>	60	PASS	SVTYPE=DEL;END=4100;SVLEN=-100;CHR2=chr1;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e4,svim.DEL.e4	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:20,10:100:+-:60:DEL:cuteSV.DEL.e4:cuteSV:N:<DEL>:chr1_4000-chr1_4100	0/1:18,12:100:+-:60:DEL:svim.DEL.e4:svim:N:<DEL>:chr1_4000-chr1_4100
+chr1	5000	B.DUP_SOURCE	N	<DEL>	60	PASS	SVTYPE=DEL;END=5100;SVLEN=-100;CHR2=chr1;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e5a,svim.DEL.e5	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:20,10:100:+-:60:DEL:cuteSV.DEL.e5a:cuteSV:N:<DEL>:chr1_5000-chr1_5100	0/1:18,12:100:+-:60:DEL:svim.DEL.e5:svim:N:<DEL>:chr1_5000-chr1_5100
+chr1	7000	B.SINGLE_CALLER	N	<DEL>	60	PASS	SVTYPE=DEL;END=7100;SVLEN=-100;CHR2=chr1;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e7,pbsv.DEL.e7	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:20,10:100:+-:60:DEL:cuteSV.DEL.e7:cuteSV:N:<DEL>:chr1_7000-chr1_7100	0/1:21,9:100:+-:60:DEL:pbsv.DEL.e7:pbsv:N:<DEL>:chr1_7000-chr1_7100
+chr1	8000	B.PRESENCE_TIE	N	<DEL>	60	PASS	SVTYPE=DEL;END=8100;SVLEN=-100;CHR2=chr1;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e8,svim.DEL.e8	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:20,10:100:+-:60:DEL:cuteSV.DEL.e8:cuteSV:N:<DEL>:chr1_8000-chr1_8100	0/0:25,0:100:+-:60:DEL:svim.DEL.e8:svim:N:<DEL>:chr1_8000-chr1_8100
+chrY	6000	B.HAPLOID	N	<DEL>	60	PASS	SVTYPE=DEL;END=6100;SVLEN=-100;CHR2=chrY;SUPPORT=20;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=+-;RNAMES=NULL;SOURCES=sample_A,sample_B;SOURCE_IDS=cuteSV.DEL.e6,svim.DEL.e6	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	1:0,15:100:+-:60:DEL:cuteSV.DEL.e6:cuteSV:N:<DEL>:chrY_6000-chrY_6100	1:0,16:100:+-:60:DEL:svim.DEL.e6:svim:N:<DEL>:chrY_6000-chrY_6100

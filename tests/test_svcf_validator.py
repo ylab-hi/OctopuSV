@@ -8,7 +8,9 @@ import pytest
 from octopusv.utils.svcf_validator import SVCFValidator
 
 
-FORMAT = "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+CALLER_FORMAT = "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+SAMPLE_FORMAT = "GT:AD:UC:UV:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+FORMAT = CALLER_FORMAT
 BASE_INFO = (
     "SVTYPE=INS;END=110;SVLEN=10;CHR2=chr1;SUPPORT=5;"
     "SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=.;RNAMES=."
@@ -26,6 +28,53 @@ def _placeholder() -> str:
     return "0/0:.:.:.:.:.:.:.:.:.:."
 
 
+def _sample_evidence(
+    source_id: str,
+    *,
+    gt: str = "0/1",
+    uc: str = "1",
+    uv: str = "1",
+    co: str = "chr1_100-chr1_110",
+) -> str:
+    return ":".join(
+        [
+            gt,
+            ".,.",
+            uc,
+            uv,
+            "10",
+            ".",
+            "60",
+            "INS",
+            source_id,
+            "OctopuSV",
+            "N",
+            "<INS>",
+            co,
+        ]
+    )
+
+
+def _sample_placeholder() -> str:
+    return ":".join(
+        [
+            "0/0",
+            ".,.",
+            "0",
+            "0",
+            ".",
+            ".",
+            ".",
+            ".",
+            ".",
+            "OctopuSV",
+            ".",
+            ".",
+            ".",
+        ]
+    )
+
+
 def _write_svcf(
     path: Path,
     *,
@@ -35,6 +84,7 @@ def _write_svcf(
     sample_names: list[str] | None = None,
     info_override: str | None = None,
     alt: str = "<INS>",
+    format_value: str = FORMAT,
 ) -> Path:
     if evidence is None:
         evidence = [_evidence("source.1")]
@@ -58,7 +108,7 @@ def _write_svcf(
 
     record = (
         "chr1\t100\tmerged.1\tN\t"
-        f"{alt}\t60\tPASS\t{info}\t{FORMAT}\t"
+        f"{alt}\t60\tPASS\t{info}\t{format_value}\t"
         + "\t".join(evidence)
     )
 
@@ -164,14 +214,64 @@ def test_sample_multi_only_checks_source_id_list_count(tmp_path):
     path = _write_svcf(
         tmp_path / "multi.svcf",
         info_suffix="SOURCES=sampleA,sampleC;SOURCE_IDS=idA,idC",
-        evidence=[_evidence("idA"), _placeholder(), _evidence("idC")],
+        evidence=[
+            _sample_evidence("idA"),
+            _sample_placeholder(),
+            _sample_evidence("idC"),
+        ],
         multi=True,
         sample_names=["sampleA", "sampleB", "sampleC"],
+        format_value=SAMPLE_FORMAT,
     )
 
     validator = _validate(path)
     assert validator.mode == "sample_multi"
     assert validator.errors == []
+
+
+def test_sample_multi_requires_svcf_11_sample_format(tmp_path):
+    path = _write_svcf(
+        tmp_path / "old_sample_schema.svcf",
+        info_suffix="SOURCES=sampleA;SOURCE_IDS=idA",
+        evidence=[_evidence("idA")],
+        multi=True,
+        sample_names=["sampleA"],
+        format_value=CALLER_FORMAT,
+    )
+
+    validator = _validate(path)
+    assert validator.mode == "sample_multi"
+    assert "E_FMT_001" in _codes(validator)
+    assert any(SAMPLE_FORMAT in issue.message for issue in validator.issues)
+
+
+def test_caller_merge_keeps_caller_format_schema(tmp_path):
+    path = _write_svcf(
+        tmp_path / "caller_wrong_schema.svcf",
+        info_suffix="SOURCES=callerA;SOURCE_IDS=idA",
+        evidence=[_sample_evidence("idA")],
+        format_value=SAMPLE_FORMAT,
+    )
+
+    validator = _validate(path)
+    assert validator.mode == "caller_merge"
+    assert "E_FMT_001" in _codes(validator)
+    assert any(CALLER_FORMAT in issue.message for issue in validator.issues)
+
+
+def test_sample_multi_width_uses_sample_schema(tmp_path):
+    truncated = ":".join(_sample_evidence("idA").split(":")[:11])
+    path = _write_svcf(
+        tmp_path / "sample_truncated.svcf",
+        info_suffix="SOURCES=sampleA;SOURCE_IDS=idA",
+        evidence=[truncated],
+        multi=True,
+        sample_names=["sampleA"],
+        format_value=SAMPLE_FORMAT,
+    )
+
+    validator = _validate(path)
+    assert "E_FMT_002" in _codes(validator)
 
 
 def test_duplicate_info_keys_are_rejected(tmp_path):

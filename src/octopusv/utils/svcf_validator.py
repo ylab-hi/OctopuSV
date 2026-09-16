@@ -22,8 +22,11 @@ from octopusv.utils.svcf_coordinate_parser import parse_svcf_co
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 
-EXPECTED_FORMAT = "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
-EXPECTED_FORMAT_KEYS = EXPECTED_FORMAT.split(":")
+CALLER_FORMAT = "GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+SAMPLE_FORMAT = "GT:AD:UC:UV:LN:ST:QV:TY:ID:SC:REF:ALT:CO"
+
+CALLER_FORMAT_KEYS = CALLER_FORMAT.split(":")
+SAMPLE_FORMAT_KEYS = SAMPLE_FORMAT.split(":")
 
 CORE_COLUMNS = [
     "#CHROM",
@@ -441,11 +444,24 @@ class SVCFValidator:
                 blocking=True,
             )
 
+    def _expected_format(self) -> str:
+        """Return the fixed FORMAT schema for the current SVCF mode."""
+        if self.mode == "sample_multi":
+            return SAMPLE_FORMAT
+        return CALLER_FORMAT
+
+    def _expected_format_keys(self) -> list[str]:
+        if self.mode == "sample_multi":
+            return SAMPLE_FORMAT_KEYS
+        return CALLER_FORMAT_KEYS
+
     def _check_format(self, fmt: str, sv_id: str, line_no: int) -> None:
-        if fmt != EXPECTED_FORMAT:
+        expected = self._expected_format()
+        if fmt != expected:
             self._err(
                 "E_FMT_001",
-                f"FORMAT must be '{EXPECTED_FORMAT}', got '{fmt}'.",
+                f"FORMAT for {self.mode or 'unknown'} mode must be '{expected}', "
+                f"got '{fmt}'.",
                 sv_id,
                 line_no,
                 blocking=True,
@@ -463,10 +479,11 @@ class SVCFValidator:
         Colon-bearing ID/ALT values may increase the raw token count, but a
         valid fixed SVCF block cannot contain fewer tokens than FORMAT keys.
         """
-        if fmt != EXPECTED_FORMAT:
+        expected = self._expected_format()
+        if fmt != expected:
             return
 
-        minimum_tokens = len(EXPECTED_FORMAT_KEYS)
+        minimum_tokens = len(self._expected_format_keys())
         for index, block in enumerate(sample_cols, start=1):
             token_count = block.count(":") + 1
             if token_count < minimum_tokens:
