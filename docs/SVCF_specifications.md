@@ -1,7 +1,7 @@
 # SVCF 1.1 Specification: A VCF-Based Intermediate Format for Structural Variant Processing and Integration
 
 **Specification version:** 1.1
-**Status:** Stable contract for OctopuSV 1.0
+**Status:** Locked stable contract for OctopuSV 1.0
 **Reference implementation:** OctopuSV 1.0
 **Recommended extension:** `.svcf`
 
@@ -116,6 +116,8 @@ SVCF version numbers describe the file contract, not the OctopuSV software versi
 - a change that alters a required FORMAT field, field order, positional binding rule, or the meaning of an existing core field requires a new SVCF specification version.
 
 Readers may ignore unknown optional meta-information or INFO annotations when doing so is safe, but they must not ignore an unsupported `SVCFVersion` or a mode/FORMAT conflict.
+
+**SVCF 1.1 is a locked contract.** If OctopuSV implementation behavior disagrees with a normative SVCF 1.1 rule, the implementation must be investigated first; the SVCF 1.1 specification must not be changed merely to match implementation drift. An intentional change to a required schema rule, positional binding rule, coordinate rule, missing-value meaning, or other core semantic defined here requires a new SVCF specification version.
 
 ---
 
@@ -245,7 +247,7 @@ SOURCE_IDS
 |---|---|
 | `SVTYPE` | Structural variant type: `DEL`, `DUP`, `INV`, `INS`, `TRA`, or `BND`. |
 | `CHR2` | Contig containing the second coordinate or mate breakpoint. |
-| `END` | Second coordinate used by the SVCF event. |
+| `END` | Second coordinate used by the SVCF record. Its meaning depends on `SVTYPE`. |
 | `SVLEN` | Positive event length when applicable; `TRA`/`BND` use `.`. |
 | `SUPPORT` | Read-support value associated with the representative event. It is not the number of callers or samples. |
 | `SVMETHOD` | Method that produced the current SVCF event, normally `OctopuSV`. |
@@ -577,34 +579,52 @@ TRA
 BND
 ```
 
+`END` is the second coordinate used by the SVCF record. Its meaning depends on `SVTYPE`.
+
+For `TRA` and `BND`, the parser first reads the mate coordinate from `ALT` and falls back to `CHR2` and `END` when needed.
+
 ### 11.1 DEL, DUP, and INV
 
 For `DEL`, `DUP`, and `INV`:
 
-- `END` must be numeric;
+- `END` must be a numeric value;
 - `END` must be greater than or equal to `POS`;
 - `CHR2` is normally the same as `CHROM`;
 - `SVLEN` is a positive event length when available.
 
-OctopuSV uses absolute event lengths rather than negative deletion lengths in SVCF.
+Current OctopuSV output uses the absolute length rather than a negative deletion length.
 
 ### 11.2 INS
 
 For `INS`, the keys `END`, `SVLEN`, and `CHR2` must be present.
 
-When insertion length is known, OctopuSV SVCF may internally represent the event span as:
+When the insertion length is known, current OctopuSV SVCF output normally represents its internal span as:
 
 ```text
 END = POS + SVLEN
 ```
 
-The internal SVCF endpoint is used by OctopuSV processing/merging. Conventional VCF export writes insertion `END=POS`.
+For example:
+
+```text
+POS=10889
+END=10936
+SVLEN=47
+```
+
+When the value is unavailable, `END` or `SVLEN` may be `.`. The current validator requires the keys but does not require a numeric relationship for `INS`.
+
+The internal SVCF endpoint is used by OctopuSV processing and merging. During `svcf2vcf` conversion, an insertion is written with the conventional VCF endpoint:
+
+```text
+END = POS
+```
 
 ### 11.3 TRA and BND
 
 `TRA` and `BND` use VCF breakend notation in `ALT`.
 
-Accepted forms include:
+The accepted forms are:
 
 ```text
 t[chr:pos[
@@ -613,14 +633,30 @@ t]chr:pos]
 ]chr:pos]t
 ```
 
+where `t` is sequence placed before or after the breakend expression.
+
 For `TRA` and `BND`:
 
-- `CHR2` contains the mate contig;
-- `END` contains the mate position;
-- the mate encoded in `ALT` must agree with `CHR2` and `END`;
-- `SVLEN` is `.`.
+- `CHR2` must contain the mate contig;
+- `END` must contain the numeric mate position;
+- the mate contig and position in `ALT` must agree with `CHR2` and `END`;
+- `SVLEN` must be `.`.
 
-OctopuSV uses `TRA` when a breakend pair can be represented as a translocation with sufficient confidence. `BND` is retained when a safer concrete conversion is not available.
+Example:
+
+```text
+CHROM=1
+POS=3845267
+ALT=C[hs37d5:32469995[
+CHR2=hs37d5
+END=32469995
+SVTYPE=TRA
+SVLEN=.
+```
+
+OctopuSV uses `TRA` when the breakend can be represented as a translocation with sufficient confidence.
+
+`BND` is retained when OctopuSV cannot safely convert a breakend to another supported SV type. A retained `BND` record is valid SVCF and is not considered a conversion failure.
 
 ---
 
