@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from octopusv.utils.text_io import open_text_auto
+
 from octopusv.utils.svcf_schema import (
     MODE_CALLER,
     MODE_MULTI,
@@ -29,7 +31,7 @@ def extract_original_header_definitions(input_vcf_file):
         'sample_names': ["Sample"],
     }
 
-    with open(input_vcf_file, 'r') as f:
+    with open_text_auto(input_vcf_file) as f:
         for line in f:
             line = line.rstrip("\n")
             # 🔴 CHANGED: parse sample names from the #CHROM line, then stop.

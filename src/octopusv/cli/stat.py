@@ -55,7 +55,11 @@ def stat(
 
     sv_stater = SVStater(str(input_file), min_size=min_size, max_size=max_size,
                          fai=str(fai) if fai else None, genome=genome)
-    sv_stater.analyze()
+    try:
+        sv_stater.analyze()
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
     # JSON path: to file if -o given, else stdout.
     if as_json:

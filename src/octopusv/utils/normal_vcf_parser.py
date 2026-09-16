@@ -3,6 +3,7 @@ import re
 import sys
 
 from octopusv.sv import SVEvent
+from octopusv.utils.text_io import open_text_auto
 
 
 def is_same_chr_bnd(event):
@@ -19,59 +20,59 @@ def is_same_chr_bnd(event):
 
 
 def check_vcf_format(vcf_file_path):
-    """Check the format of a VCF file.
+    """Check the format of a VCF file in a streaming pass.
 
-    Allow both standard VCF (10 columns) and simplified VCF (8 columns) formats.
-    Raise an error and exit if the format is incorrect.
+    Plain-text and gzip/bgzip-compressed VCF inputs are accepted.  The
+    historical validation rules are preserved without loading the whole file
+    into memory.
     """
-    with open(vcf_file_path) as f:
-        lines = f.readlines()
+    saw_header = False
 
-    # Check if there is at least one header line
-    if not any(line.startswith("#") for line in lines):
+    with open_text_auto(vcf_file_path) as f:
+        for line in f:
+            if line.startswith("#"):
+                saw_header = True
+                continue
+
+            if not line.strip():
+                continue
+
+            if " " in line:
+                logging.error(
+                    "Invalid VCF format. Non-header lines should not contain spaces.",
+                )
+                sys.exit(1)
+
+            fields = line.rstrip("\r\n").split("\t")
+
+            if len(fields) < 8:
+                logging.error(
+                    f"Invalid VCF format. Expected at least 8 fields, but got {len(fields)}",
+                )
+                sys.exit(1)
+
+            try:
+                int(fields[1])
+            except ValueError:
+                logging.error(
+                    f"Invalid VCF format. Position (field 2) should be a number, but got {fields[1]}",
+                )
+                sys.exit(1)
+
+            if fields[5] != ".":
+                try:
+                    float(fields[5])
+                except ValueError:
+                    logging.error(
+                        f"Invalid VCF format. Quality score (field 6) should be a number or '.', but got {fields[5]}",
+                    )
+                    sys.exit(1)
+
+    if not saw_header:
         logging.error(
             "Invalid VCF format. The file should contain at least one header line starting with '#'.",
         )
         sys.exit(1)
-
-    for line in lines:
-        if line.startswith("#"):
-            continue  # Skip header lines
-
-        # Check for space in lines
-        if " " in line:
-            logging.error(
-                "Invalid VCF format. Non-header lines should not contain spaces.",
-            )
-            sys.exit(1)
-
-        fields = line.strip().split("\t")
-
-        # Check the minimum number of columns (8 for simplified VCF)
-        if len(fields) < 8:
-            logging.error(
-                f"Invalid VCF format. Expected at least 8 fields, but got {len(fields)}",
-            )
-            sys.exit(1)
-
-        # Check that the position is a number
-        try:
-            int(fields[1])
-        except ValueError:
-            logging.error(
-                f"Invalid VCF format. Position (field 2) should be a number, but got {fields[1]}",
-            )
-            sys.exit(1)
-
-        # Check that the quality score is a number or '.'
-        if fields[5] != ".":
-            try:
-                float(fields[5])
-            except ValueError:
-                logging.error(
-                    f"Invalid VCF format. Quality score (field 6) should be a number or '.', but got {fields[5]}",
-                )
-                sys.exit(1)
 
 
 def parse_vcf(vcf_file_path):
@@ -90,7 +91,7 @@ def parse_vcf(vcf_file_path):
     is_svaba_output = False  # Flag to detect if it's SVABA output
     source_info = "."  # Default value of source
 
-    with open(vcf_file_path) as f:
+    with open_text_auto(vcf_file_path) as f:
         for line in f:
             if line.startswith("##source="):
                 source_info = line.split("=")[1].split(" ")[0].strip()

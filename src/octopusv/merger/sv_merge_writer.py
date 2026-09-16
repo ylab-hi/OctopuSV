@@ -1,6 +1,7 @@
 import logging
 import os
 
+from octopusv.merger.name_mapper import default_label_from_path
 from octopusv.utils.sample_consensus import resolve_sample_consensus
 from octopusv.utils.source_path import normalize_source_path
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
@@ -176,9 +177,7 @@ class MergeWriterMixin:
         if name_mapper is not None:
             return name_mapper.get_display_name(str(input_file))
 
-        return os.path.splitext(
-            os.path.basename(str(input_file))
-        )[0]
+        return default_label_from_path(input_file)
 
     @staticmethod
     def _source_id_from_sample_data(sample_data):

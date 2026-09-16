@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
+from octopusv.utils.text_io import open_text_auto
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 
@@ -282,7 +283,7 @@ class SVCFInspector:
 
     def _detect_file_layout(self) -> str:
         """Header-only layout detection."""
-        with open(self.input_file, encoding="utf-8-sig") as fh:
+        with open_text_auto(self.input_file) as fh:
             for line in fh:
                 if line.startswith("##"):
                     if line.strip() == MODE_MULTI_MARKER:

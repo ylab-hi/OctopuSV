@@ -10,10 +10,10 @@ Two outputs:
   - declared-contract JSON: structured header facts for agents.
 
 Field naming is deliberately honest:
-  * mode_hint               -- best the header alone can tell; 'sample_multi'
-                               when the marker is present, otherwise
-                               'single_or_caller_merge' (single vs caller-merge
-                               can only be told by scanning records).
+  * mode_hint               -- for versioned SVCF, the declared caller/multi
+                               identity; for legacy files, 'sample_multi' when
+                               the legacy marker is present, otherwise
+                               'single_or_caller_merge'.
   * trailing_columns        -- columns after FORMAT; could be samples or
                                callers depending on mode, so not called
                                'sample_columns'.
@@ -28,6 +28,13 @@ Field naming is deliberately honest:
 import json
 
 from octopusv.utils.genome_build import infer_build
+from octopusv.utils.svcf_schema import (
+    MODE_CALLER,
+    MODE_MULTI,
+    parse_identity_from_meta_lines,
+    validate_versioned_identity,
+)
+from octopusv.utils.text_io import open_text_auto
 
 CORE_COLUMNS = ["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT"]
 MODE_MULTI_MARKER = "##OctopuSV_mode=multi"
@@ -58,7 +65,7 @@ class HeaderReader:
     def read(self):
         """Read header lines; stop at the first non-'#' (data) line."""
         try:
-            with open(self.path, encoding="utf-8-sig") as fh:
+            with open_text_auto(self.path) as fh:
                 for line in fh:
                     if line.startswith("#"):
                         stripped = line.rstrip("\n")
@@ -126,22 +133,44 @@ class HeaderReader:
     def to_contract(self):
         """Return the declared-contract dict (header facts only)."""
         meta = self._meta_lines()
-        has_marker = any(ln.strip() == MODE_MULTI_MARKER for ln in meta)
         chrom_cols = self.chrom_line.split("\t") if self.chrom_line else []
+        identity = parse_identity_from_meta_lines(meta)
+        identity_error = None
+        try:
+            validate_versioned_identity(identity)
+        except ValueError as exc:
+            identity_error = str(exc)
 
-        if has_marker:
+        has_legacy_multi_marker = (
+            not identity.is_versioned and identity.mode == MODE_MULTI
+        )
+
+        if identity_error is not None:
+            mode_hint = "invalid_versioned_identity"
+            requires_scan = False
+        elif identity.is_versioned:
+            mode_hint = (
+                "caller" if identity.mode == MODE_CALLER else "sample_multi"
+            )
+            requires_scan = False
+        elif has_legacy_multi_marker:
             mode_hint = "sample_multi"
             requires_scan = False
         else:
-            # Without the marker, the header cannot distinguish single from
-            # caller-merge: that depends on whether records carry SOURCES.
             mode_hint = "single_or_caller_merge"
             requires_scan = True
 
         return {
             "input": self.path,
             "has_chrom_header": self.chrom_line is not None,
-            "has_octopusv_mode_marker": has_marker,
+            "svcf_version": identity.version,
+            "declared_mode": identity.mode,
+            "is_versioned_svcf": identity.is_versioned,
+            "identity_error": identity_error,
+            # Backward-compatible meaning: this key historically reported the
+            # presence of the legacy/multi marker specifically. New structured
+            # identity is exposed separately via declared_mode/svcf_version.
+            "has_octopusv_mode_marker": MODE_MULTI_MARKER in meta,
             "mode_hint": mode_hint,
             "exact_mode_requires_record_scan": requires_scan,
             "core_columns": chrom_cols[:9] if chrom_cols else [],

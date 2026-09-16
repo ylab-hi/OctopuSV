@@ -1,13 +1,13 @@
 import io
 import logging
-import os
 import re
-import uuid
 from pathlib import Path
 
+from octopusv.utils.atomic_write import atomic_output_path
 from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
 from octopusv.utils.svcf_parser import SVCFEvent
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.text_io import open_text_auto
 from octopusv.utils.svcf_schema import (
     MODE_MULTI,
     parse_identity_from_meta_lines,
@@ -197,7 +197,7 @@ class SVCFtoVCFConverter:
         sufficient because legacy multi-sample files can carry the multi
         marker while still using the older 11-field sample schema.
         """
-        with open(self.input_svcf_file, encoding="utf-8-sig") as handle:
+        with open_text_auto(self.input_svcf_file) as handle:
             for raw_line in handle:
                 if not raw_line or raw_line.startswith("#"):
                     continue
@@ -268,7 +268,7 @@ class SVCFtoVCFConverter:
         sample_names = ["Sample"]
         header_trailing_count = 0
 
-        with open(self.input_svcf_file, encoding="utf-8-sig") as handle:
+        with open_text_auto(self.input_svcf_file) as handle:
             for raw_line in handle:
                 line = raw_line.rstrip("\r\n")
 
@@ -331,68 +331,11 @@ class SVCFtoVCFConverter:
             handle.write(self._convert_event_to_vcf(event))
 
     def convert_to_file(self, output_file):
-        """Stream conversion to a temporary file, then atomically replace output.
-
-        Streaming avoids holding the complete SVCF and VCF in memory.  The
-        temporary-file/replace pattern preserves the previous all-or-nothing
-        behavior: an error midway through conversion must not leave a partial
-        VCF at the requested output path.
-
-        The temporary file is created with normal file-creation permissions
-        (subject to the process umask).  When replacing an existing output, its
-        permission bits are preserved.
-        """
-        output_path = Path(output_file)
-        output_dir = output_path.parent
-        existing_mode = None
-        if output_path.exists():
-            existing_mode = output_path.stat().st_mode & 0o777
-
-        tmp_path = None
-        fd = None
-        try:
-            # Use O_EXCL so the temporary path cannot collide with an existing
-            # file.  Mode 0o666 is masked by the caller's normal process umask,
-            # matching ordinary text-file creation better than NamedTemporaryFile
-            # (which forces 0o600).
-            for _ in range(10):
-                candidate = output_dir / (
-                    f".{output_path.name}.{uuid.uuid4().hex}.tmp"
-                )
-                try:
-                    fd = os.open(
-                        candidate,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                        0o666,
-                    )
-                    tmp_path = candidate
-                    break
-                except FileExistsError:
-                    continue
-
-            if fd is None or tmp_path is None:
-                raise OSError(
-                    f"Could not create temporary output beside {output_path}"
-                )
-
-            if existing_mode is not None:
-                os.fchmod(fd, existing_mode)
-
-            with os.fdopen(fd, mode="w", encoding="utf-8") as handle:
-                fd = None
+        """Stream conversion to a temporary file, then atomically replace output."""
+        with atomic_output_path(output_file) as temp_path:
+            with open(temp_path, mode="w", encoding="utf-8") as handle:
                 self.write(handle)
 
-            os.replace(tmp_path, output_path)
-
-        except Exception:
-            if fd is not None:
-                os.close(fd)
-            if tmp_path is not None:
-                try:
-                    tmp_path.unlink()
-                except FileNotFoundError:
-                    pass
-            raise
 
     def _event_iterator(self):
         """Return the configured event stream.
@@ -410,17 +353,18 @@ class SVCFtoVCFConverter:
         sample_names = list(self.sample_names)
         sample_name = sample_names[0] if sample_names else "Sample"
 
-        with open(self.input_svcf_file, encoding="utf-8-sig") as handle:
-            for line in handle:
-                if line.startswith("#"):
+        with open_text_auto(self.input_svcf_file) as handle:
+            for line_number, line in enumerate(handle, 1):
+                if line.startswith("#") or not line.strip():
                     continue
 
                 parts = line.rstrip("\r\n").split("\t")
                 if len(parts) < 10:
-                    # Preserve SVCFFileEventCreator's historical behavior for
-                    # incomplete data rows: ignore them rather than inventing
-                    # missing fixed/evidence columns.
-                    continue
+                    raise ValueError(
+                        f"Malformed SVCF record in {str(self.input_svcf_file)!r} "
+                        f"on line {line_number}: expected at least 10 "
+                        f"tab-separated columns, got {len(parts)}."
+                    )
 
                 yield SVCFEvent(
                     *parts[:10],

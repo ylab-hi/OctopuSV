@@ -4,13 +4,15 @@ from pathlib import Path
 
 import typer
 
-from octopusv.merger.name_mapper import NameMapper
+from octopusv.merger.name_mapper import NameMapper, default_label_from_path
 from octopusv.merger.sv_merge_selection import validate_selection_inputs
 from octopusv.merger.sv_merger import SVMerger
 from octopusv.merger.upset_plotter import UpSetPlotter
 from octopusv.utils.SV_classifier_by_chromosome import SVClassifiedByChromosome
 from octopusv.utils.SV_classifier_by_type import SVClassifierByType
+from octopusv.utils.atomic_write import atomic_output_path
 from octopusv.utils.source_path import normalize_source_path
+from octopusv.utils.text_io import open_text_auto
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
 from octopusv.utils.svcf_schema import (
     MODE_CALLER,
@@ -18,6 +20,7 @@ from octopusv.utils.svcf_schema import (
     parse_identity_from_meta_lines,
     validate_format_for_identity,
     validate_header_columns_for_identity,
+    validate_source_label,
     validate_versioned_identity,
 )
 
@@ -32,7 +35,7 @@ def _echo(message: str = "") -> None:
 
 def _default_labels_from_input_files(input_files: list[Path | str]) -> list[str]:
     """Return default labels inferred from input file basenames."""
-    return [os.path.splitext(os.path.basename(str(file)))[0] for file in input_files]
+    return [default_label_from_path(str(file)) for file in input_files]
 
 
 def _format_labels(labels: list[str]) -> str:
@@ -54,6 +57,92 @@ def _normalize_input_path(path: Path | str) -> str:
     """Return a stable real-path identity for one merge input."""
     return normalize_source_path(path)
 
+
+
+def _read_merge_input_list(list_path: Path | str) -> tuple[list[Path], list[str] | None]:
+    """Read a cohort input list.
+
+    Each non-comment line is either ``PATH`` or ``PATH<TAB>LABEL``. Relative
+    paths are resolved relative to the list file, not the current working
+    directory. A labeled list must label every data line.
+    """
+    list_path = Path(os.path.abspath(os.path.expanduser(str(list_path))))
+    base_dir = list_path.parent
+    paths: list[Path] = []
+    labels: list[str | None] = []
+
+    with open_text_auto(list_path) as handle:
+        for line_number, raw in enumerate(handle, 1):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            parts = raw.rstrip("\r\n").split("\t")
+            if len(parts) > 2:
+                raise ValueError(
+                    f"Invalid --input-list line {line_number}: expected PATH or "
+                    "PATH<TAB>LABEL."
+                )
+
+            raw_path = parts[0].strip()
+            if not raw_path:
+                raise ValueError(
+                    f"Invalid --input-list line {line_number}: path is empty."
+                )
+
+            candidate = Path(raw_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = base_dir / candidate
+            # Preserve the user-visible path (including a symlink basename) for
+            # caller/sample identity. Physical-file duplicate detection uses
+            # normalize_source_path/realpath separately.
+            candidate = Path(os.path.abspath(candidate))
+
+            if not candidate.exists():
+                raise ValueError(
+                    f"Input file listed on line {line_number} does not exist: "
+                    f"{candidate}"
+                )
+
+            label = None
+            if len(parts) == 2:
+                label = parts[1].strip()
+                if not label:
+                    raise ValueError(
+                        f"Invalid --input-list line {line_number}: label is empty."
+                    )
+
+            paths.append(candidate)
+            labels.append(label)
+
+    if not paths:
+        raise ValueError(f"Input list {str(list_path)!r} contains no input files.")
+
+    has_labels = [label is not None for label in labels]
+    if any(has_labels) and not all(has_labels):
+        raise ValueError(
+            "A labeled --input-list must provide a TAB-separated label for "
+            "every input row."
+        )
+
+    return paths, [str(label) for label in labels] if all(has_labels) else None
+
+
+def _validate_display_labels(
+    *,
+    labels: list[str],
+    mode: str,
+) -> None:
+    """Validate final caller/sample labels before any expensive merge work."""
+    option = "--sample-names" if mode == "sample" else "--caller-names"
+    for label in labels:
+        try:
+            validate_source_label(label)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid {mode} label {label!r}: {exc} "
+                f"Use {option} or a labeled --input-list to provide a valid label."
+            ) from exc
 
 def _validate_distinct_input_files(input_files: list[Path | str]) -> None:
     """Reject two merge arguments that resolve to the same physical file."""
@@ -102,26 +191,72 @@ def _validate_unique_display_labels(
     )
 
 
-def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
+def _extract_contig_lengths_from_meta_lines(
+    meta_lines: list[str],
+    *,
+    input_file: Path | str,
+) -> dict[str, str]:
+    """Return explicit numeric ##contig lengths declared by one input."""
+    contigs: dict[str, str] = {}
+    for line in meta_lines:
+        if not (line.startswith("##contig=<") and line.endswith(">")):
+            continue
+
+        content = line[len("##contig=<") : -1]
+        contig_id = None
+        contig_length = None
+        for part in content.split(","):
+            if part.startswith("ID="):
+                contig_id = part.split("=", 1)[1]
+            elif part.startswith("length="):
+                raw_length = part.split("=", 1)[1]
+                try:
+                    int(raw_length)
+                except ValueError:
+                    # A non-numeric declaration is not a usable known length for
+                    # conflict detection. The validator remains responsible for
+                    # broader header/schema diagnostics.
+                    raw_length = None
+                contig_length = raw_length
+
+        if not contig_id or contig_length is None:
+            continue
+
+        previous = contigs.get(contig_id)
+        if previous is not None and int(previous) != int(contig_length):
+            raise ValueError(
+                f"Input {str(input_file)!r} declares conflicting lengths for "
+                f"contig {contig_id!r}: {previous} and {contig_length}."
+            )
+        contigs[contig_id] = contig_length
+
+    return contigs
+
+
+def _preflight_svcf_shape(input_file: Path | str, mode: str) -> dict[str, str]:
     """Reject merge inputs that are not caller-evidence SVCF.
 
-    Merge consumes caller evidence.  It may accept legacy unversioned SVCF or
+    Merge consumes caller evidence. It may accept legacy unversioned SVCF or
     explicit SVCF 1.1 caller-mode files, but it must never accept synthesized
-    sample/multi SVCF as caller evidence.  FORMAT schema is checked directly so
+    sample/multi SVCF as caller evidence. FORMAT schema is checked directly so
     stripping a mode marker cannot make synthesized sample calls mergeable.
+
+    Returns explicit numeric contig lengths found in the header so cross-input
+    reference conflicts can be rejected before parsing/merging begins.
     """
     found_chrom_header = False
     meta_lines: list[str] = []
     identity = None
     header_sample_count = None
+    contig_lengths: dict[str, str] = {}
 
-    with open(input_file, "rb") as handle:
+    with open_text_auto(input_file) as handle:
         for line_number, line in enumerate(handle, 1):
-            if line.startswith(b"##"):
-                meta_lines.append(line.decode("utf-8", errors="replace").rstrip("\r\n"))
+            if line.startswith("##"):
+                meta_lines.append(line.rstrip("\r\n"))
                 continue
 
-            if line.startswith(b"#CHROM"):
+            if line.startswith("#CHROM"):
                 try:
                     identity = parse_identity_from_meta_lines(meta_lines)
                     validate_versioned_identity(identity)
@@ -139,8 +274,12 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
                         "caller-mode SVCF input instead."
                     )
 
+                contig_lengths = _extract_contig_lengths_from_meta_lines(
+                    meta_lines, input_file=input_file
+                )
+
                 found_chrom_header = True
-                header_sample_count = max(0, line.count(b"\t") - 8)
+                header_sample_count = max(0, line.count("\t") - 8)
 
                 try:
                     validate_header_columns_for_identity(
@@ -162,7 +301,7 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
                     )
                 continue
 
-            if line.startswith(b"#") or not line.strip():
+            if line.startswith("#") or not line.strip():
                 continue
 
             if not found_chrom_header:
@@ -171,14 +310,14 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
                     "before its data records."
                 )
 
-            fields = line.rstrip(b"\r\n").split(b"\t")
+            fields = line.rstrip("\r\n").split("\t")
             if len(fields) < 10:
                 raise ValueError(
                     f"Input {str(input_file)!r} has a malformed data record on "
                     f"line {line_number}: expected at least 10 columns."
                 )
 
-            format_field = fields[8].decode("utf-8", errors="replace")
+            format_field = fields[8]
             try:
                 schema_mode = validate_format_for_identity(
                     identity,
@@ -215,14 +354,12 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> None:
                     "inputs for `merge --mode caller`."
                 )
 
-            # Continue scanning every record.  Sample-mode input may contain
-            # variable-width caller evidence, but every record must still use
-            # the caller SVCF schema.
-
     if not found_chrom_header:
         raise ValueError(
             f"Input {str(input_file)!r} is missing the required #CHROM header."
         )
+
+    return contig_lengths
 
 
 def _preflight_merge_inputs(
@@ -232,23 +369,39 @@ def _preflight_merge_inputs(
     mode: str,
     specific: list[Path | str] | None = None,
     expression: str | None = None,
-) -> None:
-    """Run merge-specific identity, selection, and input-shape checks."""
+) -> dict[str, str]:
+    """Run merge-specific identity, selection, shape, and reference checks."""
     _validate_distinct_input_files(input_files)
     _validate_unique_display_labels(
         labels=labels,
         input_files=input_files,
         mode=mode,
     )
+    _validate_display_labels(labels=labels, mode=mode)
     validate_selection_inputs(
         input_files=input_files,
         specific=specific,
         expression=expression,
     )
 
+    merged_contigs: dict[str, str] = {}
+    contig_source: dict[str, str] = {}
     for input_file in input_files:
-        _preflight_svcf_shape(input_file, mode)
+        file_contigs = _preflight_svcf_shape(input_file, mode)
+        for contig_id, contig_length in file_contigs.items():
+            previous = merged_contigs.get(contig_id)
+            if previous is not None and int(previous) != int(contig_length):
+                raise ValueError(
+                    f"Conflicting ##contig lengths across merge inputs for "
+                    f"{contig_id!r}: {previous} in {contig_source[contig_id]!r} "
+                    f"versus {contig_length} in {str(input_file)!r}. "
+                    "Inputs may use different reference assemblies."
+                )
+            if previous is None:
+                merged_contigs[contig_id] = contig_length
+                contig_source[contig_id] = str(input_file)
 
+    return merged_contigs
 
 def _preserve_sample_input_evidence(events) -> None:
     """Preserve exact per-input caller evidence for later sample synthesis.
@@ -383,9 +536,17 @@ def _print_name_mapping_note(
     input_files: list[Path | str],
     caller_names: str | None,
     sample_names: str | None,
+    labels_from_input_list: bool = False,
 ) -> None:
-    """Explain what --caller-names or --sample-names does and does not do."""
+    """Explain where output caller/sample labels came from."""
     default_labels = _default_labels_from_input_files(input_files)
+
+    if labels_from_input_list:
+        _echo(
+            "Note: Using caller/sample labels from the TAB-separated second "
+            "column of --input-list."
+        )
+        return
 
     if mode == "caller":
         if caller_names:
@@ -429,6 +590,7 @@ def _print_success_message(
     input_files: list[Path | str],
     caller_names: str | None,
     sample_names: str | None,
+    labels_from_input_list: bool,
     expression: str | None,
     intersect: bool,
     union: bool,
@@ -458,6 +620,7 @@ def _print_success_message(
         input_files=input_files,
         caller_names=caller_names,
         sample_names=sample_names,
+        labels_from_input_list=labels_from_input_list,
     )
 
     merge_rule_lines = _describe_merge_rule(
@@ -492,7 +655,7 @@ def get_contigs_from_svcf(filenames):
     """
     contigs = {}
     for filename in filenames:
-        with open(filename) as f:
+        with open_text_auto(filename) as f:
             for line in f:
                 if line.startswith("##contig"):
                     line = line.strip()
@@ -513,9 +676,21 @@ def get_contigs_from_svcf(filenames):
     return contigs
 
 
+
+
 def merge(
         input_files: list[Path] = typer.Argument(None, help="List of input SVCF files to merge."),
         input_option: list[Path] = typer.Option(None, "--input-file", "-i", help="Input SVCF files to merge."),
+        input_list: Path | None = typer.Option(
+            None,
+            "--input-list",
+            help=(
+                "Text file containing one input path per line, optionally followed "
+                "by a TAB and caller/sample label. Blank lines and lines whose first "
+                "non-whitespace character is '#' are ignored. Relative paths are "
+                "resolved relative to the list file."
+            ),
+        ),
         output_file: Path = typer.Option(..., "--output-file", "-o", help="Output file for merged SV data."),
 
         # Mode parameters
@@ -628,10 +803,29 @@ def merge(
         typer.echo("Error: --caller-names can only be used with --mode caller.", err=True)
         raise typer.Exit(code=1)
 
-    # Handle input files while preserving user-provided order.
-    all_input_files = []
+    # Explicit label vectors are positionally bound to inputs. Mixing multiple
+    # input mechanisms would make that binding dependent on CLI ordering, so
+    # require one mechanism whenever --caller-names/--sample-names is used.
+    if caller_names or sample_names:
+        input_mechanism_count = sum(
+            [bool(input_files), bool(input_option), input_list is not None]
+        )
+        if input_mechanism_count > 1:
+            label_option = "--caller-names" if caller_names else "--sample-names"
+            typer.echo(
+                f"Error: {label_option} cannot be combined with multiple input "
+                "mechanisms. Use only positional inputs, only -i/--input-file, "
+                "or only --input-list so labels cannot be bound to the wrong file.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
 
-    using_i_option = "-i" in sys.argv or "--input-file" in sys.argv
+    # Handle direct inputs while preserving the existing unlabeled CLI ordering rule.
+    all_input_files: list[Path] = []
+    using_i_option = any(
+        arg == "-i" or arg == "--input-file" or arg.startswith("--input-file=")
+        for arg in sys.argv[1:]
+    )
 
     if using_i_option:
         if input_option:
@@ -643,6 +837,33 @@ def merge(
             all_input_files.extend(input_files)
         if input_option:
             all_input_files.extend(input_option)
+
+    list_labels: list[str] | None = None
+    if input_list is not None:
+        try:
+            listed_files, list_labels = _read_merge_input_list(input_list)
+        except (OSError, ValueError) as exc:
+            _echo(f"Error: {exc}")
+            raise typer.Exit(code=1)
+
+        if list_labels is not None:
+            if all_input_files:
+                _echo(
+                    "Error: A labeled --input-list cannot be combined with direct "
+                    "positional/-i inputs. Put all inputs in the labeled list."
+                )
+                raise typer.Exit(code=1)
+            if caller_names or sample_names:
+                _echo(
+                    "Error: Labels from --input-list cannot be combined with "
+                    "--caller-names or --sample-names."
+                )
+                raise typer.Exit(code=1)
+            all_input_files = listed_files
+        else:
+            # Unlabeled lists may be combined with direct inputs. Direct inputs
+            # remain first; list entries follow in file order.
+            all_input_files.extend(listed_files)
 
     if not all_input_files:
         typer.echo("Error: No input files provided.", err=True)
@@ -669,10 +890,17 @@ def merge(
         typer.echo("Error: --min-jaccard must be between 0 and 1.", err=True)
         raise typer.Exit(code=1)
 
-    # Build name mapper.
+    # Build name mapper. A labeled input list supplies the complete
+    # caller/sample label vector directly.
     name_mapper = None
     try:
-        if mode == "caller" and caller_names:
+        if list_labels is not None:
+            name_mapper = NameMapper(
+                all_input_files,
+                mode=mode,
+                custom_names=list_labels,
+            )
+        elif mode == "caller" and caller_names:
             names = [name.strip() for name in caller_names.split(",")]
             if len(names) != len(all_input_files):
                 typer.echo(
@@ -706,7 +934,7 @@ def merge(
     labels = name_mapper.get_all_display_names() if name_mapper else []
 
     try:
-        _preflight_merge_inputs(
+        contigs = _preflight_merge_inputs(
             input_files=all_input_files,
             labels=labels,
             mode=mode,
@@ -719,11 +947,9 @@ def merge(
 
     _print_initial_configuration(mode=mode, labels=labels, input_files=all_input_files)
 
-    # Get contig information from input files.
+    # Process SV events. Header contigs were already collected during preflight.
     input_filenames = [str(file) for file in all_input_files]
-    contigs = get_contigs_from_svcf(input_filenames)
 
-    # Process SV events.
     sv_event_creator = SVCFFileEventCreator(input_filenames)
     sv_event_creator.parse()
 
@@ -786,15 +1012,22 @@ def merge(
         _echo(f"Error: {exc}")
         raise typer.Exit(code=1)
 
-    # Write merged results.
-    sv_merger.write_results(
-        output_file,
-        results,
-        contigs,
-        mode,
-        name_mapper,
-        input_filenames,
-    )
+    # Write merged results atomically. A writer failure must never leave a
+    # truncated file at the requested output path. User-facing schema/I/O
+    # failures are reported cleanly rather than as tracebacks.
+    try:
+        with atomic_output_path(output_file) as temp_output:
+            sv_merger.write_results(
+                temp_output,
+                results,
+                contigs,
+                mode,
+                name_mapper,
+                input_filenames,
+            )
+    except (OSError, ValueError) as exc:
+        _echo(f"Error: {exc}")
+        raise typer.Exit(code=1)
 
     _print_success_message(
         output_file=output_file,
@@ -805,6 +1038,7 @@ def merge(
         input_files=all_input_files,
         caller_names=caller_names,
         sample_names=sample_names,
+        labels_from_input_list=list_labels is not None,
         expression=expression,
         intersect=intersect,
         union=union,

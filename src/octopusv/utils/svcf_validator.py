@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from octopusv.utils.svcf_coordinate_parser import parse_svcf_co
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.text_io import open_text_auto
 from octopusv.utils.svcf_schema import (
     CALLER_FORMAT,
     SAMPLE_FORMAT,
@@ -269,7 +270,7 @@ class SVCFValidator:
         header_complete = False
 
         try:
-            with open(self.path, encoding="utf-8-sig") as handle:
+            with open_text_auto(self.path) as handle:
                 for line_no, raw_line in enumerate(handle, start=1):
                     line = raw_line.rstrip("\r\n")
                     if not line:

@@ -30,12 +30,15 @@ Coordinate inputs:
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from octopusv.utils.atomic_write import atomic_output_path
+from octopusv.utils.text_io import open_text_auto
 from octopusv.filtering.svcf_filter import (
     normalize_standard_contig,
     parse_info,
@@ -540,15 +543,20 @@ class SVCFQuery:
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        output_handle = None
-        if not self.config.dry_run:
-            if self.config.output_file is None:
-                raise ValueError("output_file is required unless dry_run=True.")
-            output_handle = Path(self.config.output_file).open("w")
+        with ExitStack() as stack:
+            output_handle = None
+            if not self.config.dry_run:
+                if self.config.output_file is None:
+                    raise ValueError("output_file is required unless dry_run=True.")
+                temp_output = stack.enter_context(
+                    atomic_output_path(self.config.output_file)
+                )
+                output_handle = stack.enter_context(
+                    open(temp_output, "w", encoding="utf-8")
+                )
 
-        try:
-            with input_path.open() as handle:
-                for line in handle:
+            with open_text_auto(input_path) as handle:
+                for line_number, line in enumerate(handle, 1):
                     if line.startswith("#"):
                         if output_handle is not None:
                             output_handle.write(line)
@@ -556,6 +564,14 @@ class SVCFQuery:
 
                     if not line.strip():
                         continue
+
+                    fields = line.rstrip("\r\n").split("\t")
+                    if len(fields) < 10:
+                        raise ValueError(
+                            f"Malformed SVCF record in {str(input_path)!r} on line "
+                            f"{line_number}: expected at least 10 tab-separated "
+                            f"columns, got {len(fields)}."
+                        )
 
                     self.input_records += 1
 
@@ -581,18 +597,13 @@ class SVCFQuery:
                     if output_handle is not None:
                         output_handle.write(line)
 
-        finally:
-            if output_handle is not None:
-                output_handle.close()
-
         return self.summary()
 
     def _match_line(self, line: str) -> tuple[bool, dict]:
         """Return whether a record matches targets and its summary if matched."""
-        fields = line.rstrip("\n").split("\t")
-        if len(fields) < 8:
-            self.skipped_or_not_matched_by_reason["malformed_record"] += 1
-            return False, {}
+        fields = line.rstrip("\r\n").split("\t")
+        if len(fields) < 10:
+            raise ValueError("Malformed SVCF record: expected at least 10 columns.")
 
         chrom = fields[0]
         pos = fields[1]

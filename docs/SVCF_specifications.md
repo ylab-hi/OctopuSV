@@ -1,8 +1,8 @@
 # SVCF 1.1 Specification: A VCF-Based Intermediate Format for Structural Variant Processing and Integration
 
-**Specification version:** 1.1  
-**Status:** Stable contract for OctopuSV 1.0  
-**Reference implementation:** OctopuSV 1.0  
+**Specification version:** 1.1
+**Status:** Stable contract for OctopuSV 1.0
+**Reference implementation:** OctopuSV 1.0
 **Recommended extension:** `.svcf`
 
 
@@ -801,6 +801,8 @@ A tool that rewrites a versioned SVCF file must preserve its explicit identity a
 
 OctopuSV regression tests require structure-preserving intermediate operations such as filtering, subsetting, and contig normalization to retain the SVCF version/mode declarations and produce output that still passes `octopusv validate-svcf`.
 
+For source-aware filtering, implementations must distinguish two explicit naming contexts. In merged records, `INFO/SOURCES` contains the user-facing source labels assigned to merge inputs (for example, labels derived from filenames or supplied with `--caller-names`). A direct single-evidence caller record may omit `SOURCES`; in that case its explicit FORMAT `SC` value identifies the caller/method software recorded by the source VCF. `SOURCES` labels and `SC` values are therefore not required to share a naming namespace. Readers must not substitute record-ID prefixes, filenames, or `#CHROM` labels when neither explicit representation is available.
+
 ---
 
 ## 16. Conformance and implementation guidance
@@ -857,4 +859,3 @@ This appendix summarizes migration-relevant differences between unversioned lega
 10. **Unobserved sample policy is explicit.** Internal `UV=0` placeholders remain distinguishable in SVCF and VCF export records the selected `missing|ref` interpretation in the output header.
 11. **Colon-containing values require structure-aware parsing.** Record IDs and ALT representations may contain colons; readers must not parse SVCF sample blocks with naive positional `split(":")` logic.
 12. **Legacy compatibility is explicit, not authoritative.** Unversioned files may still be read through compatibility paths, but legacy inference must never override an explicit versioned SVCF identity.
-

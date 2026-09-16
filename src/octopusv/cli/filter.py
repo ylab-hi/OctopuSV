@@ -109,13 +109,19 @@ def filter_svcf(
         "--source",
         help=(
             "Comma-separated record-level source/caller support include list. "
-            "Uses INFO/SOURCES first, then ID prefix and single-header-column fallback."
+            "Merged records use explicit INFO/SOURCES labels; direct single-evidence "
+            "caller records may use explicit FORMAT/SC instead. SOURCES labels and "
+            "SC caller-software names are distinct naming namespaces; OctopuSV does "
+            "not infer sources from record IDs, filenames, or header labels."
         ),
     ),
     exclude_source: Optional[str] = typer.Option(
         None,
         "--exclude-source",
-        help="Comma-separated record-level source/caller support exclusion list.",
+        help=(
+            "Comma-separated source/caller exclusion list. Uses the same explicit "
+            "INFO/SOURCES or single-evidence FORMAT/SC identity rules as --source."
+        ),
     ),
     source_mode: str = typer.Option(
         "any",
@@ -248,7 +254,7 @@ def filter_svcf(
 
     try:
         summary = SVCFFilter(config).run()
-    except (FileNotFoundError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 

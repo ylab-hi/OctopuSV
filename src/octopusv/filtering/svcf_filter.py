@@ -20,10 +20,15 @@ without rewriting INFO/FORMAT/sample/caller columns.
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from octopusv.utils.atomic_write import atomic_output_path
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.text_io import open_text_auto
 
 
 NON_LINEAR_SVTYPES = {"TRA", "BND"}
@@ -348,21 +353,34 @@ class SVCFFilter:
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        output_handle = None
-        if not self.config.dry_run:
-            if self.config.output_file is None:
-                raise ValueError("output_file is required unless dry_run=True.")
-            output_handle = Path(self.config.output_file).open("w")
+        with ExitStack() as stack:
+            output_handle = None
+            if not self.config.dry_run:
+                if self.config.output_file is None:
+                    raise ValueError("output_file is required unless dry_run=True.")
+                temp_output = stack.enter_context(
+                    atomic_output_path(self.config.output_file)
+                )
+                output_handle = stack.enter_context(
+                    open(temp_output, "w", encoding="utf-8")
+                )
 
-        try:
-            with input_path.open() as handle:
-                for line in handle:
+            with open_text_auto(input_path) as handle:
+                for line_number, line in enumerate(handle, 1):
                     if line.startswith("#"):
                         self._handle_header(line, output_handle)
                         continue
 
                     if not line.strip():
                         continue
+
+                    fields = line.rstrip("\r\n").split("\t")
+                    if len(fields) < 10:
+                        raise ValueError(
+                            f"Malformed SVCF record in {str(input_path)!r} on line "
+                            f"{line_number}: expected at least 10 tab-separated "
+                            f"columns, got {len(fields)}."
+                        )
 
                     self.input_records += 1
 
@@ -373,9 +391,6 @@ class SVCFFilter:
                             output_handle.write(line)
                     else:
                         self.excluded_by_reason[reason] += 1
-        finally:
-            if output_handle is not None:
-                output_handle.close()
 
         return self.summary()
 
@@ -388,9 +403,9 @@ class SVCFFilter:
             output_handle.write(line)
 
     def _passes_line(self, line: str) -> tuple[bool, str]:
-        fields = line.rstrip("\n").split("\t")
-        if len(fields) < 8:
-            return False, "malformed_record"
+        fields = line.rstrip("\r\n").split("\t")
+        if len(fields) < 10:
+            raise ValueError("Malformed SVCF record: expected at least 10 columns.")
 
         chrom = fields[0]
         pos = fields[1]
@@ -480,7 +495,7 @@ class SVCFFilter:
 
         # Source filters
         if self._source_filters_active():
-            sources, method = self._record_sources(info, sv_id)
+            sources, method = self._record_sources(info, fields)
             self.source_detection_used[method] += 1
 
             source_count = len(sources)
@@ -555,36 +570,37 @@ class SVCFFilter:
             ]
         )
 
-    def _record_sources(self, info: dict, sv_id: str) -> tuple[set[str], str]:
-        """Infer record-level caller/source support.
+    def _record_sources(self, info: dict, fields: list[str]) -> tuple[set[str], str]:
+        """Return explicit record-level source identities.
 
-        Priority:
-            1. INFO/SOURCES
-            2. record ID prefix, e.g. pbsv.INS.123 -> pbsv
-            3. single trailing column name in #CHROM header
-
-        This is record-level provenance detection. It does not delete columns.
+        Source identity is factual data and must not be reconstructed from ID
+        prefixes, filenames, or header labels.  Merged SVCF records use
+        INFO/SOURCES.  A single-evidence caller record may instead carry its
+        explicit source in FORMAT/SC.  Anything else is unresolved and source
+        filtering fails loudly rather than silently guessing.
         """
         sources_value = info.get("SOURCES")
         if sources_value not in (None, "", ".", True):
             sources = {
                 item.strip().lower()
                 for item in str(sources_value).split(",")
-                if item.strip()
+                if item.strip() and item.strip() != "."
             }
-            return sources, "INFO/SOURCES"
+            if sources:
+                return sources, "INFO/SOURCES"
 
-        if "." in sv_id:
-            prefix = sv_id.split(".", 1)[0].strip()
-            if prefix:
-                return {prefix.lower()}, "ID_prefix"
+        if len(fields) == 10:
+            parsed = parse_svcf_sample_block(fields[8], fields[9])
+            source = parsed.get("SC")
+            if source not in (None, "", ".", "unknown"):
+                return {str(source).lower()}, "FORMAT/SC"
 
-        if len(self.header_trailing_columns) == 1:
-            column = self.header_trailing_columns[0].strip()
-            if column:
-                return {column.lower()}, "single_header_column"
-
-        return set(), "unresolved"
+        raise ValueError(
+            "Source-based filtering requires explicit source identity in "
+            "INFO/SOURCES or, for a single-evidence record, FORMAT/SC. "
+            "OctopuSV does not infer source identity from record IDs, file "
+            "names, or #CHROM labels."
+        )
 
     def summary(self) -> dict:
         removed = self.input_records - self.output_records

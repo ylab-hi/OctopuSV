@@ -7,6 +7,7 @@ consumes that same in-memory list. INFO parsing is centralized and safe
 (handles flags and values containing '=').
 """
 
+from octopusv.utils.text_io import open_text_auto
 from octopusv.utils.svcf_schema import (
     MODE_MULTI,
     parse_identity_from_meta_lines,
@@ -69,8 +70,8 @@ def read_records(input_file):
     meta_lines = []
     identity = None
 
-    with open(input_file) as fh:
-        for line in fh:
+    with open_text_auto(input_file) as fh:
+        for line_number, line in enumerate(fh, 1):
             stripped = line.rstrip("\r\n")
 
             if line.startswith("##"):
@@ -99,12 +100,16 @@ def read_records(input_file):
                     ) from exc
                 continue
 
-            if line.startswith("#"):
+            if line.startswith("#") or not stripped:
                 continue
 
             fields = stripped.split("\t")
-            if len(fields) < 8:
-                continue
+            if len(fields) < 10:
+                raise ValueError(
+                    f"Malformed SVCF record in {str(input_file)!r} on line "
+                    f"{line_number}: expected at least 10 tab-separated columns, "
+                    f"got {len(fields)}."
+                )
 
             if identity is None:
                 try:

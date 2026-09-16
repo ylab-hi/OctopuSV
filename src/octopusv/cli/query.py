@@ -167,7 +167,7 @@ def query_svcf(
 
         summary = SVCFQuery(config).run()
 
-    except (FileNotFoundError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
