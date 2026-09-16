@@ -17,6 +17,7 @@ from octopusv.transformer.no_bnd import NonBNDTransformer
 from octopusv.transformer.same_chr_sv import SameChrSVTransformer
 from octopusv.transformer.snmd_bndp import SpecialNoMateDiffBNDPairTransformer
 from octopusv.transformer.stra import SingleTRATransformer
+from octopusv.utils.atomic_write import atomic_output_path
 from octopusv.utils.normal_vcf_parser import parse_vcf
 from octopusv.utils.svcf_utils import write_sv_vcf
 
@@ -100,6 +101,15 @@ def correct(
         exclude_nocall: bool = typer.Option(
             False, "--exclude-nocall", help="Exclude variants with ./. genotype"
         ),
+        skip_single_breakends: bool = typer.Option(
+            False,
+            "--skip-single-breakends",
+            help=(
+                "Explicitly omit true one-ended BND records such as N. or .N. "
+                "By default correct fails because these records have no remote "
+                "breakpoint and cannot be represented losslessly in SVCF 1.1."
+            ),
+        ),
 ):
     """Correct SV events with optional quality filtering."""
 
@@ -136,8 +146,20 @@ def correct(
         raise typer.Exit(code=1)
 
     # Parse the input VCF file.
-    # non_bnd_events means DEL, INV, INS, DUP.
-    contig_lines, same_chr_bnd_events, diff_chr_bnd_events, non_bnd_events = parse_vcf(input_file)
+    # non_bnd_events means DEL, INV, INS, DUP.  True single-breakends are
+    # rejected by default because SVCF 1.1 requires an explicit remote BND
+    # coordinate.  A user may explicitly opt into skipping only that narrow
+    # class; malformed/unsupported paired BND ALT strings still fail.
+    parse_stats = {}
+    try:
+        contig_lines, same_chr_bnd_events, diff_chr_bnd_events, non_bnd_events = parse_vcf(
+            input_file,
+            skip_single_breakends=skip_single_breakends,
+            parse_stats=parse_stats,
+        )
+    except ValueError as exc:
+        _echo(f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
 
     # Initialize quality filter if any filtering parameters are provided.
     has_quality_filters = any([
@@ -186,9 +208,12 @@ def correct(
         quality_filter.print_stats()
         _echo("Quality filtering completed.")
 
-    # Extract mate BND and no mate events, they are all with different chromosomes.
+    # Extract mate BND pairs using the existing pairing algorithm.  The no-mate
+    # set is the identity-based complement of those exact decisions rather than
+    # a second independent pairing pass.  This preserves who pairs with whom
+    # while preventing duplicate-coordinate records from silently disappearing.
     mate_bnd_pairs = find_mate_bnd_events(diff_chr_bnd_events, pos_tolerance=pos_tolerance)
-    no_mate_events = find_no_mate_events(diff_chr_bnd_events, pos_tolerance=pos_tolerance)
+    no_mate_events = find_unpaired_events(diff_chr_bnd_events, mate_bnd_pairs)
 
     # Further classify no_mate_events into special_no_mate_diff_bnd_pair and other_single_TRA.
     special_no_mate_diff_bnd_pairs, other_single_TRA = find_special_no_mate_diff_bnd_pair_and_other_single_tra(
@@ -227,7 +252,20 @@ def correct(
     special_no_mate_diff_bnd_pair_transformed_events = special_no_mate_diff_bnd_pair_transformer.apply_transforms(
         special_no_mate_diff_bnd_pairs
     )
-    single_TRA_transformed_events = single_TRA_transformer.apply_transforms(other_single_TRA)
+
+    # Some proximity-grouped special pairs are intentionally not recognized by
+    # either existing special-pair TRA converter.  Previously both records then
+    # vanished.  Preserve the existing classification rules and send only those
+    # *unconsumed* records back through the already-established single-TRA path.
+    special_consumed_ids = {id(event) for event in special_no_mate_diff_bnd_pair_transformed_events}
+    special_unconsumed_events = [
+        event
+        for pair in special_no_mate_diff_bnd_pairs
+        for event in pair
+        if id(event) not in special_consumed_ids
+    ]
+    single_TRA_inputs = other_single_TRA + special_unconsumed_events
+    single_TRA_transformed_events = single_TRA_transformer.apply_transforms(single_TRA_inputs)
     non_bnd_transformed_events = non_bnd_transformer.apply_transforms(non_bnd_events)
 
     # Merge all transformed events.
@@ -239,9 +277,30 @@ def correct(
             + non_bnd_transformed_events
     )
 
-    # Write the transformed events to the output file.
-    write_sv_vcf(contig_lines, all_transformed_events, output_file, str(input_file))
+    # Write atomically so a serializer/writer failure can never leave a
+    # partial SVCF at the requested destination or overwrite a valid existing
+    # result.  The scientific conversion logic above is unchanged.
+    skipped_single_breakends = int(parse_stats.get("single_breakends", 0))
+    extra_meta_lines = []
+    if skip_single_breakends and skipped_single_breakends:
+        extra_meta_lines.append(
+            f"##OctopuSV_skipped_single_breakends={skipped_single_breakends}"
+        )
 
+    with atomic_output_path(output_file) as temp_output:
+        write_sv_vcf(
+            contig_lines,
+            all_transformed_events,
+            temp_output,
+            str(input_file),
+            extra_meta_lines=extra_meta_lines,
+        )
+
+    if skipped_single_breakends:
+        _echo(
+            f"Skipped {skipped_single_breakends} true single-breakend record(s) "
+            "by explicit --skip-single-breakends request."
+        )
     _print_correct_success_message(output_file)
 
 
@@ -280,6 +339,17 @@ def find_mate_bnd_events(events, pos_tolerance=3):
             continue
 
     return mate_bnd_pairs
+
+
+def find_unpaired_events(events, mate_pairs):
+    """Return events not consumed by the already-decided mate pairs.
+
+    Identity, not coordinates or record IDs, defines consumption.  This keeps
+    the existing mate-pair selection untouched while making the paired/unpaired
+    partition internally consistent even for duplicate coordinates/keys.
+    """
+    paired_object_ids = {id(event) for pair in mate_pairs for event in pair}
+    return [event for event in events if id(event) not in paired_object_ids]
 
 
 def find_no_mate_events(events, pos_tolerance=3):

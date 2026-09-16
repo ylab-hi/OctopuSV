@@ -31,14 +31,26 @@ def extract_original_header_definitions(input_vcf_file):
         'sample_names': ["Sample"],
     }
 
+    is_svaba_output = False
+
     with open_text_auto(input_vcf_file) as f:
         for line in f:
             line = line.rstrip("\n")
-            # 🔴 CHANGED: parse sample names from the #CHROM line, then stop.
+            if line.startswith("##source=") and "svaba" in line.lower():
+                is_svaba_output = True
+
+            # Parse sample names from the #CHROM line, then stop.  Preserve the
+            # historical SvABA 13-column compatibility path used by the parser:
+            # that layout intentionally selects only the final sample column.
+            # Keeping the header selection aligned with the parser prevents a
+            # malformed SVCF with four declared samples but one sample block.
             if line.startswith('#CHROM'):
                 cols = line.split("\t")
                 if len(cols) >= 10:
-                    header_info['sample_names'] = cols[9:]
+                    if is_svaba_output and len(cols) == 13:
+                        header_info['sample_names'] = [cols[12]]
+                    else:
+                        header_info['sample_names'] = cols[9:]
                 break
             if not line.startswith('##'):
                 # Reached a data line without a #CHROM header; stop anyway.
@@ -191,7 +203,7 @@ def merge_header_definitions(original_headers, octopus_defaults):
     return merged
 
 
-def generate_sv_header(contig_lines, input_vcf_file=None):
+def generate_sv_header(contig_lines, input_vcf_file=None, extra_meta_lines=None):
     """
     Generate SVCF file header lines according to SVCF specification.
     If input_vcf_file is provided, extract and preserve original header definitions.
@@ -248,6 +260,8 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
     # unversioned: its columns are biological samples, but its blocks still use
     # caller evidence FORMAT rather than synthesized UC/UV sample calls.
     final_header = list(basic_header)
+    if extra_meta_lines:
+        final_header.extend(extra_meta_lines)
     if is_multi_sample:
         final_header.append(mode_header(MODE_MULTI))
     else:
@@ -273,12 +287,12 @@ def generate_sv_header(contig_lines, input_vcf_file=None):
     return final_header
 
 
-def write_sv_vcf(contig_lines, events, output_file, input_vcf_file=None):
+def write_sv_vcf(contig_lines, events, output_file, input_vcf_file=None, extra_meta_lines=None):
     """
     Write SV events to VCF file with proper header definitions.
     If input_vcf_file is provided, preserve original header definitions.
     """
-    sv_header = generate_sv_header(contig_lines, input_vcf_file)
+    sv_header = generate_sv_header(contig_lines, input_vcf_file, extra_meta_lines=extra_meta_lines)
     with open(output_file, "w") as f:
         for header in sv_header:
             f.write(header + "\n")
