@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from octopusv.utils.vcf_info import format_vcf_info_item
+
 
 def calculate_metrics(results: dict[str, list]):
     """Calculate benchmark metrics including precision, recall, and F1 score."""
@@ -29,7 +31,7 @@ def write_vcf(file_path: Path, events: list[tuple | object]):
             else:  # Other SV events
                 f.write(
                     f"{event.chrom}\t{event.pos}\t{event.sv_id}\t{event.ref}\t{event.alt}\t"
-                    f"{event.quality}\t{event.filter}\t{';'.join(f'{k}={v}' for k, v in event.info.items())}\n"
+                    f"{event.quality}\t{event.filter}\t{';'.join(format_vcf_info_item(k, v) for k, v in event.info.items())}\n"
                 )
 
 

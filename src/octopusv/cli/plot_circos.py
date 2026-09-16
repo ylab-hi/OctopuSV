@@ -1,3 +1,4 @@
+import importlib
 import re
 from pathlib import Path
 
@@ -14,6 +15,10 @@ def _load_circos_backend():
     the user actually draws a circos plot.
     """
     try:
+        # pycirclize is imported lazily inside CircosPlotter.plot().  Check it
+        # here so the CLI can fail with the intended actionable message instead
+        # of leaking a raw ModuleNotFoundError after parsing the full input.
+        importlib.import_module("pycirclize")
         from octopusv.vis.circos_plotter import (
             CircosPlotter,
             load_chrom_sizes_from_fai,

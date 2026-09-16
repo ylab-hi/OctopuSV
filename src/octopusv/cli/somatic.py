@@ -39,6 +39,7 @@ def somatic(
     merge(
         input_files=[tumor_file, normal_file],
         input_option=None,  # Set to None explicitly
+        input_list=None,    # Direct Python call: do not inherit Typer OptionInfo defaults
         output_file=output_file,
         mode="sample",
         sample_names="tumor,normal",
