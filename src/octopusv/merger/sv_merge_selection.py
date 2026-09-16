@@ -72,6 +72,27 @@ def _compile_expression(expression, entries):
         detail = exc.msg or str(exc)
         raise ValueError(f"Invalid expression: {detail}") from exc
 
+    allowed_node_types = (
+        ast.Expression,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.UnaryOp,
+        ast.Not,
+        ast.Name,
+        ast.Load,
+    )
+    invalid_nodes = [
+        node
+        for node in ast.walk(tree)
+        if not isinstance(node, allowed_node_types)
+    ]
+    if invalid_nodes:
+        raise ValueError(
+            "Invalid expression: only input source names combined with "
+            "AND, OR, NOT, and parentheses are supported."
+        )
+
     allowed_identifiers = {identifier for _basename, identifier, _normalized in entries}
     referenced_identifiers = {
         node.id

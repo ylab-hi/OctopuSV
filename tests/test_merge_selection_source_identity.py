@@ -234,3 +234,26 @@ def test_expression_unknown_identifier_fails_before_event_evaluation(tmp_path):
 
     with pytest.raises(ValueError, match="unknown source identifier"):
         merger.get_events_by_expression("a.svcf AND missing")
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "a.svcf + b.svcf",
+        "a.svcf == b.svcf",
+        "a.svcf.__class__",
+    ],
+)
+def test_expression_rejects_non_boolean_ast_nodes(tmp_path, expression):
+    source_a = tmp_path / "a.svcf"
+    source_b = tmp_path / "b.svcf"
+    merger = _SelectionHarness(
+        [source_a, source_b],
+        [_event("A", source_a), _event("B", source_b)],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="only input source names combined with AND, OR, NOT",
+    ):
+        merger.get_events_by_expression(expression)

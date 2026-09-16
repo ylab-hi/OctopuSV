@@ -49,15 +49,21 @@ class SVRecord:
 
 
 def read_records(input_file):
-    """Read an SVCF file once. Returns (records, sample_names).
+    """Read an SVCF file once. Returns (records, sample_names, mode).
 
-    sample_names comes from the #CHROM header (columns after FORMAT); it has
-    one entry in single/caller mode and N entries in sample/multi mode.
+    ``mode`` is ``sample`` when ``##OctopuSV_mode=multi`` is declared.
+    Header-only legacy multi-sample files without the marker are still treated
+    as sample mode when they contain more than one trailing column. Otherwise
+    the file is caller/single mode.
     """
     records = []
     sample_names = []
+    has_multi_marker = False
     with open(input_file) as fh:
         for line in fh:
+            if line.rstrip("\r\n") == "##OctopuSV_mode=multi":
+                has_multi_marker = True
+                continue
             if line.startswith("#CHROM"):
                 header = line.rstrip("\n").split("\t")
                 sample_names = header[9:] if len(header) > 9 else []
@@ -68,4 +74,6 @@ def read_records(input_file):
             if len(fields) < 8:
                 continue
             records.append(SVRecord(fields))
-    return records, sample_names
+
+    mode = "sample" if has_multi_marker or len(sample_names) > 1 else "caller"
+    return records, sample_names, mode

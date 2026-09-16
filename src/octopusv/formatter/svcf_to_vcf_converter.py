@@ -5,10 +5,7 @@ import re
 import uuid
 from pathlib import Path
 
-from octopusv.utils.genotype_resolver import (
-    resolve_multi_caller_genotype,
-    unique_source_segments,
-)
+from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
 from octopusv.utils.svcf_parser import SVCFEvent
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
@@ -23,8 +20,8 @@ class SVCFtoVCFConverter:
       - Preserve OctopuSV source/evidence metadata in INFO, especially
         SOURCES and SOURCE_IDS.
       - Keep sample-mode sample columns intact and in header order.
-      - Collapse caller-mode evidence blocks into one standard VCF sample
-        column using the shared unique-source genotype rule.
+      - Collapse multi-evidence caller-mode records into one standard VCF
+        sample column using the shared order-independent consensus rule.
       - Support streaming conversion so memory use scales with one record,
         not with the complete input/output files.
 
@@ -415,13 +412,17 @@ class SVCFtoVCFConverter:
             existing_format_ids,
         )
 
-        if self.mode in {"multi", "legacy_multi"}:
-            header = self._append_unique_header_lines(
-                header,
-                self.SAMPLE_MODE_FORMAT_LINES,
-                "FORMAT",
-                existing_format_ids,
-            )
+        # UC/UV are declared for every converted VCF because caller-mode
+        # records with multiple evidence blocks are synthesized into one
+        # sample-level call and expose these consensus counts.  Single-evidence
+        # caller records keep their original compact FORMAT and simply do not
+        # use UC/UV.
+        header = self._append_unique_header_lines(
+            header,
+            self.SAMPLE_MODE_FORMAT_LINES,
+            "FORMAT",
+            existing_format_ids,
+        )
 
         sample_header = "\t".join(self.sample_names)
         header += (
@@ -518,7 +519,15 @@ class SVCFtoVCFConverter:
                     "(from #CHROM header)."
                 )
         else:
-            vcf_format = "GT:AD:DP:LN"
+            # A single caller evidence block is a passthrough, not a synthesis,
+            # so preserve the compact historical FORMAT.  Once multiple
+            # evidence blocks are collapsed, expose UC/UV so the synthesized
+            # genotype remains interpretable downstream.  VCF permits FORMAT
+            # fields to vary by record.
+            if len(raw_cols) == 1:
+                vcf_format = "GT:AD:DP:LN"
+            else:
+                vcf_format = "GT:AD:DP:UC:UV:LN"
             sample_columns = [self._collapse_caller_blocks(event, raw_cols)]
 
         sample = "\t".join(sample_columns)
@@ -529,7 +538,17 @@ class SVCFtoVCFConverter:
         )
 
     def _collapse_caller_blocks(self, event, raw_cols):
-        """Collapse caller evidence blocks into one VCF sample column."""
+        """Collapse caller-mode evidence into one standard VCF sample column.
+
+        A single evidence block is not a synthesis step and is preserved
+        directly.  Once multiple evidence blocks are present, the output GT is
+        produced by the same order-independent caller consensus used by sample
+        merge.  Caller AD values are not composable, so synthesized calls carry
+        ``AD=.,.`` and ``DP=.``.  UC/UV expose the unique carrier callers and
+        valid caller votes that produced the synthesized call.  LN is taken
+        from the merged event rather than from an arbitrarily selected caller
+        block.
+        """
         fmt = (
             event.format
             if getattr(event, "format", None)
@@ -539,29 +558,35 @@ class SVCFtoVCFConverter:
         if len(raw_cols) == 1:
             return self._convert_svcf_sample_to_vcf(raw_cols[0], fmt)
 
-        info_str = ";".join(
-            f"{key}={value}" if value is not True else key
-            for key, value in event.info.items()
+        consensus = resolve_caller_svcf_consensus(fmt, raw_cols, event.info)
+        ln = self._event_length_for_synthesized_call(event)
+        return (
+            f"{consensus.gt}:.,.:.:"
+            f"{consensus.unique_carrier_callers}:"
+            f"{consensus.valid_caller_votes}:{ln}"
         )
-        winning_gt = resolve_multi_caller_genotype(fmt, raw_cols, info_str)
-        selected_blocks = unique_source_segments(raw_cols, info_str)
 
-        # AD/LN must come from the same unique-source evidence set that
-        # participated in genotype resolution.  Otherwise an excluded duplicate
-        # block from the same caller can accidentally supply AD/LN merely because
-        # it carries the winning GT.
-        if winning_gt is not None:
-            for _index, col in selected_blocks:
-                parsed = parse_svcf_sample_block(fmt, col)
-                if parsed.get("GT") == winning_gt:
-                    return self._convert_svcf_sample_to_vcf(col, fmt)
+    @staticmethod
+    def _event_length_for_synthesized_call(event):
+        """Return merged-event length for a synthesized caller-mode call."""
+        svlen = getattr(event, "info", {}).get("SVLEN")
+        if svlen not in (None, "", ".", True):
+            try:
+                return str(abs(int(str(svlen).strip())))
+            except (TypeError, ValueError):
+                pass
 
-        if selected_blocks:
-            return self._convert_svcf_sample_to_vcf(
-                selected_blocks[0][1],
-                fmt,
-            )
-        return self._convert_svcf_sample_to_vcf(raw_cols[0], fmt)
+        sv_type = getattr(event, "sv_type", "")
+        if sv_type not in {"BND", "TRA"}:
+            try:
+                start = int(getattr(event, "pos"))
+                end = int(getattr(event, "end_pos"))
+                if end != start:
+                    return str(abs(end - start))
+            except (TypeError, ValueError, AttributeError):
+                pass
+
+        return "."
 
     @staticmethod
     def _normalized_sample_value(value, default):

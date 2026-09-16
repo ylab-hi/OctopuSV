@@ -345,9 +345,10 @@ def test_caller_duplicate_evidence_does_not_get_extra_genotype_vote(tmp_path):
     input_path = tmp_path / "caller.svcf"
     output_path = tmp_path / "caller.vcf"
 
-    # Source A contributes two evidence blocks. Evidence-count voting would
-    # choose 1/1 (A2 + B1), but unique-source voting uses A1 and B1: the vote is
-    # tied and A1 wins by AD support (20 vs 5), so the result must be 0/1.
+    # Source A contributes two evidence blocks. The shared consensus first
+    # reduces A's conflicting 0/1 + 1/1 evidence to CARRIER_UNKNOWN; B votes
+    # 1/1. Carrier presence is established but zygosity is unresolved, so the
+    # synthesized call is 1/. and caller AD is intentionally unavailable.
     blocks = [
         evidence("0/1", "5,20", "50", "A1", "A"),
         evidence("1/1", "1,50", "50", "A2", "A"),
@@ -370,7 +371,8 @@ def test_caller_duplicate_evidence_does_not_get_extra_genotype_vote(tmp_path):
         line for line in output_path.read_text().splitlines()
         if not line.startswith("#")
     ).split("\t")
-    assert fields[9] == "0/1:5,20:25:50"
+    assert fields[8] == "GT:AD:DP:UC:UV:LN"
+    assert fields[9] == "1/.:.,.:.:2:2:50"
 
 
 def test_colon_containing_later_fields_do_not_shift_gt_ad_ln(tmp_path):
@@ -398,10 +400,14 @@ def test_colon_containing_later_fields_do_not_shift_gt_ad_ln(tmp_path):
 
     SVCFtoVCFConverter(None, input_path).convert_to_file(output_path)
 
+    lines = output_path.read_text().splitlines()
+    assert any(line.startswith("##FORMAT=<ID=UC,") for line in lines)
+    assert any(line.startswith("##FORMAT=<ID=UV,") for line in lines)
     fields = next(
-        line for line in output_path.read_text().splitlines()
+        line for line in lines
         if not line.startswith("#")
     ).split("\t")
+    assert fields[8] == "GT:AD:DP:LN"
     assert fields[9] == "0/1:7,9:16:73"
 
 
@@ -409,9 +415,10 @@ def test_caller_collapse_ad_ln_come_from_unique_source_winning_block(tmp_path):
     input_path = tmp_path / "caller_duplicate_same_gt.svcf"
     output_path = tmp_path / "caller_duplicate_same_gt.vcf"
 
-    # Unique-source voting uses A1 and B1 only. Their GTs tie, so B1 wins by
-    # AD support. A2 is a duplicate-source block that shares B1's winning GT
-    # and appears earlier in raw evidence order; it must NOT provide AD/LN.
+    # Source A contributes conflicting 0/1 + 1/1 evidence and therefore one
+    # CARRIER_UNKNOWN caller state. Source B contributes 1/1. The synthesized
+    # call preserves carrier presence as 1/.; AD/DP are unavailable and LN
+    # comes from the merged event (SVLEN=120), not from any caller block.
     blocks = [
         evidence("0/1", "20,4", "50", "A1", "A"),
         evidence("1/1", "0,19", "99", "A2", "A"),
@@ -434,4 +441,5 @@ def test_caller_collapse_ad_ln_come_from_unique_source_winning_block(tmp_path):
         line for line in output_path.read_text().splitlines()
         if not line.startswith("#")
     ).split("\t")
-    assert fields[9] == "1/1:4,25:29:120"
+    assert fields[8] == "GT:AD:DP:UC:UV:LN"
+    assert fields[9] == "1/.:.,.:.:2:2:120"

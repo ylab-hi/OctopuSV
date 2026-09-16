@@ -30,12 +30,13 @@ class SVStater:
         self.genome = genome
         self.records = []
         self.sample_names = []
+        self.svcf_mode = "caller"
         self.stats = {}
         self.length_source = None
 
     def analyze(self):
         """Read the file once and run every analyzer into self.stats."""
-        self.records, self.sample_names = read_records(self.input_file)
+        self.records, self.sample_names, self.svcf_mode = read_records(self.input_file)
 
         # Decide chromosome lengths: --fai > --genome > auto-detect.
         contigs = {r.chrom for r in self.records}
@@ -48,7 +49,9 @@ class SVStater:
             "size": SizeAnalyzer(self.records, self.min_size, self.max_size).analyze(),
             "chromosome": ChromosomeAnalyzer(self.records, lengths).analyze(),
             "qc": QCAnalyzer(self.records).analyze(),
-            "genotype": GenotypeAnalyzer(self.records, self.sample_names).analyze(),
+            "genotype": GenotypeAnalyzer(
+                self.records, self.sample_names, mode=self.svcf_mode
+            ).analyze(),
         }
 
     # -- JSON ----------------------------------------------------------------

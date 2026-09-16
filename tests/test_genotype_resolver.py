@@ -63,7 +63,7 @@ def test_missing_or_mismatched_sources_does_not_guess():
     ]
 
 
-def test_svcf2vcf_collapse_uses_unique_source_voting():
+def test_svcf2vcf_collapse_uses_shared_order_independent_consensus():
     converter = object.__new__(SVCFtoVCFConverter)
 
     segments = [
@@ -76,9 +76,14 @@ def test_svcf2vcf_collapse_uses_unique_source_voting():
         format=FORMAT,
         info={
             "SOURCES": "sniffles,svim,svim",
+            "SVLEN": "100",
         },
+        sv_type="INS",
+        pos=100,
+        end_pos=100,
     )
 
-    # This is the pre-fix caller-level result: one vote from Sniffles and one
-    # vote from SVIM, with AD selecting the Sniffles 1/1 block.
-    assert converter._collapse_caller_blocks(event, segments) == "1/1:0,44:44:70"
+    # Sniffles contributes HOM-alt and SVIM contributes one reduced HET state.
+    # Presence is established, but zygosity disagrees, so the shared consensus
+    # returns 1/. rather than letting AD or input order choose 1/1 or 0/1.
+    assert converter._collapse_caller_blocks(event, segments) == "1/.:.,.:.:2:2:100"

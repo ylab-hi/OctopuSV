@@ -17,7 +17,8 @@ Correctness fixes baked in here:
 import statistics
 from collections import Counter, defaultdict
 
-from octopusv.utils.genotype_resolver import resolve_multi_caller_genotype
+from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 
 # ---------------------------------------------------------------------------
@@ -239,28 +240,27 @@ class QCAnalyzer:
 # ---------------------------------------------------------------------------
 
 class GenotypeAnalyzer:
-    """Genotype distribution, mode-aware.
+    """Genotype distribution using the same caller consensus as svcf2vcf.
 
-    Single/caller mode -> one resolved genotype per record (caller-mode uses
-    the shared multi-caller voting rule). Sample/multi mode -> per-sample and
-    overall distributions.
+    Caller mode preserves a single evidence block directly.  Records with
+    multiple caller/evidence blocks are synthesized through the shared
+    order-independent sample-consensus state machine.  Sample-mode SVCF already
+    contains synthesized GT values, so those are counted directly and are not
+    re-resolved.
     """
 
-    def __init__(self, records, sample_names):
+    def __init__(self, records, sample_names, mode=None):
         self.records = records
         self.sample_names = sample_names
+        self.mode = mode or ("sample" if len(sample_names) > 1 else "caller")
 
-    def _gt_from_segment(self, fmt, segment):
-        keys = fmt.split(":")
-        if "GT" not in keys:
-            return None
-        idx = keys.index("GT")
-        parts = segment.split(":")
-        return parts[idx] if idx < len(parts) else None
+    @staticmethod
+    def _gt_from_segment(fmt, segment):
+        parsed = parse_svcf_sample_block(fmt, segment)
+        return parsed.get("GT")
 
     def analyze(self):
-        # Sample/multi mode: more than one declared sample column.
-        if len(self.sample_names) > 1:
+        if self.mode == "sample":
             return self._analyze_sample_mode()
         return self._analyze_caller_mode()
 
@@ -272,11 +272,9 @@ class GenotypeAnalyzer:
             if len(r.sample_cols) == 1:
                 gt = self._gt_from_segment(r.format, r.sample_cols[0])
             else:
-                # Reconstruct the INFO string for SOURCES-order tie-break.
-                info_str = ";".join(
-                    k if v is True else f"{k}={v}" for k, v in r.info.items()
-                )
-                gt = resolve_multi_caller_genotype(r.format, r.sample_cols, info_str)
+                gt = resolve_caller_svcf_consensus(
+                    r.format, r.sample_cols, r.info
+                ).gt
             if gt:
                 genotypes[gt] += 1
         total = sum(genotypes.values())

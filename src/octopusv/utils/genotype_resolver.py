@@ -1,21 +1,14 @@
-"""Shared multi-caller genotype resolution.
+"""Legacy multi-caller genotype resolver retained for compatibility.
 
-In OctopuSV caller mode a single SVCF record may carry one FORMAT block per
-supporting caller. When a single representative genotype is needed (genotype
-statistics, or collapsing to a standard single-sample VCF column), the same
-three-tier rule is applied so every consumer agrees:
+This module implements OctopuSV's historical majority -> AD -> input-order
+tie-break rule.  OctopuSV 1.0 production consumers no longer use this rule:
+``svcf2vcf`` and ``stat`` synthesize multi-evidence caller-mode genotypes via
+``octopusv.utils.sample_consensus`` through the SVCF adapter in
+``octopusv.utils.caller_consensus``.
 
-  1. Majority vote across unique callers.
-  2. Tie-break by AD variant-supporting reads (valid AD > missing AD).
-  3. Tie-break by caller/source order (input file order).
-
-If a merged SVCF record contains more than one evidence block from the same
-source, only the first block from that source participates in genotype voting.
-The additional blocks remain in the SVCF for traceability, but they do not give
-one caller multiple votes.
-
-This module is the single source of truth for that rule. Both
-GenotypeAnalyzer (stat) and SVCFtoVCFConverter (svcf2vcf) import it.
+The functions remain available for backward compatibility and for tests that
+document the historical behavior.  New production code should not use this
+module to synthesize sample-level calls.
 """
 
 from collections import Counter
