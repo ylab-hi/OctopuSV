@@ -11,21 +11,57 @@ from octopusv.utils.svcf_schema import (
 
 
 SAFE_GLOBAL_META_KEYS = ("reference", "assembly")
+_GLOBAL_META_AUDIT_PREFIX = "OctopuSV_input_"
+
+
+def _quote_meta_value(value):
+    """Quote one value for a structured VCF meta-information field.
+
+    This is serialization only.  The value used for equality decisions remains
+    the exact raw header value (apart from line terminators).
+    """
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def global_meta_audit_lines(meta_lines):
+    """Return existing OctopuSV input-reference/assembly audit lines verbatim."""
+    prefixes = tuple(
+        f"##{_GLOBAL_META_AUDIT_PREFIX}{key}="
+        for key in SAFE_GLOBAL_META_KEYS
+    )
+    result = []
+    seen = set()
+    for raw_line in meta_lines or []:
+        line = str(raw_line).rstrip("\r\n")
+        if line.startswith(prefixes) and line not in seen:
+            seen.add(line)
+            result.append(line)
+    return result
 
 
 def merge_safe_global_meta_lines(meta_sources):
-    """Return consistent global VCF metadata safe to preserve across outputs.
+    """Preserve verifiable global metadata without guessing compatibility.
 
     ``meta_sources`` is an iterable of ``(source_name, meta_lines)`` pairs.
-    Only the narrowly approved global keys in ``SAFE_GLOBAL_META_KEYS`` are
-    considered. Missing declarations are allowed, but two explicit different
-    values for the same key are rejected rather than resolved by first-wins.
+    Only ``##reference`` and ``##assembly`` are considered here.  Missing
+    declarations are allowed.  If all observed values for one key are exactly
+    identical, that standard header line is preserved.
 
-    The original line from the first matching source is preserved verbatim
-    (apart from line terminators) so information is conserved without
-    normalizing or reinterpreting the metadata value.
+    If multiple distinct raw strings are observed, OctopuSV cannot determine
+    whether those strings describe compatible coordinate systems.  Such a
+    difference therefore must not block SV merging and must not be collapsed by
+    normalization or first-wins behavior.  Instead, the ambiguous standard
+    declaration is omitted, every observed source/value pair is retained in
+    OctopuSV audit meta-information, and a warning is emitted.
+
+    Equality is exact.  Values are not case-folded, path-normalized, basename-
+    normalized, URI-normalized, or otherwise reinterpreted.  Only ``\r``/``\n``
+    line terminators are removed while reading header lines.
     """
-    resolved = {}
+    import logging
+
+    observations = {key: [] for key in SAFE_GLOBAL_META_KEYS}
 
     for source_name, meta_lines in meta_sources:
         source_label = str(source_name) if source_name is not None else "<unknown>"
@@ -35,26 +71,51 @@ def merge_safe_global_meta_lines(meta_sources):
                 prefix = f"##{key}="
                 if not line.startswith(prefix):
                     continue
-
                 value = line[len(prefix):]
-                previous = resolved.get(key)
-                if previous is not None and previous[0] != value:
-                    previous_value, _previous_line, previous_source = previous
-                    raise ValueError(
-                        f"Conflicting ##{key} metadata across inputs: "
-                        f"{previous_value!r} in {previous_source!r} vs "
-                        f"{value!r} in {source_label!r}."
-                    )
-
-                if previous is None:
-                    resolved[key] = (value, line, source_label)
+                observations[key].append((source_label, value))
                 break
 
-    return [
-        resolved[key][1]
-        for key in SAFE_GLOBAL_META_KEYS
-        if key in resolved
-    ]
+    output_lines = []
+
+    for key in SAFE_GLOBAL_META_KEYS:
+        items = observations[key]
+        if not items:
+            continue
+
+        unique_values = {value for _source, value in items}
+        if len(unique_values) == 1:
+            value = next(iter(unique_values))
+            output_lines.append(f"##{key}={value}")
+            continue
+
+        # Deduplicate identical source/value pairs but preserve every distinct
+        # observation.  Sort only for deterministic serialization; source and
+        # value strings themselves are not normalized.
+        distinct_items = sorted(set(items), key=lambda item: (item[0], item[1]))
+        details = "; ".join(
+            f"{source!r}={value!r}"
+            for source, value in distinct_items
+        )
+        logging.warning(
+            "Conflicting ##%s metadata strings across inputs; omitting a "
+            "single ##%s declaration because OctopuSV cannot verify their "
+            "reference compatibility. Preserving all observed values in "
+            "##%s%s audit lines. Inputs: %s",
+            key,
+            key,
+            _GLOBAL_META_AUDIT_PREFIX,
+            key,
+            details,
+        )
+
+        audit_key = f"{_GLOBAL_META_AUDIT_PREFIX}{key}"
+        for source, value in distinct_items:
+            output_lines.append(
+                f"##{audit_key}=<Source={_quote_meta_value(source)},"
+                f"Value={_quote_meta_value(value)}>"
+            )
+
+    return output_lines
 
 
 def extract_original_header_definitions(input_vcf_file):

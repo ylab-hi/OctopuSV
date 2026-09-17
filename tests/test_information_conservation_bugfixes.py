@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import permutations
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ pytest.importorskip("natsort")
 
 from octopusv.cli.cli import app
 from octopusv.normalization.contig_normalizer import SVCFContigNormalizer
+from octopusv.utils.svcf_utils import merge_safe_global_meta_lines
 
 
 runner = CliRunner()
@@ -195,18 +197,31 @@ def test_merge_and_export_preserve_consistent_global_metadata(tmp_path, mode):
 
 @pytest.mark.parametrize("mode", ["caller", "sample"])
 @pytest.mark.parametrize(
-    ("field", "left", "right"),
+    ("field", "left", "right", "unchanged_field", "unchanged_value"),
     [
-        ("reference", "GRCh37", "GRCh38"),
-        ("assembly", "GRCh38.p13", "GRCh38.p14"),
+        (
+            "reference",
+            "file:///GRCh38.p13.genome.fa",
+            "ftp://example.org/hg38.no_alt.fa.gz",
+            "assembly",
+            "GRCh38.p14",
+        ),
+        (
+            "assembly",
+            "GRCh38.p13",
+            "GRCh38.p14",
+            "reference",
+            "GRCh38",
+        ),
     ],
 )
-def test_merge_rejects_explicit_global_metadata_conflicts(
-    tmp_path, mode, field, left, right
+def test_merge_audits_unverifiable_global_metadata_conflicts_without_blocking(
+    tmp_path, mode, field, left, right, unchanged_field, unchanged_value, caplog
 ):
     a = tmp_path / "a.svcf"
     b = tmp_path / "b.svcf"
     out = tmp_path / "out.svcf"
+    exported = tmp_path / "out.vcf"
 
     kwargs_a = {"reference": "GRCh38", "assembly": "GRCh38.p14"}
     kwargs_b = dict(kwargs_a)
@@ -227,14 +242,131 @@ def test_merge_rejects_explicit_global_metadata_conflicts(
         args += ["--caller-names", "callerA,callerB"]
     else:
         args += ["--sample-names", "sampleA,sampleB"]
+    # Header audit identity uses the exact input path.  This is explicit input
+    # identity, not a filename/caller-name heuristic.
+    expected_sources = (str(a), str(b))
 
-    result = runner.invoke(app, args)
-    assert result.exit_code != 0
-    assert f"Conflicting ##{field} metadata" in result.output or (
-        result.exception is not None
-        and f"Conflicting ##{field} metadata" in str(result.exception)
+    result = _invoke(args)
+    meta = _meta_lines(out)
+
+    # A raw-string mismatch is not proof of reference incompatibility, so it
+    # must not block scientific merging or become a first-wins declaration.
+    assert not any(line.startswith(f"##{field}=") for line in meta)
+    assert f"##{unchanged_field}={unchanged_value}" in meta
+
+    audit_prefix = f"##OctopuSV_input_{field}="
+    audit_lines = sorted(line for line in meta if line.startswith(audit_prefix))
+    assert len(audit_lines) == 2
+    for source_name, raw_value in zip(expected_sources, (left, right), strict=True):
+        assert any(f'Source="{source_name}"' in line and f'Value="{raw_value}"' in line for line in audit_lines)
+
+    assert "Conflicting ##" + field in caplog.text
+
+    # The audit trail is part of the file-level information and should survive
+    # VCF export as well.
+    _invoke(["svcf2vcf", "-i", str(out), "-o", str(exported)])
+    exported_meta = _meta_lines(exported)
+    assert sorted(
+        line for line in exported_meta if line.startswith(audit_prefix)
+    ) == audit_lines
+
+
+def _data_lines(path: Path) -> list[str]:
+    return [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+
+
+def test_reference_metadata_conflict_does_not_change_merged_data_records(tmp_path):
+    conflicted_a = tmp_path / "conflicted_a.svcf"
+    conflicted_b = tmp_path / "conflicted_b.svcf"
+    plain_a = tmp_path / "plain_a.svcf"
+    plain_b = tmp_path / "plain_b.svcf"
+    conflicted_out = tmp_path / "conflicted.svcf"
+    plain_out = tmp_path / "plain.svcf"
+
+    _write_caller_svcf(
+        conflicted_a,
+        record_id="a1",
+        pos=100,
+        source="callerA",
+        reference="file:///refA.fa",
+        assembly=None,
     )
-    assert not out.exists()
+    _write_caller_svcf(
+        conflicted_b,
+        record_id="b1",
+        pos=105,
+        source="callerB",
+        reference="ftp://example.org/refB.fa.gz",
+        assembly=None,
+    )
+    _write_caller_svcf(
+        plain_a,
+        record_id="a1",
+        pos=100,
+        source="callerA",
+        reference=None,
+        assembly=None,
+    )
+    _write_caller_svcf(
+        plain_b,
+        record_id="b1",
+        pos=105,
+        source="callerB",
+        reference=None,
+        assembly=None,
+    )
+
+    common = ["--mode", "caller", "--union", "--caller-names", "callerA,callerB"]
+    _invoke([
+        "merge", "-i", str(conflicted_a), "-i", str(conflicted_b),
+        "-o", str(conflicted_out), *common,
+    ])
+    _invoke([
+        "merge", "-i", str(plain_a), "-i", str(plain_b),
+        "-o", str(plain_out), *common,
+    ])
+
+    assert _data_lines(conflicted_out) == _data_lines(plain_out)
+
+
+def test_global_metadata_conflict_audit_is_input_order_independent(caplog):
+    sources = [
+        ("callerA", ["##reference=A"]),
+        ("callerB", ["##reference=B"]),
+        ("callerC", ["##reference=A"]),
+    ]
+
+    outputs = []
+    for ordering in permutations(sources):
+        outputs.append(tuple(merge_safe_global_meta_lines(ordering)))
+
+    assert len(set(outputs)) == 1
+    output = outputs[0]
+    assert not any(line.startswith("##reference=") for line in output)
+    assert output == (
+        '##OctopuSV_input_reference=<Source="callerA",Value="A">',
+        '##OctopuSV_input_reference=<Source="callerB",Value="B">',
+        '##OctopuSV_input_reference=<Source="callerC",Value="A">',
+    )
+
+
+def test_global_metadata_conflict_preserves_exact_raw_values_with_safe_quoting():
+    output = merge_safe_global_meta_lines(
+        [
+            ("caller A", ['##reference=file:///tmp/ref, build "A".fa']),
+            ("caller B", [r"##reference=C:\refs\build B.fa"]),
+        ]
+    )
+
+    assert not any(line.startswith("##reference=") for line in output)
+    assert output == [
+        '##OctopuSV_input_reference=<Source="caller A",Value="file:///tmp/ref, build \\"A\\".fa">',
+        '##OctopuSV_input_reference=<Source="caller B",Value="C:\\\\refs\\\\build B.fa">',
+    ]
 
 
 def _minimal_normalize_svcf(
