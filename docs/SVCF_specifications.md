@@ -859,13 +859,15 @@ For SVCF 1.1, validation includes:
 - caller/source/evidence column counts;
 - `SOURCE_IDS` positional consistency when present;
 - representable SVCF 1.1 `SOURCES` / `SOURCE_IDS` item syntax, including reserved-character and missing-value rules;
-- exact/case-sensitive source identity, including the prohibition of `:` in `SOURCES` labels and FORMAT `SC`;
+- exact/case-sensitive source identity, including the prohibition of `:` in `SOURCES` labels;
 - sample-column count consistency in multi mode;
-- absence of `:` in `CHROM`, `CHR2`, and FORMAT `SC`;
+- absence of `:` in `CHROM` and `CHR2`;
 - structural-variant coordinate checks;
 - BND breakend ALT/CHR2/END agreement;
 - TRA breakpoint validation, including breakend ALT/CHR2/END agreement when breakend notation is used and `CHR2` plus numeric `END` when symbolic `<TRA>` is used;
 - parseable `CO` values according to validator policy.
+
+FORMAT `SC` is also prohibited from containing `:` by the writer/producer contract in Sections 10 and 16. Because a colon-bearing `SC` can make an already serialized evidence block structurally ambiguous, a general validator cannot reliably recover and diagnose every such malformed `SC` after serialization. Conforming writers must therefore reject it before evidence-block construction.
 
 A versioned file that declares `caller` but uses the multi FORMAT is invalid. A versioned file that declares `multi` but uses the caller FORMAT is invalid. A versioned caller file with more than one trailing `#CHROM` column is invalid.
 
@@ -921,7 +923,8 @@ Software that reads SVCF 1.1 should:
 - reject unsupported versions rather than silently interpreting them as 1.1;
 - reject a FORMAT that disagrees with the declared mode;
 - treat explicit source labels as exact, case-sensitive identities;
-- reject `:` in `CHROM`, `CHR2`, FORMAT `SC`, or `SOURCES` source labels;
+- reject `:` in `CHROM`, `CHR2`, or explicit `SOURCES` source labels;
+- treat the prohibition of `:` in FORMAT `SC` as a writer-side representability rule; readers must not claim to recover an unambiguous `SC` from a block whose serialization is already ambiguous;
 - parse colon-containing IDs/ALT values with a structure-aware SVCF block parser;
 - distinguish raw caller evidence from synthesized sample calls;
 - distinguish unobserved sample placeholders from evidence-backed absence or unresolved calls.

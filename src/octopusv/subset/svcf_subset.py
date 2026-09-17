@@ -49,6 +49,12 @@ from typing import Optional
 from octopusv.filtering.svcf_filter import parse_info
 from octopusv.utils.atomic_write import atomic_output_path
 from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.source_identity import (
+    case_only_source_candidates,
+    explicit_record_sources,
+    format_case_only_source_error,
+)
+from octopusv.utils.svcf_validator import validate_versioned_svcf_for_downstream
 
 
 LEGAL_MODES = {"auto", "sample", "caller"}
@@ -257,6 +263,7 @@ class SVCFSubset:
 
         self.warning_counts = Counter()
         self.mode_warnings: list[str] = []
+        self.selection_warnings: list[str] = []
 
         self.header_info: Optional[HeaderInfo] = None
 
@@ -265,6 +272,10 @@ class SVCFSubset:
 
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
+
+        validate_versioned_svcf_for_downstream(
+            input_path, consumer="octopusv subset"
+        )
 
         with ExitStack() as stack:
             output_handle = None
@@ -320,6 +331,13 @@ class SVCFSubset:
 
                     if output_handle is not None:
                         output_handle.write(output_line)
+
+            # Caller identities are discovered from records rather than the
+            # header.  Validate case-only typos before the atomic output is
+            # published; truly unobserved callers remain a legitimate empty
+            # subset and are reported as warnings instead.
+            if self.detected_mode == "caller":
+                self._finalize_caller_selection()
 
         if self.header_info is None:
             raise ValueError("Malformed SVCF: missing #CHROM header line.")
@@ -466,6 +484,27 @@ class SVCFSubset:
         else:
             raise ValueError(f"Internal error: unknown detected mode {self.detected_mode}")
 
+    def _finalize_caller_selection(self) -> None:
+        observed = set(self.available_callers_counter)
+        for requested in self.config.selected_callers:
+            if requested in observed:
+                continue
+
+            candidates = case_only_source_candidates(requested, observed)
+            if candidates:
+                raise ValueError(
+                    format_case_only_source_error(requested, candidates)
+                )
+
+            observed_text = ", ".join(sorted(observed)) if observed else "."
+            message = (
+                f"Requested caller {requested!r} was not observed in this SVCF. "
+                f"Observed callers: {observed_text}. Returning the exact-match "
+                "subset; this caller may legitimately have no surviving events."
+            )
+            self.selection_warnings.append(message)
+            self.warning_counts["requested_caller_not_observed"] += 1
+
     def _render_output_header_lines(self) -> list[str]:
         assert self.header_info is not None
 
@@ -609,6 +648,18 @@ class SVCFSubset:
         info = parse_info(info_string)
         sources = split_info_list(info.get("SOURCES"))
 
+        # Keep the caller-mode positional contract based on SOURCES when it
+        # exists.  For a direct single-evidence caller record, use the same
+        # explicit FORMAT/SC fallback as source filtering rather than guessing
+        # from IDs or filenames.
+        if not sources and len(evidence_fields) == 1:
+            try:
+                explicit_sources, _ = explicit_record_sources(info, fields)
+            except ValueError:
+                explicit_sources = set()
+            if len(explicit_sources) == 1:
+                sources = [next(iter(explicit_sources))]
+
         for source in dict.fromkeys(sources):
             self.available_callers_counter[source] += 1
 
@@ -746,6 +797,7 @@ class SVCFSubset:
             "retained_callers": sorted(self.retained_callers_counter),
             "warning_counts": dict(self.warning_counts),
             "mode_warnings": self.mode_warnings,
+            "selection_warnings": self.selection_warnings,
         }
 
     @staticmethod
@@ -801,6 +853,12 @@ class SVCFSubset:
             lines.append("")
             lines.append("Mode warnings:")
             for warning in summary["mode_warnings"]:
+                lines.append(f"  {warning}")
+
+        if summary["selection_warnings"]:
+            lines.append("")
+            lines.append("Selection warnings:")
+            for warning in summary["selection_warnings"]:
                 lines.append(f"  {warning}")
 
         if summary["warning_counts"]:

@@ -2,8 +2,9 @@ import logging
 from pathlib import Path
 
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
+from octopusv.utils.svcf_validator import validate_versioned_svcf_for_downstream
 
-from .bench_utils import calculate_metrics, write_summary, write_vcf
+from .bench_utils import calculate_metrics, read_safe_vcf_meta, write_summary, write_vcf
 
 
 class SVBencher:
@@ -55,7 +56,14 @@ class SVBencher:
             raise
 
     def _parse_files(self):
-        """Parse input VCF files."""
+        """Validate versioned inputs, then parse truth and call events."""
+        validate_versioned_svcf_for_downstream(
+            self.truth_file, consumer="octopusv benchmark truth input"
+        )
+        validate_versioned_svcf_for_downstream(
+            self.call_file, consumer="octopusv benchmark call input"
+        )
+
         self.logger.info("Parsing truth file...")
         truth_parser = SVCFFileEventCreator([str(self.truth_file)])
         truth_parser.parse()
@@ -287,10 +295,29 @@ class SVBencher:
         self.logger.info("Writing results...")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        write_vcf(self.output_dir / "tp-base.vcf", self.results["tp_base"])
-        write_vcf(self.output_dir / "tp-call.vcf", self.results["tp_call"])
-        write_vcf(self.output_dir / "fp.vcf", self.results["fp"])
-        write_vcf(self.output_dir / "fn.vcf", self.results["fn"])
+        truth_meta = read_safe_vcf_meta(self.truth_file)
+        call_meta = read_safe_vcf_meta(self.call_file)
+
+        write_vcf(
+            self.output_dir / "tp-base.vcf",
+            self.results["tp_base"],
+            source_meta_lines=truth_meta,
+        )
+        write_vcf(
+            self.output_dir / "tp-call.vcf",
+            self.results["tp_call"],
+            source_meta_lines=call_meta,
+        )
+        write_vcf(
+            self.output_dir / "fp.vcf",
+            self.results["fp"],
+            source_meta_lines=call_meta,
+        )
+        write_vcf(
+            self.output_dir / "fn.vcf",
+            self.results["fn"],
+            source_meta_lines=truth_meta,
+        )
 
         metrics = calculate_metrics(self.results)
         write_summary(self.output_dir / "summary.json", metrics)

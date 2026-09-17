@@ -5,6 +5,7 @@ import sys
 from octopusv.converter.base import get_bnd_pattern
 from octopusv.sv import SVEvent
 from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.svcf_schema import validate_source_label
 
 
 _SINGLE_BREAKEND_RE = re.compile(r"^(?:[ACGTNacgtn]+\.|\.[ACGTNacgtn]+)$")
@@ -461,7 +462,14 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
     with open_text_auto(vcf_file_path) as f:
         for line_number, line in enumerate(f, start=1):
             if line.startswith("##source="):
-                source_info = line.split("=")[1].split(" ")[0].strip()
+                source_info = line.split("=", 1)[1].split(" ")[0].strip()
+                if source_info not in {"", "."}:
+                    try:
+                        validate_source_label(source_info)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Invalid VCF source label {source_info!r}: {exc}"
+                        ) from exc
                 if "svaba" in line.lower():
                     is_svaba_output = True
             elif line.startswith("##contig"):

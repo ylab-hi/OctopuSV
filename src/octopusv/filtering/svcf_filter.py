@@ -28,6 +28,11 @@ from typing import Optional
 
 from octopusv.utils.atomic_write import atomic_output_path
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.source_identity import (
+    case_only_source_candidates,
+    explicit_record_sources,
+    format_case_only_source_error,
+)
 from octopusv.utils.text_io import open_text_auto
 
 
@@ -577,36 +582,8 @@ class SVCFFilter:
         )
 
     def _record_sources(self, info: dict, fields: list[str]) -> tuple[set[str], str]:
-        """Return explicit record-level source identities.
-
-        Source identity is factual data and must not be reconstructed from ID
-        prefixes, filenames, or header labels.  Merged SVCF records use
-        INFO/SOURCES.  A single-evidence caller record may instead carry its
-        explicit source in FORMAT/SC.  Anything else is unresolved and source
-        filtering fails loudly rather than silently guessing.
-        """
-        sources_value = info.get("SOURCES")
-        if sources_value not in (None, "", ".", True):
-            sources = {
-                item.strip()
-                for item in str(sources_value).split(",")
-                if item.strip() and item.strip() != "."
-            }
-            if sources:
-                return sources, "INFO/SOURCES"
-
-        if len(fields) == 10:
-            parsed = parse_svcf_sample_block(fields[8], fields[9])
-            source = parsed.get("SC")
-            if source not in (None, "", ".", "unknown"):
-                return {str(source)}, "FORMAT/SC"
-
-        raise ValueError(
-            "Source-based filtering requires explicit source identity in "
-            "INFO/SOURCES or, for a single-evidence record, FORMAT/SC. "
-            "OctopuSV does not infer source identity from record IDs, file "
-            "names, or #CHROM labels."
-        )
+        """Return explicit record-level source identities via shared rules."""
+        return explicit_record_sources(info, fields)
 
     def _validate_source_case_hints(self) -> None:
         """Fail loudly for likely case-only source-name typos.
@@ -625,24 +602,13 @@ class SVCFFilter:
             if source in self._observed_sources:
                 continue
 
-            candidates = sorted(
-                observed
-                for observed in self._observed_sources
-                if observed.casefold() == source.casefold()
+            candidates = case_only_source_candidates(
+                source, self._observed_sources
             )
             if not candidates:
                 continue
 
-            if len(candidates) == 1:
-                suggestion = f"Did you mean {candidates[0]!r}?"
-            else:
-                suggestion = "Case-sensitive candidates are: " + ", ".join(
-                    repr(candidate) for candidate in candidates
-                )
-            raise ValueError(
-                f"No exact source {source!r}. {suggestion} "
-                "Source identity is case-sensitive."
-            )
+            raise ValueError(format_case_only_source_error(source, candidates))
 
     def summary(self) -> dict:
         removed = self.input_records - self.output_records

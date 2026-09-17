@@ -311,6 +311,53 @@ def collect_record_semantic_issues(
     return issues
 
 
+def validate_versioned_svcf_for_downstream(
+    path,
+    *,
+    consumer: str = "downstream operation",
+):
+    """Validate explicitly versioned SVCF before a scientific consumer runs.
+
+    Legacy/unversioned files intentionally stay on their historical
+    compatibility path.  Once a file declares an SVCF version, however,
+    downstream consumers must not silently repair or reinterpret blocking
+    contract violations.
+    """
+    meta_lines: list[str] = []
+    with open_text_auto(path) as handle:
+        for raw_line in handle:
+            line = raw_line.rstrip("\r\n")
+            if line.startswith("##"):
+                meta_lines.append(line)
+                continue
+            if line.startswith("#CHROM") or (line and not line.startswith("#")):
+                break
+
+    identity = parse_identity_from_meta_lines(meta_lines)
+    if not identity.is_versioned:
+        return None
+
+    validator = SVCFValidator(str(path))
+    validator.validate()
+    blocking = [issue for issue in validator.issues if issue.blocking]
+    if validator.unreadable or blocking:
+        issues = blocking or validator.errors
+        details = "; ".join(
+            f"[{issue.code}]"
+            + (f" line {issue.line_no}" if issue.line_no is not None else "")
+            + f" {issue.message}"
+            for issue in issues[:5]
+        )
+        if len(issues) > 5:
+            details += f"; ... {len(issues) - 5} more issue(s)"
+        raise ValueError(
+            f"{consumer} requires a valid explicitly versioned SVCF; "
+            f"{str(path)!r} failed validation. {details}"
+        )
+
+    return validator
+
+
 class SVCFValidator:
     """Validate one SVCF file against the current OctopuSV SVCF contract."""
 

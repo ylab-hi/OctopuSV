@@ -419,3 +419,26 @@ def test_merge_preflight_reuses_colon_contig_contract_check(tmp_path):
             labels=["caller"],
             mode="caller",
         )
+
+
+def test_merge_preflight_rejects_local_colon_contig_with_normal_remote_chr2(tmp_path):
+    """Guard the local-CHROM branch of E_CONTIG_001 independently of CHR2."""
+    source = tmp_path / "local_colon_remote_normal.svcf"
+    _write_caller_svcf(
+        source,
+        chrom="HLA-A*01:01:01:01",
+        chr2="chr5",
+        alt="<TRA>",
+        svtype="TRA",
+        end="5000",
+        svlen=".",
+        strand=".",
+        contigs=["HLA-A*01:01:01:01", "chr5"],
+    )
+
+    with pytest.raises(ValueError, match=r"E_CONTIG_001.*CHROM=.*:"):
+        _preflight_merge_inputs(
+            input_files=[source],
+            labels=["caller"],
+            mode="caller",
+        )

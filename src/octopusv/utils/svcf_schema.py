@@ -93,12 +93,23 @@ def validate_positional_info_item(
 
 
 def validate_source_label(value) -> str:
-    """Validate one SOURCES item and return its string representation."""
-    return validate_positional_info_item(
+    """Validate one SVCF source label used by SOURCES / FORMAT SC.
+
+    ``:`` is reserved by the fixed evidence-block encoding.  Unlike record IDs
+    and ALT, source labels have no escaping layer and therefore cannot contain
+    a colon without making ``ID:SC:REF:ALT:CO`` ambiguous.
+    """
+    text = validate_positional_info_item(
         value,
         field_name="SOURCES",
         allow_dot=False,
     )
+    if ":" in text:
+        raise ValueError(
+            f"SOURCES item {text!r} cannot contain ':' because SVCF 1.1 "
+            "uses ':' to delimit FORMAT evidence fields, including SC."
+        )
+    return text
 
 
 def validate_source_id(value) -> str:
