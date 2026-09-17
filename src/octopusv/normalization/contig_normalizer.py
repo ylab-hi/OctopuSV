@@ -48,6 +48,7 @@ class ContigNormalizationSummary:
     standard_mappings: Counter = field(default_factory=Counter)
     untouched_nonstandard_contigs: Counter = field(default_factory=Counter)
     warnings: list[str] = field(default_factory=list)
+    _normalized_contig_origins: dict[str, str] = field(default_factory=dict, repr=False)
 
     def add_mapping(self, old: str, new: str) -> None:
         if old != new:
@@ -194,6 +195,36 @@ def contig_to_style(contig: str | None, style: str) -> tuple[str | None, bool]:
     raise ValueError("style must be 'chr' or 'nochr'")
 
 
+def normalize_contig_value(
+    contig: str | None,
+    style: str,
+    summary: ContigNormalizationSummary,
+) -> tuple[str | None, bool]:
+    """Normalize one contig and reject many-to-one namespace collapse.
+
+    A normalization operation may rename a contig, but it must not silently
+    collapse two distinct input identifiers onto the same output identifier.
+    The registry spans header IDs and every contig-bearing record field so
+    mixed namespaces are detected even when the header is incomplete.
+    """
+    new_contig, is_standard = contig_to_style(contig, style)
+    if not is_standard:
+        return new_contig, False
+
+    original = str(contig)
+    target = str(new_contig)
+    previous = summary._normalized_contig_origins.get(target)
+    if previous is not None and previous != original:
+        raise ValueError(
+            "Cannot normalize contigs safely: "
+            f"{previous!r} and {original!r} would both normalize to "
+            f"{target!r}."
+        )
+
+    summary._normalized_contig_origins.setdefault(target, original)
+    return new_contig, True
+
+
 def parse_info_items(info: str) -> list[tuple[str, Optional[str]]]:
     if info in (None, "", "."):
         return []
@@ -232,7 +263,7 @@ def normalize_info_chr2(
 
     for key, value in items:
         if key == "CHR2" and value not in (None, "", "."):
-            new_value, is_standard = contig_to_style(value, style)
+            new_value, is_standard = normalize_contig_value(value, style, summary)
             if is_standard:
                 if new_value != value:
                     summary.chr2_updated += 1
@@ -261,7 +292,7 @@ def normalize_bnd_alt(
     def repl(match: re.Match) -> str:
         nonlocal changed_any
         left_bracket, contig, pos, right_bracket = match.groups()
-        new_contig, is_standard = contig_to_style(contig, style)
+        new_contig, is_standard = normalize_contig_value(contig, style, summary)
         if is_standard:
             if new_contig != contig:
                 changed_any = True
@@ -297,8 +328,8 @@ def normalize_co_value(
     c2 = match.group("c2")
     p2 = match.group("p2")
 
-    new_c1, is_standard_1 = contig_to_style(c1, style)
-    new_c2, is_standard_2 = contig_to_style(c2, style)
+    new_c1, is_standard_1 = normalize_contig_value(c1, style, summary)
+    new_c2, is_standard_2 = normalize_contig_value(c2, style, summary)
 
     if not (is_standard_1 and is_standard_2):
         if not is_standard_1:
@@ -364,7 +395,7 @@ def normalize_contig_header_line(
 
     summary.header_contigs_seen += 1
     prefix, contig, suffix = match.groups()
-    new_contig, is_standard = contig_to_style(contig, style)
+    new_contig, is_standard = normalize_contig_value(contig, style, summary)
 
     if not is_standard:
         summary.add_nonstandard(contig)
@@ -410,7 +441,7 @@ def normalize_record_line(
 
     # CHROM
     old_chrom = cols[0]
-    new_chrom, is_standard = contig_to_style(old_chrom, style)
+    new_chrom, is_standard = normalize_contig_value(old_chrom, style, summary)
     if is_standard:
         if new_chrom != old_chrom:
             cols[0] = new_chrom

@@ -1,8 +1,9 @@
 ##fileformat=VCFv4.2
 ##SVCFVersion=1.1
 ##OctopuSV_mode=caller
-##fileDate=2026-09-17|12:18:32PM|
+##fileDate=2026-09-17|02:29:30PM|
 ##source=OctopuSV
+##reference=file:///projects/b1171/qgn1237/1_my_database/GRCh37_hs37d5/hs37d5.fa
 ##contig=<ID=1,length=249250621>
 ##contig=<ID=2,length=243199373>
 ##contig=<ID=3,length=198022430>

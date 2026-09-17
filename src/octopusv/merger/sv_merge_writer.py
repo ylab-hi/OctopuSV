@@ -855,6 +855,9 @@ class MergeWriterMixin:
         file_handle.write(f"##fileDate={file_date}\n")
         file_handle.write("##source=OctopuSV\n")
 
+        for meta_line in merged_definitions.get("safe_meta_lines", []):
+            file_handle.write(meta_line + "\n")
+
         for contig_id, contig_length in contigs.items():
             file_handle.write(
                 f"##contig=<ID={contig_id},length={contig_length}>\n"
@@ -896,8 +899,12 @@ class MergeWriterMixin:
         Returns:
             dict: Merged header definitions from all files
         """
-        from octopusv.utils.svcf_utils import get_octopus_default_definitions, extract_original_header_definitions, \
-            merge_header_definitions
+        from octopusv.utils.svcf_utils import (
+            extract_original_header_definitions,
+            get_octopus_default_definitions,
+            merge_header_definitions,
+            merge_safe_global_meta_lines,
+        )
 
         # Get OctopuSV default definitions
         octopus_defaults = get_octopus_default_definitions()
@@ -915,6 +922,7 @@ class MergeWriterMixin:
         seen_info_ids = set()
         seen_format_ids = set()
         seen_alt_ids = set()
+        safe_meta_sources = []
 
         # Extract definitions from each input file. Header extraction is part
         # of the output contract: if one input header cannot be read, abort
@@ -922,6 +930,9 @@ class MergeWriterMixin:
         if input_files:
             for input_file in input_files:
                 file_headers = extract_original_header_definitions(input_file)
+                safe_meta_sources.append(
+                    (str(input_file), file_headers.get('other_lines', []))
+                )
 
                 # Add FILTER definitions (avoid duplicates)
                 for line in file_headers.get('filter_lines', []):
@@ -951,8 +962,11 @@ class MergeWriterMixin:
                         all_original_definitions['alt_lines'].append(line)
                         seen_alt_ids.add(alt_id)
 
-        # Merge with OctopuSV defaults
-        return merge_header_definitions(all_original_definitions, octopus_defaults)
+        # Merge with OctopuSV defaults. Safe global metadata is reconciled
+        # separately so explicit conflicts fail rather than becoming first-wins.
+        merged = merge_header_definitions(all_original_definitions, octopus_defaults)
+        merged["safe_meta_lines"] = merge_safe_global_meta_lines(safe_meta_sources)
+        return merged
 
     def _extract_id_from_line(self, line, field_type):
         """Extract ID from header line.

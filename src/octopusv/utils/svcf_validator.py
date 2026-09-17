@@ -379,6 +379,8 @@ class SVCFValidator:
         self._mixed_mode_reported = False
         self._mode_observations = 0
         self._identity: SVCFIdentity | None = None
+        self._legacy_multi_correct_layout = False
+        self._legacy_multi_warning_reported = False
 
     # ------------------------------------------------------------------
     # Issue helpers
@@ -441,6 +443,8 @@ class SVCFValidator:
         self._mixed_mode_reported = False
         self._mode_observations = 0
         self._identity = None
+        self._legacy_multi_correct_layout = False
+        self._legacy_multi_warning_reported = False
 
         if not os.path.exists(self.path) or os.path.getsize(self.path) == 0:
             self.unreadable = True
@@ -636,6 +640,8 @@ class SVCFValidator:
         alt, info_str, fmt = parts[4], parts[7], parts[8]
         sample_cols = parts[9:]
 
+        self._observe_legacy_multi_correct_layout(fmt, info, sv_id, line_no)
+
         duplicates = _duplicate_info_keys(info_str)
         if duplicates:
             self._err(
@@ -685,14 +691,60 @@ class SVCFValidator:
 
     def _expected_format(self) -> str:
         """Return the fixed FORMAT schema for the declared/inferred mode."""
+        if self._legacy_multi_correct_layout:
+            return CALLER_FORMAT
         if self.declared_mode == MODE_MULTI or self.mode == "sample_multi":
             return SAMPLE_FORMAT
         return CALLER_FORMAT
 
     def _expected_format_keys(self) -> list[str]:
+        if self._legacy_multi_correct_layout:
+            return CALLER_FORMAT_KEYS
         if self.declared_mode == MODE_MULTI or self.mode == "sample_multi":
             return SAMPLE_FORMAT_KEYS
         return CALLER_FORMAT_KEYS
+
+    def _observe_legacy_multi_correct_layout(
+        self,
+        fmt: str,
+        info: dict,
+        sv_id: str,
+        line_no: int,
+    ) -> None:
+        """Recognize the historical multi-sample ``correct`` layout.
+
+        That producer writes an unversioned ``##OctopuSV_mode=multi`` file
+        with one caller-FORMAT block per biological sample and no merged-record
+        SOURCES.  Only that exact legacy shape gets this compatibility path;
+        explicitly versioned SVCF 1.1 remains strict.
+        """
+        if self._legacy_multi_correct_layout:
+            return
+
+        # A real ``correct`` file uses the same caller FORMAT on every record.
+        # Restrict detection to the first data row so a different legacy multi
+        # layout cannot switch schemas partway through the file.
+        if self.records_total != 1:
+            return
+
+        if (
+            self._identity is not None
+            and not self._identity.is_versioned
+            and self.declared_mode == MODE_MULTI
+            and fmt == CALLER_FORMAT
+            and not _has_sources(info)
+        ):
+            self._legacy_multi_correct_layout = True
+            if not self._legacy_multi_warning_reported:
+                self._warn(
+                    "W_LEGACY_MULTI_001",
+                    "Unversioned ##OctopuSV_mode=multi with caller-evidence FORMAT "
+                    "is legacy multi-sample correct output, not SVCF 1.1 multi; "
+                    "validating it with legacy compatibility rules.",
+                    sv_id,
+                    line_no,
+                )
+                self._legacy_multi_warning_reported = True
 
     def _check_format(self, fmt: str, sv_id: str, line_no: int) -> None:
         if self._identity is not None and self._identity.is_versioned:
@@ -793,6 +845,17 @@ class SVCFValidator:
                 )
 
         elif self.mode in {"caller_merge", "sample_multi"}:
+            if self.mode == "sample_multi" and self._legacy_multi_correct_layout:
+                if _has_sources(info):
+                    self._err(
+                        "E_SRC_002",
+                        "Legacy multi-sample correct output must not contain "
+                        "merged-record SOURCES.",
+                        sv_id,
+                        line_no,
+                        blocking=True,
+                    )
+                return
             if not _has_sources(info):
                 self._err(
                     "E_SRC_002",

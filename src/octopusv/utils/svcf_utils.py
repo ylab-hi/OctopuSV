@@ -10,6 +10,53 @@ from octopusv.utils.svcf_schema import (
 )
 
 
+SAFE_GLOBAL_META_KEYS = ("reference", "assembly")
+
+
+def merge_safe_global_meta_lines(meta_sources):
+    """Return consistent global VCF metadata safe to preserve across outputs.
+
+    ``meta_sources`` is an iterable of ``(source_name, meta_lines)`` pairs.
+    Only the narrowly approved global keys in ``SAFE_GLOBAL_META_KEYS`` are
+    considered. Missing declarations are allowed, but two explicit different
+    values for the same key are rejected rather than resolved by first-wins.
+
+    The original line from the first matching source is preserved verbatim
+    (apart from line terminators) so information is conserved without
+    normalizing or reinterpreting the metadata value.
+    """
+    resolved = {}
+
+    for source_name, meta_lines in meta_sources:
+        source_label = str(source_name) if source_name is not None else "<unknown>"
+        for raw_line in meta_lines or []:
+            line = str(raw_line).rstrip("\r\n")
+            for key in SAFE_GLOBAL_META_KEYS:
+                prefix = f"##{key}="
+                if not line.startswith(prefix):
+                    continue
+
+                value = line[len(prefix):]
+                previous = resolved.get(key)
+                if previous is not None and previous[0] != value:
+                    previous_value, _previous_line, previous_source = previous
+                    raise ValueError(
+                        f"Conflicting ##{key} metadata across inputs: "
+                        f"{previous_value!r} in {previous_source!r} vs "
+                        f"{value!r} in {source_label!r}."
+                    )
+
+                if previous is None:
+                    resolved[key] = (value, line, source_label)
+                break
+
+    return [
+        resolved[key][1]
+        for key in SAFE_GLOBAL_META_KEYS
+        if key in resolved
+    ]
+
+
 def extract_original_header_definitions(input_vcf_file):
     """
     Extract header definitions from original VCF file.
@@ -241,9 +288,16 @@ def generate_sv_header(contig_lines, input_vcf_file=None, extra_meta_lines=None)
     sample_names = ["Sample"]
     is_multi_sample = False
 
+    # Preserve only narrowly approved global metadata. Generic ``other_lines``
+    # may contain stale caller/tool identity and are deliberately not copied.
+    safe_global_meta_lines = []
+
     # If input VCF file is provided, extract original definitions
     if input_vcf_file:
         original_headers = extract_original_header_definitions(input_vcf_file)
+        safe_global_meta_lines = merge_safe_global_meta_lines(
+            [(str(input_vcf_file), original_headers.get('other_lines', []))]
+        )
         # Use original contig lines if available, otherwise use provided ones
         if original_headers['contig_lines']:
             contig_lines = original_headers['contig_lines']
@@ -262,6 +316,7 @@ def generate_sv_header(contig_lines, input_vcf_file=None, extra_meta_lines=None)
     # unversioned: its columns are biological samples, but its blocks still use
     # caller evidence FORMAT rather than synthesized UC/UV sample calls.
     final_header = list(basic_header)
+    final_header.extend(safe_global_meta_lines)
     if extra_meta_lines:
         final_header.extend(extra_meta_lines)
     if is_multi_sample:

@@ -8,6 +8,7 @@ from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
 from octopusv.utils.svcf_parser import SVCFEvent
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.svcf_utils import merge_safe_global_meta_lines
 from octopusv.utils.vcf_info import format_vcf_info_item
 from octopusv.utils.svcf_schema import (
     MODE_MULTI,
@@ -415,6 +416,11 @@ class SVCFtoVCFConverter:
         contig_lines = self._read_contig_lines()
 
         header = "##fileformat=VCFv4.2\n"
+
+        for meta_line in merge_safe_global_meta_lines(
+            [(self.input_svcf_file, self._meta_lines)]
+        ):
+            header += meta_line + "\n"
 
         if self._supports_unobserved_sample_policy:
             header += (
