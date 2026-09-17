@@ -271,9 +271,12 @@ def test_characterize_pending_decision_overlapping_mate_pair_strategies(tmp_path
         ],
     )
 
+    # Step 4 sorts output records by header contig order + POS. The pending
+    # R1 duplicate behavior itself is deliberately unchanged: the same three
+    # records are still emitted, only their outer record order is genomic.
     assert [record["ID"] for record in records] == [
         "overlap.a",
-        "overlap.b",
         "overlap.a",
+        "overlap.b",
     ]
     assert all(record["SVTYPE"] == "TRA" for record in records)

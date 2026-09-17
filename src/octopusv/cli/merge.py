@@ -1,5 +1,6 @@
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -14,6 +15,10 @@ from octopusv.utils.atomic_write import atomic_output_path
 from octopusv.utils.source_path import normalize_source_path
 from octopusv.utils.text_io import open_text_auto
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
+from octopusv.utils.svcf_validator import (
+    collect_record_semantic_issues,
+    parse_svcf_info,
+)
 from octopusv.utils.svcf_schema import (
     MODE_CALLER,
     MODE_MULTI,
@@ -191,6 +196,47 @@ def _validate_unique_display_labels(
     )
 
 
+@dataclass(frozen=True)
+class _SVCFPreflightResult:
+    contig_lengths: dict[str, str]
+    observed_contigs: frozenset[str]
+
+
+def _standard_contig_alias(contig: str) -> tuple[str, str] | None:
+    """Return a canonical standard chromosome plus chr/bare naming style."""
+    text = str(contig)
+    prefixed = text.lower().startswith("chr")
+    core = text[3:] if prefixed else text
+    core_upper = core.upper()
+
+    if core_upper in {"M", "MT"}:
+        canonical = "MT"
+    elif core_upper in {"X", "Y"}:
+        canonical = core_upper
+    elif core.isdigit() and 1 <= int(core) <= 22:
+        canonical = str(int(core))
+    else:
+        return None
+
+    return canonical, "chr" if prefixed else "bare"
+
+
+def _extract_contig_ids_from_meta_lines(meta_lines: list[str]) -> set[str]:
+    """Return all explicit ##contig IDs, with or without numeric lengths."""
+    contigs: set[str] = set()
+    for line in meta_lines:
+        if not (line.startswith("##contig=<") and line.endswith(">")):
+            continue
+        content = line[len("##contig=<") : -1]
+        for part in content.split(","):
+            if part.startswith("ID="):
+                contig_id = part.split("=", 1)[1]
+                if contig_id:
+                    contigs.add(contig_id)
+                break
+    return contigs
+
+
 def _extract_contig_lengths_from_meta_lines(
     meta_lines: list[str],
     *,
@@ -233,7 +279,7 @@ def _extract_contig_lengths_from_meta_lines(
     return contigs
 
 
-def _preflight_svcf_shape(input_file: Path | str, mode: str) -> dict[str, str]:
+def _preflight_svcf_shape(input_file: Path | str, mode: str) -> _SVCFPreflightResult:
     """Reject merge inputs that are not caller-evidence SVCF.
 
     Merge consumes caller evidence. It may accept legacy unversioned SVCF or
@@ -241,14 +287,16 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> dict[str, str]:
     sample/multi SVCF as caller evidence. FORMAT schema is checked directly so
     stripping a mode marker cannot make synthesized sample calls mergeable.
 
-    Returns explicit numeric contig lengths found in the header so cross-input
-    reference conflicts can be rejected before parsing/merging begins.
+    Returns explicit numeric contig lengths plus observed contig names so
+    cross-input reference and definite naming-alias conflicts can be rejected
+    before parsing/merging begins.
     """
     found_chrom_header = False
     meta_lines: list[str] = []
     identity = None
     header_sample_count = None
     contig_lengths: dict[str, str] = {}
+    observed_contigs: set[str] = set()
 
     with open_text_auto(input_file) as handle:
         for line_number, line in enumerate(handle, 1):
@@ -276,6 +324,9 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> dict[str, str]:
 
                 contig_lengths = _extract_contig_lengths_from_meta_lines(
                     meta_lines, input_file=input_file
+                )
+                observed_contigs.update(
+                    _extract_contig_ids_from_meta_lines(meta_lines)
                 )
 
                 found_chrom_header = True
@@ -316,6 +367,31 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> dict[str, str]:
                     f"Input {str(input_file)!r} has a malformed data record on "
                     f"line {line_number}: expected at least 10 columns."
                 )
+
+            observed_contigs.add(fields[0])
+            info = parse_svcf_info(fields[7])
+            chr2 = info.get("CHR2")
+            if chr2 not in (None, "", ".", True):
+                observed_contigs.add(str(chr2))
+
+            if identity is not None and identity.is_v11:
+                semantic_issues = collect_record_semantic_issues(
+                    info=info,
+                    alt=fields[4],
+                    pos=fields[1],
+                    chrom=fields[0],
+                    sv_id=fields[2],
+                    line_no=line_number,
+                )
+                if semantic_issues:
+                    details = "; ".join(
+                        f"{issue.code}: {issue.message}"
+                        for issue in semantic_issues
+                    )
+                    raise ValueError(
+                        f"Invalid SVCF 1.1 record in {str(input_file)!r} "
+                        f"on data line {line_number}: {details}"
+                    )
 
             format_field = fields[8]
             try:
@@ -359,7 +435,10 @@ def _preflight_svcf_shape(input_file: Path | str, mode: str) -> dict[str, str]:
             f"Input {str(input_file)!r} is missing the required #CHROM header."
         )
 
-    return contig_lengths
+    return _SVCFPreflightResult(
+        contig_lengths=contig_lengths,
+        observed_contigs=frozenset(observed_contigs),
+    )
 
 
 def _preflight_merge_inputs(
@@ -386,9 +465,12 @@ def _preflight_merge_inputs(
 
     merged_contigs: dict[str, str] = {}
     contig_source: dict[str, str] = {}
+    standard_aliases: dict[str, dict[str, tuple[str, str]]] = {}
+
     for input_file in input_files:
-        file_contigs = _preflight_svcf_shape(input_file, mode)
-        for contig_id, contig_length in file_contigs.items():
+        result = _preflight_svcf_shape(input_file, mode)
+
+        for contig_id, contig_length in result.contig_lengths.items():
             previous = merged_contigs.get(contig_id)
             if previous is not None and int(previous) != int(contig_length):
                 raise ValueError(
@@ -400,6 +482,24 @@ def _preflight_merge_inputs(
             if previous is None:
                 merged_contigs[contig_id] = contig_length
                 contig_source[contig_id] = str(input_file)
+
+        for contig_id in result.observed_contigs:
+            alias = _standard_contig_alias(contig_id)
+            if alias is None:
+                continue
+            canonical, style = alias
+            by_style = standard_aliases.setdefault(canonical, {})
+            by_style.setdefault(style, (contig_id, str(input_file)))
+
+            if "chr" in by_style and "bare" in by_style:
+                chr_name, chr_file = by_style["chr"]
+                bare_name, bare_file = by_style["bare"]
+                raise ValueError(
+                    "Merge inputs use inconsistent contig naming for the same "
+                    f"standard chromosome: {chr_name!r} in {chr_file!r} versus "
+                    f"{bare_name!r} in {bare_file!r}. Normalize contig names "
+                    "before merging; OctopuSV does not guess or rename them."
+                )
 
     return merged_contigs
 

@@ -8,6 +8,7 @@ from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
 from octopusv.utils.svcf_parser import SVCFEvent
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.vcf_info import format_vcf_info_item
 from octopusv.utils.svcf_schema import (
     MODE_MULTI,
     parse_identity_from_meta_lines,
@@ -263,6 +264,7 @@ class SVCFtoVCFConverter:
         original_definitions = {
             "filter_lines": [],
             "info_lines": [],
+            "alt_lines": [],
             "format_lines": [],
         }
         sample_names = ["Sample"]
@@ -296,6 +298,13 @@ class SVCFtoVCFConverter:
                     info_id = self._header_id(line, "INFO")
                     if info_id is None or info_id not in self.DEFAULT_INFO_IDS:
                         original_definitions["info_lines"].append(line)
+
+                elif line.startswith("##ALT="):
+                    alt_id = self._header_id(line, "ALT")
+                    if alt_id is None or alt_id not in {
+                        "DEL", "DUP", "INV", "INS", "TRA", "BND"
+                    }:
+                        original_definitions["alt_lines"].append(line)
 
                 elif line.startswith("##FORMAT="):
                     format_id = self._header_id(line, "FORMAT")
@@ -447,7 +456,15 @@ class SVCFtoVCFConverter:
             existing_info_ids,
         )
 
-        existing_alt_ids: set[str] = set()
+        existing_alt_ids = {
+            self._header_id(line, "ALT")
+            for line in original_defs["alt_lines"]
+        }
+        existing_alt_ids.discard(None)
+
+        for alt_line in original_defs["alt_lines"]:
+            header += alt_line + "\n"
+
         header = self._append_unique_header_lines(
             header,
             self.STANDARD_ALT_LINES,
@@ -513,7 +530,17 @@ class SVCFtoVCFConverter:
 
         info_fields = [f"SVTYPE={event.sv_type}"]
 
-        if event.sv_type in {"BND", "TRA"}:
+        if event.sv_type == "TRA":
+            # Bracket-form TRA carries the remote breakpoint in ALT. Symbolic
+            # <TRA> does not, so CHR2 + END must remain in the exported VCF or
+            # the second breakpoint would be silently lost.
+            if alt == "<TRA>":
+                end_value = event.info.get("END")
+                if not self._is_missing_info_value(end_value):
+                    info_fields.append(
+                        f"END={self._format_info_value(end_value)}"
+                    )
+        elif event.sv_type == "BND":
             pass
         elif event.sv_type == "INS":
             info_fields.append(f"END={event.pos}")
@@ -547,6 +574,20 @@ class SVCFtoVCFConverter:
             "SOURCE_IDS",
         ]:
             self._add_info_field(info_fields, event, key)
+
+        # Core conversion-managed fields above are authoritative. Any other
+        # event-level INFO annotation that is still representable in ordinary
+        # VCF is carried through instead of disappearing silently.
+        for key, value in event.info.items():
+            if key in self.DEFAULT_INFO_IDS:
+                continue
+            if value is True:
+                info_fields.append(format_vcf_info_item(key, value))
+                continue
+            if self._is_missing_info_value(value):
+                continue
+            formatted_value = self._format_info_value(value)
+            info_fields.append(format_vcf_info_item(key, formatted_value))
 
         info = ";".join(info_fields) if info_fields else "."
 

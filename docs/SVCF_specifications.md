@@ -213,7 +213,7 @@ The first nine columns describe the normalized or merged event. Evidence/sample 
 | `POS` | Positive, 1-based coordinate of the event start or first breakpoint. |
 | `ID` | Identifier of the representative SVCF event record. |
 | `REF` | Reference allele of the representative record. |
-| `ALT` | Alternate allele of the representative record. For `TRA`/`BND`, valid VCF breakend notation is required. |
+| `ALT` | Alternate allele of the representative record. `BND` requires valid VCF breakend notation. `TRA` may use valid VCF breakend notation when orientation is known, or symbolic `<TRA>` when `CHR2` and numeric `END` define the remote breakpoint and orientation is unknown. |
 | `QUAL` | Representative quality value, or `.` when unavailable. |
 | `FILTER` | Filter status of the representative event. |
 | `INFO` | Event-level annotations and source/sample relationship fields. |
@@ -554,6 +554,8 @@ Examples:
 
 Contig names may contain underscores or hyphens. Parsers must not split coordinate strings using the first underscore or first hyphen without validating the resulting coordinates.
 
+SVCF 1.1 does **not** permit `:` inside contig names used by record-level `CHROM` or `INFO/CHR2`. The fixed evidence block uses `:` as its field delimiter and `CO` embeds those contig names without an escaping layer, so a colon-bearing contig cannot currently be serialized and parsed losslessly. A conforming writer must reject such records rather than emit an ambiguous evidence block. Full support for colon-bearing contig names requires a future explicit encoding/specification change.
+
 Source record IDs may contain colons. BND ALT strings and symbolic ALT values may also contain colons, for example:
 
 ```text
@@ -581,7 +583,7 @@ BND
 
 `END` is the second coordinate used by the SVCF record. Its meaning depends on `SVTYPE`.
 
-For `TRA` and `BND`, the parser first reads the mate coordinate from `ALT` and falls back to `CHR2` and `END` when needed.
+For `BND`, the mate coordinate is encoded in breakend `ALT` and must agree with `CHR2` and `END`. For `TRA`, the remote breakpoint may be encoded either in breakend `ALT` or, for symbolic `<TRA>`, by `CHR2` and `END`.
 
 ### 11.1 DEL, DUP, and INV
 
@@ -622,9 +624,11 @@ END = POS
 
 ### 11.3 TRA and BND
 
-`TRA` and `BND` use VCF breakend notation in `ALT`.
+`TRA` and `BND` both represent events with two breakpoints, but SVCF 1.1 does not require the same ALT representation for both types.
 
-The accepted forms are:
+#### 11.3.1 BND
+
+`BND` requires valid VCF breakend notation in `ALT`. The accepted forms are:
 
 ```text
 t[chr:pos[
@@ -635,14 +639,22 @@ t]chr:pos]
 
 where `t` is sequence placed before or after the breakend expression.
 
-For `TRA` and `BND`:
+For `BND`:
 
 - `CHR2` must contain the mate contig;
 - `END` must contain the numeric mate position;
-- the mate contig and position in `ALT` must agree with `CHR2` and `END`;
+- the mate contig and position encoded in `ALT` must agree with `CHR2` and `END`;
 - `SVLEN` must be `.`.
 
-Example:
+A retained `BND` record is valid SVCF and is not considered a conversion failure.
+
+#### 11.3.2 TRA
+
+`TRA` requires two known breakpoint coordinates but does not require known breakend orientation. Orientation is additional evidence rather than a prerequisite for representing the event.
+
+A `TRA` record may therefore use either of two representations.
+
+**Orientation known: breakend ALT**
 
 ```text
 CHROM=1
@@ -654,15 +666,44 @@ SVTYPE=TRA
 SVLEN=.
 ```
 
-OctopuSV uses `TRA` when the breakend can be represented as a translocation with sufficient confidence.
+When `TRA` uses breakend notation:
 
-`BND` is retained when OctopuSV cannot safely convert a breakend to another supported SV type. A retained `BND` record is valid SVCF and is not considered a conversion failure.
+- `CHR2` must contain the mate contig;
+- `END` must contain the numeric mate position;
+- the mate contig and position encoded in `ALT` must agree with `CHR2` and `END`;
+- `SVLEN` must be `.`.
+
+**Orientation unknown: symbolic `<TRA>` ALT**
+
+```text
+CHROM=1
+POS=3845267
+ALT=<TRA>
+CHR2=hs37d5
+END=32469995
+SVTYPE=TRA
+SVLEN=.
+STRAND=.
+```
+
+When `TRA` uses symbolic `<TRA>`:
+
+- `CHR2` must contain the mate contig;
+- `END` must contain the numeric mate position;
+- `SVLEN` must be `.`;
+- orientation may remain unknown and must not be invented solely to construct breakend notation.
+
+This representation preserves caller outputs in which both breakpoint coordinates are known but breakend orientation is not reported. OctopuSV may compare or merge such TRA records using the known breakpoint coordinates; when orientation is available in both compared records, software may additionally use it as supporting evidence.
+
+OctopuSV uses `TRA` when an event can be represented as a translocation from the available breakpoint evidence. Missing orientation alone does not invalidate an otherwise well-defined `TRA`.
 
 ---
 
 ## 12. Conversion to VCF
 
 SVCF preserves relationships that conventional VCF cannot always represent directly. `svcf2vcf` therefore performs a defined, potentially lossy conversion.
+
+For `TRA`, VCF export must preserve the remote breakpoint. Breakend-form `TRA` records retain the mate coordinate in `ALT`. Symbolic `<TRA>` records must retain `CHR2` and `END`, because those fields carry the remote breakpoint when orientation is unknown.
 
 ```bash
 octopusv svcf2vcf -i input.svcf -o output.vcf
@@ -816,7 +857,8 @@ For SVCF 1.1, validation includes:
 - representable SVCF 1.1 `SOURCES` / `SOURCE_IDS` item syntax, including reserved-character and missing-value rules;
 - sample-column count consistency in multi mode;
 - structural-variant coordinate checks;
-- BND/TRA ALT/CHR2/END agreement;
+- BND breakend ALT/CHR2/END agreement;
+- TRA breakpoint validation, including breakend ALT/CHR2/END agreement when breakend notation is used and `CHR2` plus numeric `END` when symbolic `<TRA>` is used;
 - parseable `CO` values according to validator policy.
 
 A versioned file that declares `caller` but uses the multi FORMAT is invalid. A versioned file that declares `multi` but uses the caller FORMAT is invalid. A versioned caller file with more than one trailing `#CHROM` column is invalid.
@@ -895,3 +937,4 @@ This appendix summarizes migration-relevant differences between unversioned lega
 10. **Unobserved sample policy is explicit.** Internal `UV=0` placeholders remain distinguishable in SVCF and VCF export records the selected `missing|ref` interpretation in the output header.
 11. **Colon-containing values require structure-aware parsing.** Record IDs and ALT representations may contain colons; readers must not parse SVCF sample blocks with naive positional `split(":")` logic.
 12. **Legacy compatibility is explicit, not authoritative.** Unversioned files may still be read through compatibility paths, but legacy inference must never override an explicit versioned SVCF identity.
+13. **TRA orientation is optional.** `TRA` requires two known breakpoint coordinates, not necessarily known breakend orientation. Breakend-form `TRA` records encode the remote breakpoint and orientation in `ALT`; symbolic `<TRA>` records use `CHR2` and numeric `END` for the remote breakpoint and leave orientation unresolved. `BND` remains breakend-ALT only.

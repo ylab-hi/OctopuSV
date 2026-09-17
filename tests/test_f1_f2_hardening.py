@@ -374,7 +374,7 @@ def test_filter_single_evidence_uses_explicit_sc_not_id_prefix(tmp_path):
         FilterConfig(
             input_file=str(input_path),
             output_file=str(tmp_path / "out.svcf"),
-            sources={"cutesv"},
+            sources={"cuteSV"},
         )
     ).run()
     assert summary["output_records"] == 1

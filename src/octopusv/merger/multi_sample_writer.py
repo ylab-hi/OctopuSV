@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from .name_mapper import NameMapper
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.svcf_sort import sort_events_for_output
 from octopusv.utils.vcf_info import format_vcf_info_item
 from octopusv.utils.svcf_schema import (
     SAMPLE_FORMAT as SAMPLE_FORMAT_V11,
@@ -24,9 +25,14 @@ class MultiSampleWriter:
     in that exact order.
     """
 
-    def __init__(self, name_mapper: NameMapper):
-        """Initialize writer with a NameMapper."""
+    def __init__(self, name_mapper: NameMapper, input_files=None):
+        """Initialize writer with a NameMapper and source files for headers."""
         self.name_mapper = name_mapper
+        # Header passthrough is enabled only when the orchestration layer
+        # explicitly provides real input files. Direct writer use in tests or
+        # libraries remains self-contained and does not assume NameMapper paths
+        # are readable files.
+        self.input_files = [str(path) for path in (input_files or [])]
 
     def write_results(self, output_file, events, contigs):
         """Write merged sample-mode SVCF results.
@@ -36,14 +42,21 @@ class MultiSampleWriter:
             events: Merged events with ordered_samples attached.
             contigs: Dictionary of contig ID -> length.
         """
+        ordered_events = sort_events_for_output(events, contigs.keys())
+
         with open(output_file, "w") as f:
             self._write_header(f, contigs)
 
-            for event in events:
+            for event in ordered_events:
                 self._write_event(f, event)
 
     def _write_header(self, file_handle, contigs):
         """Write SVCF header for sample mode."""
+        # Extract passthrough definitions before writing any bytes so a header
+        # read failure cannot leave a plausible partial header when this writer
+        # is used directly outside the atomic merge CLI.
+        passthrough = self._collect_passthrough_definitions()
+
         file_handle.write("##fileformat=VCFv4.2\n")
         file_handle.write(version_header() + "\n")
         file_handle.write(mode_header(MODE_MULTI) + "\n")
@@ -61,6 +74,9 @@ class MultiSampleWriter:
             file_handle.write(f"##contig=<ID={contig_id},length={contig_length}>\n")
 
         self._write_standard_definitions(file_handle)
+        for category in ("alt_lines", "info_lines", "filter_lines"):
+            for line in passthrough[category]:
+                file_handle.write(line + "\n")
 
         sample_names = self.name_mapper.get_all_display_names()
         header_line = (
@@ -94,7 +110,7 @@ class MultiSampleWriter:
             '##INFO=<ID=RTID,Number=1,Type=String,Description="Related transcript or record ID">\n'
         )
         file_handle.write(
-            '##INFO=<ID=AF,Number=1,Type=String,Description="Allele frequency">\n'
+            '##INFO=<ID=AF,Number=1,Type=Float,Description="Allele frequency">\n'
         )
         file_handle.write(
             '##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">\n'
@@ -128,7 +144,7 @@ class MultiSampleWriter:
             '##FORMAT=<ID=ST,Number=1,Type=String,Description="Strand orientation of SV">\n'
         )
         file_handle.write(
-            '##FORMAT=<ID=QV,Number=1,Type=Integer,Description="Quality value">\n'
+            '##FORMAT=<ID=QV,Number=1,Type=Float,Description="Quality value">\n'
         )
         file_handle.write(
             '##FORMAT=<ID=TY,Number=1,Type=String,Description="Type of SV">\n'
@@ -148,6 +164,48 @@ class MultiSampleWriter:
         file_handle.write(
             '##FORMAT=<ID=CO,Number=1,Type=String,Description="Coordinate information of the SV">\n'
         )
+
+
+    def _collect_passthrough_definitions(self):
+        """Preserve non-reserved INFO/FILTER/ALT definitions from inputs.
+
+        Sample-mode records may retain representative event annotations such
+        as PRECISE and caller FILTER/ALT values. Their header definitions must
+        therefore remain available, while SVCF 1.1 core INFO/FORMAT semantics
+        stay canonical and cannot be overridden by input headers.
+        """
+        from octopusv.utils.svcf_utils import (
+            extract_id_from_header_line,
+            extract_original_header_definitions,
+        )
+
+        canonical_info_ids = {
+            "SVTYPE", "END", "SVLEN", "CHR2", "SUPPORT", "SVMETHOD",
+            "RTID", "AF", "STRAND", "RNAMES", "SOURCES", "SOURCE_IDS",
+        }
+        collected = {"alt_lines": [], "info_lines": [], "filter_lines": []}
+        seen = {key: set() for key in collected}
+
+        category_prefix = {
+            "alt_lines": "ALT",
+            "info_lines": "INFO",
+            "filter_lines": "FILTER",
+        }
+
+        for input_file in self.input_files:
+            header = extract_original_header_definitions(input_file)
+            for category, prefix in category_prefix.items():
+                for line in header.get(category, []):
+                    item_id = extract_id_from_header_line(line, prefix)
+                    if category == "info_lines" and item_id in canonical_info_ids:
+                        continue
+                    identity = item_id if item_id is not None else line
+                    if identity in seen[category]:
+                        continue
+                    seen[category].add(identity)
+                    collected[category].append(line)
+
+        return collected
 
     def _sample_id_from_data(self, sample_data, format_keys: List[str]) -> Optional[str]:
         """Extract the original source ID from one sample/evidence block.

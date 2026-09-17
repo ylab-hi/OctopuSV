@@ -192,7 +192,9 @@ def normalize_svtype_set(values: set[str]) -> set[str]:
 
 
 def normalize_source_set(values: set[str]) -> set[str]:
-    return {v.lower() for v in values}
+    # Source labels are explicit identities, not case-insensitive keywords.
+    # Preserve the exact spelling supplied by the user.
+    return {str(v) for v in values}
 
 
 def svcf_event_size(svtype: str, pos: str, info: dict) -> Optional[int]:
@@ -345,6 +347,7 @@ class SVCFFilter:
 
         self.excluded_by_reason = Counter()
         self.source_detection_used = Counter()
+        self._observed_sources: set[str] = set()
 
     def run(self) -> dict:
         """Run filtering and return a summary dict."""
@@ -391,6 +394,8 @@ class SVCFFilter:
                             output_handle.write(line)
                     else:
                         self.excluded_by_reason[reason] += 1
+
+            self._validate_source_case_hints()
 
         return self.summary()
 
@@ -497,6 +502,7 @@ class SVCFFilter:
         if self._source_filters_active():
             sources, method = self._record_sources(info, fields)
             self.source_detection_used[method] += 1
+            self._observed_sources.update(sources)
 
             source_count = len(sources)
 
@@ -582,7 +588,7 @@ class SVCFFilter:
         sources_value = info.get("SOURCES")
         if sources_value not in (None, "", ".", True):
             sources = {
-                item.strip().lower()
+                item.strip()
                 for item in str(sources_value).split(",")
                 if item.strip() and item.strip() != "."
             }
@@ -593,7 +599,7 @@ class SVCFFilter:
             parsed = parse_svcf_sample_block(fields[8], fields[9])
             source = parsed.get("SC")
             if source not in (None, "", ".", "unknown"):
-                return {str(source).lower()}, "FORMAT/SC"
+                return {str(source)}, "FORMAT/SC"
 
         raise ValueError(
             "Source-based filtering requires explicit source identity in "
@@ -601,6 +607,42 @@ class SVCFFilter:
             "OctopuSV does not infer source identity from record IDs, file "
             "names, or #CHROM labels."
         )
+
+    def _validate_source_case_hints(self) -> None:
+        """Fail loudly for likely case-only source-name typos.
+
+        Matching itself is exact because source labels are identities.  This
+        post-scan check prevents a familiar CLI typo (for example ``pbsv``
+        when the file says ``PBSV``) from looking like a legitimate empty
+        result.  Unknown names with no case-only candidate keep the historical
+        exact-filter behavior.
+        """
+        if not self._source_filters_active() or not self._observed_sources:
+            return
+
+        requested = self.config.sources | self.config.exclude_sources
+        for source in sorted(requested):
+            if source in self._observed_sources:
+                continue
+
+            candidates = sorted(
+                observed
+                for observed in self._observed_sources
+                if observed.casefold() == source.casefold()
+            )
+            if not candidates:
+                continue
+
+            if len(candidates) == 1:
+                suggestion = f"Did you mean {candidates[0]!r}?"
+            else:
+                suggestion = "Case-sensitive candidates are: " + ", ".join(
+                    repr(candidate) for candidate in candidates
+                )
+            raise ValueError(
+                f"No exact source {source!r}. {suggestion} "
+                "Source identity is case-sensitive."
+            )
 
     def summary(self) -> dict:
         removed = self.input_records - self.output_records

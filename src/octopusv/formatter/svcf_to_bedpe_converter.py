@@ -42,8 +42,8 @@ class SVCFtoBEDPEConverter:
             name = f"{event.sv_id}_{event.sv_type}"
             score = event.info.get("SUPPORT", event.quality if hasattr(event, "quality") else "1")
 
-            strand1 = "+"
-            strand2 = "-" if event.sv_type in ["INV", "TRA"] else "+"
+            strand1 = "."
+            strand2 = "."
             strand_info = event.info.get("STRAND", "")
             if strand_info == "+-":
                 strand1, strand2 = "+", "-"

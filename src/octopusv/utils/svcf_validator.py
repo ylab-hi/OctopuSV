@@ -177,6 +177,140 @@ def _parse_bnd_alt(alt: str) -> tuple[str, int] | None:
         return None
 
 
+def parse_svcf_info(info_str: str) -> dict:
+    """Parse one SVCF INFO field for shared contract checks."""
+    return _parse_info(info_str)
+
+
+def collect_record_semantic_issues(
+    *,
+    info: dict,
+    alt: str,
+    pos: str,
+    chrom: str | None = None,
+    sv_id: str | None = None,
+    line_no: int | None = None,
+) -> list[Issue]:
+    """Return blocking SVCF 1.1 SVTYPE/coordinate contract findings.
+
+    This is the single implementation used by both ``validate-svcf`` and
+    versioned merge preflight.  Legacy/unversioned callers decide separately
+    whether to invoke it.
+    """
+    issues: list[Issue] = []
+
+    def err(code: str, message: str) -> None:
+        issues.append(
+            Issue(
+                level="error",
+                code=code,
+                message=message,
+                record_id=sv_id,
+                line_no=line_no,
+                blocking=True,
+            )
+        )
+
+    svtype = info.get("SVTYPE")
+    if svtype is None:
+        return issues
+
+    chr2 = info.get("CHR2")
+    colon_contigs = []
+    if chrom not in (None, "") and ":" in str(chrom):
+        colon_contigs.append(f"CHROM={chrom}")
+    if chr2 not in (None, "", ".", True) and ":" in str(chr2):
+        colon_contigs.append(f"CHR2={chr2}")
+    if colon_contigs:
+        err(
+            "E_CONTIG_001",
+            "SVCF 1.1 does not support ':' in CHROM/CHR2 contig names because "
+            "the fixed evidence/CO encoding cannot round-trip them losslessly: "
+            + ", ".join(colon_contigs)
+            + ".",
+        )
+
+    if svtype not in LEGAL_SVTYPES:
+        err(
+            "E_SVTYPE_001",
+            f"Illegal SVTYPE '{svtype}'. Allowed: {sorted(LEGAL_SVTYPES)}.",
+        )
+        return issues
+
+    end = info.get("END")
+
+    if svtype in {"DEL", "DUP", "INV"}:
+        if end in (None, ".", True):
+            err("E_END_001", f"{svtype} requires a numeric END.")
+            return issues
+
+        if not str(end).isdigit():
+            err(
+                "E_END_002",
+                f"{svtype} END must be an integer, got '{end}'.",
+            )
+            return issues
+
+        if _is_positive_int(pos) and int(str(end)) < int(pos):
+            err(
+                "E_END_003",
+                f"{svtype} END ({end}) < POS ({pos}).",
+            )
+        return issues
+
+    if svtype not in {"TRA", "BND"}:
+        return issues
+
+    svlen = info.get("SVLEN")
+
+    if chr2 in (None, "", ".", True):
+        err("E_TRA_001", f"{svtype} requires CHR2.")
+
+    if end in (None, "", ".", True) or not str(end).isdigit():
+        err(
+            "E_TRA_002",
+            f"{svtype} requires a numeric END as mate position.",
+        )
+
+    symbolic_tra = svtype == "TRA" and alt == "<TRA>"
+    if not symbolic_tra:
+        parsed = _parse_bnd_alt(alt)
+        if parsed is None:
+            if svtype == "TRA":
+                message = (
+                    "TRA ALT must be either symbolic '<TRA>' or a valid "
+                    f"BND bracket form, got '{alt}'."
+                )
+            else:
+                message = (
+                    "BND ALT must be a valid BND bracket form, "
+                    f"got '{alt}'."
+                )
+            err("E_TRA_003", message)
+        else:
+            mate_chrom, mate_pos = parsed
+
+            if chr2 not in (None, "", ".", True) and mate_chrom != str(chr2):
+                err(
+                    "E_TRA_004",
+                    f"{svtype} ALT mate chrom '{mate_chrom}' != CHR2 '{chr2}'.",
+                )
+
+            if str(end).isdigit() and mate_pos != int(str(end)):
+                err(
+                    "E_TRA_005",
+                    f"{svtype} ALT mate pos {mate_pos} != END {end}.",
+                )
+
+    if svlen is not None and svlen != ".":
+        err(
+            "E_TRA_006",
+            f"{svtype} requires SVLEN='.', got '{svlen}'.",
+        )
+
+    return issues
+
+
 class SVCFValidator:
     """Validate one SVCF file against the current OctopuSV SVCF contract."""
 
@@ -474,7 +608,7 @@ class SVCFValidator:
         self._check_versioned_source_items(info, sv_id, line_no)
         self._check_column_count(info, sample_cols, sv_id, line_no)
         self._check_source_ids(info, fmt, sample_cols, sv_id, line_no)
-        self._check_svtype_and_coords(info, alt, pos, sv_id, line_no)
+        self._check_svtype_and_coords(chrom, info, alt, pos, sv_id, line_no)
         self._check_co(sample_cols, sv_id, line_no)
 
     def _check_core_fields(
@@ -766,138 +900,23 @@ class SVCFValidator:
 
     def _check_svtype_and_coords(
         self,
+        chrom: str,
         info: dict,
         alt: str,
         pos: str,
         sv_id: str,
         line_no: int,
     ) -> None:
-        svtype = info.get("SVTYPE")
-        if svtype is None:
-            return
-
-        if svtype not in LEGAL_SVTYPES:
-            self._err(
-                "E_SVTYPE_001",
-                f"Illegal SVTYPE '{svtype}'. Allowed: {sorted(LEGAL_SVTYPES)}.",
-                sv_id,
-                line_no,
-                blocking=True,
+        self.issues.extend(
+            collect_record_semantic_issues(
+                info=info,
+                alt=alt,
+                pos=pos,
+                chrom=chrom,
+                sv_id=sv_id,
+                line_no=line_no,
             )
-            return
-
-        end = info.get("END")
-
-        if svtype in {"DEL", "DUP", "INV"}:
-            self._check_span_sv_end(svtype, end, pos, sv_id, line_no)
-        elif svtype in {"TRA", "BND"}:
-            self._check_tra_bnd(svtype, alt, info, sv_id, line_no)
-
-    def _check_span_sv_end(
-        self,
-        svtype: str,
-        end: object,
-        pos: str,
-        sv_id: str,
-        line_no: int,
-    ) -> None:
-        if end in (None, ".", True):
-            self._err(
-                "E_END_001",
-                f"{svtype} requires a numeric END.",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
-            return
-
-        if not str(end).isdigit():
-            self._err(
-                "E_END_002",
-                f"{svtype} END must be an integer, got '{end}'.",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
-            return
-
-        if _is_positive_int(pos) and int(str(end)) < int(pos):
-            self._err(
-                "E_END_003",
-                f"{svtype} END ({end}) < POS ({pos}).",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
-
-    def _check_tra_bnd(
-        self,
-        svtype: str,
-        alt: str,
-        info: dict,
-        sv_id: str,
-        line_no: int,
-    ) -> None:
-        chr2 = info.get("CHR2")
-        end = info.get("END")
-        svlen = info.get("SVLEN")
-
-        if chr2 in (None, "", ".", True):
-            self._err(
-                "E_TRA_001",
-                f"{svtype} requires CHR2.",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
-
-        if end in (None, "", ".", True) or not str(end).isdigit():
-            self._err(
-                "E_TRA_002",
-                f"{svtype} requires a numeric END as mate position.",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
-
-        parsed = _parse_bnd_alt(alt)
-        if parsed is None:
-            self._err(
-                "E_TRA_003",
-                f"{svtype} ALT is not a valid BND bracket form: '{alt}'.",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
-        else:
-            mate_chrom, mate_pos = parsed
-
-            if chr2 not in (None, "", ".", True) and mate_chrom != str(chr2):
-                self._err(
-                    "E_TRA_004",
-                    f"{svtype} ALT mate chrom '{mate_chrom}' != CHR2 '{chr2}'.",
-                    sv_id,
-                    line_no,
-                    blocking=True,
-                )
-
-            if str(end).isdigit() and mate_pos != int(str(end)):
-                self._err(
-                    "E_TRA_005",
-                    f"{svtype} ALT mate pos {mate_pos} != END {end}.",
-                    sv_id,
-                    line_no,
-                    blocking=True,
-                )
-
-        if svlen is not None and svlen != ".":
-            self._err(
-                "E_TRA_006",
-                f"{svtype} requires SVLEN='.', got '{svlen}'.",
-                sv_id,
-                line_no,
-                blocking=True,
-            )
+        )
 
     def _check_co(
         self,

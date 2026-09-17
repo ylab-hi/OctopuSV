@@ -106,7 +106,7 @@ def get_octopus_default_definitions():
             '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">',
             '##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">',
             '##FORMAT=<ID=ST,Number=1,Type=String,Description="Strand orientation of SV (e.g., +, -, -+, ++)">',
-            '##FORMAT=<ID=QV,Number=1,Type=Integer,Description="Quality value">',
+            '##FORMAT=<ID=QV,Number=1,Type=Float,Description="Quality value">',
             '##FORMAT=<ID=TY,Number=1,Type=String,Description="Type of SV (e.g., TRA, DEL, INS)">',
             '##FORMAT=<ID=ID,Number=1,Type=String,Description="Unique identifier for the SV">',
             '##FORMAT=<ID=SC,Number=1,Type=String,Description="Source from which SV was identified">',
@@ -134,71 +134,73 @@ def extract_id_from_header_line(line, prefix):
 
 
 def merge_header_definitions(original_headers, octopus_defaults):
-    """
-    Merge original VCF header definitions with OctopuSV defaults.
-    Original definitions take priority to avoid conflicts.
+    """Merge input headers while keeping SVCF canonical definitions authoritative.
+
+    Preserve the historical input-header ordering as much as possible. When an
+    input definition reuses an ID owned by OctopuSV, emit the canonical SVCF
+    definition at that same position instead of the conflicting input line.
+    Canonical definitions absent from the input are appended afterward in their
+    normal OctopuSV order. This avoids broad header reordering while preventing
+    raw/legacy definitions from overriding the SVCF contract.
     """
     merged = {
-        'filter_lines': [],
-        'info_lines': [],
-        'format_lines': [],
-        'alt_lines': []
+        "filter_lines": [],
+        "info_lines": [],
+        "format_lines": [],
+        "alt_lines": [],
     }
 
-    # Track existing IDs to avoid duplicates
-    existing_filter_ids = set()
-    existing_info_ids = set()
-    existing_format_ids = set()
-    existing_alt_ids = set()
+    categories = (
+        ("filter_lines", "FILTER"),
+        ("info_lines", "INFO"),
+        ("format_lines", "FORMAT"),
+        ("alt_lines", "ALT"),
+    )
 
-    # Add original FILTER definitions
-    for line in original_headers.get('filter_lines', []):
-        filter_id = extract_id_from_header_line(line, 'FILTER')
-        if filter_id:
-            existing_filter_ids.add(filter_id)
-        merged['filter_lines'].append(line)
+    for key, prefix in categories:
+        default_lines = list(octopus_defaults.get(key, []))
+        default_by_id = {}
+        for line in default_lines:
+            item_id = extract_id_from_header_line(line, prefix)
+            if item_id is not None:
+                default_by_id[item_id] = line
 
-    # Add original INFO definitions
-    for line in original_headers.get('info_lines', []):
-        info_id = extract_id_from_header_line(line, 'INFO')
-        if info_id:
-            existing_info_ids.add(info_id)
-        merged['info_lines'].append(line)
+        emitted_ids = set()
+        emitted_raw_lines = set()
 
-    # Add original FORMAT definitions
-    for line in original_headers.get('format_lines', []):
-        format_id = extract_id_from_header_line(line, 'FORMAT')
-        if format_id:
-            existing_format_ids.add(format_id)
-        merged['format_lines'].append(line)
+        # Walk input definitions first so non-conflicting caller metadata keeps
+        # its historical relative ordering. A conflicting SVCF-owned ID is
+        # replaced in place by the canonical definition.
+        for line in original_headers.get(key, []):
+            item_id = extract_id_from_header_line(line, prefix)
+            if item_id is not None:
+                if item_id in emitted_ids:
+                    continue
+                if item_id in default_by_id:
+                    merged[key].append(default_by_id[item_id])
+                else:
+                    merged[key].append(line)
+                emitted_ids.add(item_id)
+                continue
 
-    # Add original ALT definitions
-    for line in original_headers.get('alt_lines', []):
-        alt_id = extract_id_from_header_line(line, 'ALT')
-        if alt_id:
-            existing_alt_ids.add(alt_id)
-        merged['alt_lines'].append(line)
+            if line in emitted_raw_lines:
+                continue
+            merged[key].append(line)
+            emitted_raw_lines.add(line)
 
-    # Add OctopuSV defaults that don't conflict with originals
-    for line in octopus_defaults.get('filter_lines', []):
-        filter_id = extract_id_from_header_line(line, 'FILTER')
-        if filter_id and filter_id not in existing_filter_ids:
-            merged['filter_lines'].append(line)
-
-    for line in octopus_defaults.get('info_lines', []):
-        info_id = extract_id_from_header_line(line, 'INFO')
-        if info_id and info_id not in existing_info_ids:
-            merged['info_lines'].append(line)
-
-    for line in octopus_defaults.get('format_lines', []):
-        format_id = extract_id_from_header_line(line, 'FORMAT')
-        if format_id and format_id not in existing_format_ids:
-            merged['format_lines'].append(line)
-
-    for line in octopus_defaults.get('alt_lines', []):
-        alt_id = extract_id_from_header_line(line, 'ALT')
-        if alt_id and alt_id not in existing_alt_ids:
-            merged['alt_lines'].append(line)
+        # Match historical behavior for missing OctopuSV definitions: append
+        # them after the preserved input definitions, in canonical order.
+        for line in default_lines:
+            item_id = extract_id_from_header_line(line, prefix)
+            if item_id is not None and item_id in emitted_ids:
+                continue
+            if item_id is None and line in emitted_raw_lines:
+                continue
+            merged[key].append(line)
+            if item_id is not None:
+                emitted_ids.add(item_id)
+            else:
+                emitted_raw_lines.add(line)
 
     return merged
 
@@ -291,10 +293,23 @@ def write_sv_vcf(contig_lines, events, output_file, input_vcf_file=None, extra_m
     """
     Write SV events to VCF file with proper header definitions.
     If input_vcf_file is provided, preserve original header definitions.
+
+    Records are written in stable genomic order using the exact ``##contig``
+    declaration order followed by POS. Sorting is output-only and never
+    mutates event contents.
     """
+    from octopusv.utils.svcf_sort import (
+        contig_order_from_meta_lines,
+        sort_events_for_output,
+    )
+
     sv_header = generate_sv_header(contig_lines, input_vcf_file, extra_meta_lines=extra_meta_lines)
+    ordered_events = sort_events_for_output(
+        events,
+        contig_order_from_meta_lines(contig_lines),
+    )
     with open(output_file, "w") as f:
         for header in sv_header:
             f.write(header + "\n")
-        for event in events:
+        for event in ordered_events:
             f.write(str(event) + "\n")

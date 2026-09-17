@@ -5,6 +5,7 @@ from octopusv.merger.name_mapper import default_label_from_path
 from octopusv.utils.sample_consensus import resolve_sample_consensus
 from octopusv.utils.source_path import normalize_source_path
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.svcf_sort import sort_events_for_output
 from octopusv.utils.vcf_info import format_vcf_info_item
 from octopusv.utils.svcf_schema import (
     MODE_CALLER,
@@ -692,7 +693,7 @@ class MergeWriterMixin:
 
             from .multi_sample_writer import MultiSampleWriter
 
-            writer = MultiSampleWriter(name_mapper)
+            writer = MultiSampleWriter(name_mapper, input_files=input_files)
             writer.write_results(output_file, processed_events, contigs)
 
             legacy_events = summary.get("legacy_sample_events", 0)
@@ -713,6 +714,7 @@ class MergeWriterMixin:
         else:
             # Caller mode. SOURCES, SOURCE_IDS, and evidence blocks are all
             # generated from the same ordered source-to-record mapping.
+            ordered_events = sort_events_for_output(events, contigs.keys())
             with open(output_file, "w") as f:
                 self._write_vcf_header(
                     f,
@@ -720,7 +722,7 @@ class MergeWriterMixin:
                     input_files,
                 )
 
-                for event in events:
+                for event in ordered_events:
                     ordered_records = self._prepare_caller_records(
                         event,
                         name_mapper=name_mapper,
@@ -1023,7 +1025,7 @@ class MergeWriterMixin:
             '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">\n')
         file_handle.write('##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">\n')
         file_handle.write('##FORMAT=<ID=ST,Number=1,Type=String,Description="Strand orientation of SV">\n')
-        file_handle.write('##FORMAT=<ID=QV,Number=1,Type=Integer,Description="Quality value">\n')
+        file_handle.write('##FORMAT=<ID=QV,Number=1,Type=Float,Description="Quality value">\n')
         file_handle.write('##FORMAT=<ID=TY,Number=1,Type=String,Description="Type of SV">\n')
 
         # Write column headers

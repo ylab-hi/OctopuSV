@@ -111,16 +111,18 @@ def filter_svcf(
             "Comma-separated record-level source/caller support include list. "
             "Merged records use explicit INFO/SOURCES labels; direct single-evidence "
             "caller records may use explicit FORMAT/SC instead. SOURCES labels and "
-            "SC caller-software names are distinct naming namespaces; OctopuSV does "
-            "not infer sources from record IDs, filenames, or header labels."
+            "SC caller-software names are distinct naming namespaces; matching is "
+            "exact and case-sensitive. OctopuSV does not infer sources from record "
+            "IDs, filenames, or header labels."
         ),
     ),
     exclude_source: Optional[str] = typer.Option(
         None,
         "--exclude-source",
         help=(
-            "Comma-separated source/caller exclusion list. Uses the same explicit "
-            "INFO/SOURCES or single-evidence FORMAT/SC identity rules as --source."
+            "Comma-separated source/caller exclusion list. Uses the same exact, "
+            "case-sensitive INFO/SOURCES or single-evidence FORMAT/SC identity "
+            "rules as --source."
         ),
     ),
     source_mode: str = typer.Option(

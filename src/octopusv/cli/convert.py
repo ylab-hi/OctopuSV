@@ -19,6 +19,7 @@ from octopusv.transformer.snmd_bndp import SpecialNoMateDiffBNDPairTransformer
 from octopusv.transformer.stra import SingleTRATransformer
 from octopusv.utils.atomic_write import atomic_output_path
 from octopusv.utils.normal_vcf_parser import parse_vcf
+from octopusv.utils.svcf_validator import SVCFValidator
 from octopusv.utils.svcf_utils import write_sv_vcf
 
 
@@ -47,6 +48,38 @@ def _print_correct_success_message(output_file: Path) -> None:
     _echo("OctopuSV only converts breakends when the SV type can be inferred with high confidence.")
     _echo("Remaining BND records may represent complex events that require specialized analysis.")
     _echo("If BND-level interpretation is not needed, remaining BND records can be filtered downstream.")
+
+
+def _validate_versioned_correct_output(output_path: Path) -> None:
+    """Refuse to publish a single-sample SVCF 1.1 file that fails validation.
+
+    ``correct`` still intentionally emits legacy/unversioned multi-sample
+    output, whose contract is different.  The caller-mode path, however,
+    explicitly claims SVCF 1.1 and therefore must satisfy the shared validator
+    before the atomic writer replaces the requested destination.
+    """
+    validator = SVCFValidator(str(output_path))
+    validator.validate()
+
+    if validator.svcf_version != "1.1":
+        _echo(
+            "Error: internal validation failed: single-sample correct output "
+            "did not declare SVCFVersion=1.1."
+        )
+        raise typer.Exit(code=1)
+
+    if validator.errors:
+        details = "; ".join(
+            f"[{issue.code}] {issue.message}"
+            for issue in validator.errors[:5]
+        )
+        if len(validator.errors) > 5:
+            details += f"; ... {len(validator.errors) - 5} more error(s)"
+        _echo(
+            "Error: internal SVCF validation failed; output was not published. "
+            + details
+        )
+        raise typer.Exit(code=1)
 
 
 def correct(
@@ -160,6 +193,25 @@ def correct(
     except ValueError as exc:
         _echo(f"Error: {exc}")
         raise typer.Exit(code=1) from exc
+
+    # Preserve explicit caller genotypes exactly.  If a single-sample caller
+    # supplied GT values but every one is missing, surface the downstream
+    # sample-consensus consequence once without rewriting those source calls.
+    explicit_gt_count = int(parse_stats.get("explicit_gt_count", 0))
+    explicit_missing_gt_count = int(parse_stats.get("explicit_missing_gt_count", 0))
+    output_sample_count = parse_stats.get("output_sample_count")
+    if (
+        output_sample_count == 1
+        and explicit_gt_count > 0
+        and explicit_missing_gt_count == explicit_gt_count
+    ):
+        _echo(
+            "Warning: all explicit source GT values are missing. "
+            "These records are preserved as reported but will not contribute "
+            "carrier/absence votes in OctopuSV sample consensus. If this is "
+            "unexpected, check whether genotype calling was enabled in the "
+            "source SV caller."
+        )
 
     # Initialize quality filter if any filtering parameters are provided.
     has_quality_filters = any([
@@ -281,6 +333,9 @@ def correct(
     # partial SVCF at the requested destination or overwrite a valid existing
     # result.  The scientific conversion logic above is unchanged.
     skipped_single_breakends = int(parse_stats.get("single_breakends", 0))
+    skipped_non_sv_records = int(parse_stats.get("skipped_non_sv_records", 0))
+    input_data_records = int(parse_stats.get("data_records", 0))
+    output_sample_count = parse_stats.get("output_sample_count")
     extra_meta_lines = []
     if skip_single_breakends and skipped_single_breakends:
         extra_meta_lines.append(
@@ -295,11 +350,23 @@ def correct(
             str(input_file),
             extra_meta_lines=extra_meta_lines,
         )
+        if output_sample_count == 1:
+            _validate_versioned_correct_output(temp_output)
 
+    if input_data_records == 0:
+        _echo(
+            "Warning: input VCF contains no data records; wrote a header-only "
+            "SVCF. This is valid for empty shards/samples."
+        )
     if skipped_single_breakends:
         _echo(
             f"Skipped {skipped_single_breakends} true single-breakend record(s) "
             "by explicit --skip-single-breakends request."
+        )
+    if skipped_non_sv_records:
+        _echo(
+            f"Skipped {skipped_non_sv_records} non-SV/reference record(s) "
+            "without SVTYPE."
         )
     _print_correct_success_message(output_file)
 
