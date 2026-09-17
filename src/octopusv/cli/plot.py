@@ -5,9 +5,25 @@ from typing import Optional
 
 import typer
 
-from octopusv.ploter.chromosome_plotter import ChromosomePlotter
-from octopusv.ploter.size_plotter import SizePlotter
-from octopusv.ploter.type_plotter import TypePlotter
+# Plot backends are intentionally loaded lazily so non-plot CLI commands do
+# not import matplotlib or trigger font-cache initialization.  The module-level
+# names remain monkeypatchable for existing tests/programmatic callers.
+ChromosomePlotter = None
+TypePlotter = None
+SizePlotter = None
+
+
+def _load_plotters():
+    global ChromosomePlotter, TypePlotter, SizePlotter
+    if ChromosomePlotter is None or TypePlotter is None or SizePlotter is None:
+        from octopusv.ploter.chromosome_plotter import ChromosomePlotter as _ChromosomePlotter
+        from octopusv.ploter.size_plotter import SizePlotter as _SizePlotter
+        from octopusv.ploter.type_plotter import TypePlotter as _TypePlotter
+
+        ChromosomePlotter = _ChromosomePlotter
+        TypePlotter = _TypePlotter
+        SizePlotter = _SizePlotter
+    return ChromosomePlotter, TypePlotter, SizePlotter
 
 
 def plot(
@@ -46,16 +62,17 @@ def plot(
     prefix_path = output_prefix if output_prefix is not None else input_file.with_suffix("")
     prefix = str(prefix_path)
     save_svg = not no_svg
+    chromosome_plotter, type_plotter, size_plotter = _load_plotters()
 
-    ChromosomePlotter(input_file).plot(
+    chromosome_plotter(input_file).plot(
         f"{prefix}_chromosome_distribution",
         save_svg=save_svg,
     )
-    TypePlotter(input_file).plot(
+    type_plotter(input_file).plot(
         f"{prefix}_sv_types",
         save_svg=save_svg,
     )
-    SizePlotter(input_file).plot(
+    size_plotter(input_file).plot(
         f"{prefix}_sv_sizes",
         save_svg=save_svg,
     )

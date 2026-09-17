@@ -4,9 +4,6 @@ import typer
 
 from octopusv.report.generator import ReportGenerator
 from octopusv.stater.sv_stater import SVStater
-from octopusv.ploter.chromosome_plotter import ChromosomePlotter
-from octopusv.ploter.type_plotter import TypePlotter
-from octopusv.ploter.size_plotter import SizePlotter
 
 
 def stat(
@@ -78,6 +75,12 @@ def stat(
     sv_stater.write_results(output_file)
 
     if report:
+        # Plotting is optional for ordinary `stat` use; import matplotlib-backed
+        # plotters only when the user explicitly requests an HTML report.
+        from octopusv.ploter.chromosome_plotter import ChromosomePlotter
+        from octopusv.ploter.size_plotter import SizePlotter
+        from octopusv.ploter.type_plotter import TypePlotter
+
         typer.echo("Generating HTML report...")
         output_prefix = str(output_file.with_suffix(''))
         ChromosomePlotter(str(output_file)).plot(f"{output_prefix}_chromosome_distribution")

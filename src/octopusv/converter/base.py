@@ -3,8 +3,6 @@ import re
 
 from natsort import natsorted
 
-logging.basicConfig(level=logging.INFO)
-
 
 class Converter:
     """This is an abstract base class for all converter classes.

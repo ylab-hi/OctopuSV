@@ -21,8 +21,6 @@ from octopusv.utils.sample_mode_semantics import (
     normalize_unobserved_sample_gt,
 )
 
-logging.basicConfig(level=logging.INFO)
-
 
 class SVCFtoVCFConverter:
     """Convert OctopuSV SVCF records back to VCF4.2-compatible records.

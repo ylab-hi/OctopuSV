@@ -8,7 +8,6 @@ import typer
 from octopusv.merger.name_mapper import NameMapper, default_label_from_path
 from octopusv.merger.sv_merge_selection import validate_selection_inputs
 from octopusv.merger.sv_merger import SVMerger
-from octopusv.merger.upset_plotter import UpSetPlotter
 from octopusv.utils.SV_classifier_by_chromosome import SVClassifiedByChromosome
 from octopusv.utils.SV_classifier_by_type import SVClassifierByType
 from octopusv.utils.atomic_write import atomic_output_path
@@ -1151,6 +1150,10 @@ def merge(
     # Generate UpSet plot if requested.
     if upsetr:
         try:
+            # Import plotting only when requested.  This keeps ordinary merge,
+            # --help, and non-plot CLI startup independent of matplotlib.
+            from octopusv.merger.upset_plotter import UpSetPlotter
+
             plot_file = str(upsetr_output) if upsetr_output else str(output_file).rsplit(".", 1)[0] + "_upset.png"
             plotter = UpSetPlotter(sv_merger.get_all_merged_events(), all_input_files)
             plotter.plot(plot_file)
