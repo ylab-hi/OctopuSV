@@ -177,6 +177,8 @@ The first nine columns are fixed and must appear in this order:
 
 At least one column must follow `FORMAT`.
 
+A conforming SVCF 1.1 file may contain zero data records. A header-only SVCF is valid when its version, mode, `#CHROM` shape, and required meta-information remain valid for the declared data model. Tools must not infer biological absence from the mere fact that an SVCF contains zero records.
+
 A versioned writer must emit VCF meta-information definitions for SVCF-specific INFO/FORMAT fields that it writes, with Number/Type compatible with the semantics in this specification. Unknown optional meta-information lines are permitted and should be preserved by structure-preserving tools.
 
 ### 4.1 Caller-mode header shape
@@ -278,14 +280,14 @@ The order must not change.
 
 | Field | Meaning in caller mode |
 |---|---|
-| `GT` | Genotype from the source evidence record. |
+| `GT` | Genotype from the source evidence record when provided. If a source VCF reports the SV event but provides no genotype field/sample genotype at all, OctopuSV represents carrier presence with unresolved zygosity as `1/.`. An explicit source missing genotype such as `.` or `./.` remains missing and must not be rewritten as `1/.`. |
 | `AD` | Source reference/alternate allele depths when available. |
 | `LN` | Absolute source-event length when available. |
 | `ST` | Source strand/orientation value. |
 | `QV` | Source quality value. |
 | `TY` | Source structural-variant type. |
 | `ID` | Original source record ID. |
-| `SC` | Source caller/method label. |
+| `SC` | Source caller/method label. SVCF 1.1 does not permit `:` in `SC`. |
 | `REF` | Original source REF. |
 | `ALT` | Original source ALT, including original BND syntax when applicable. |
 | `CO` | Source coordinates. |
@@ -370,10 +372,12 @@ Software must not reconstruct source identity from filenames, ID prefixes, sampl
 `SOURCES` and `SOURCE_IDS` are delimiter-based positional lists in SVCF 1.1. The format does not define an escaping mechanism for list/INFO delimiters. Therefore:
 
 - a `SOURCES` item **must** be non-empty and **must not** be `.`;
+- source labels are exact, case-sensitive identities and must not be case-folded, normalized, or inferred from filenames/record IDs when explicit source identity is available;
+- a `SOURCES` item **must not** contain `,`, `;`, `=`, `:`, or whitespace;
 - `.` is permitted in `SOURCE_IDS` only as the positional missing-ID placeholder;
-- non-missing `SOURCES` and `SOURCE_IDS` items **must not** contain `,`, `;`, `=`, or whitespace.
+- non-missing `SOURCE_IDS` items **must not** contain `,`, `;`, `=`, or whitespace; colons are permitted in `SOURCE_IDS` because source record IDs may legitimately contain them.
 
-These characters are reserved because comma separates positional list items, semicolon separates INFO fields, equals separates INFO keys from values, and whitespace is not a portable VCF token character. A conforming writer must reject such values rather than silently sanitize, truncate, split, or escape them. Readers interpret delimiters structurally; because SVCF 1.1 defines no escaping layer, an intended identifier that already contains one of these reserved delimiters cannot be losslessly reconstructed after serialization. A future encoding that permits such values would require an explicit specification change.
+Comma separates positional list items, semicolon separates INFO fields, equals separates INFO keys from values, and whitespace is not a portable VCF token character. In addition, colon is reserved from source labels because the same source identity may be serialized in FORMAT `SC`, where `:` is the evidence-block field delimiter and SVCF 1.1 defines no escaping layer. A conforming writer must reject unrepresentable source labels/IDs rather than silently sanitize, truncate, split, case-normalize, or escape them. Readers interpret delimiters structurally; because SVCF 1.1 defines no escaping layer, an intended atom containing a reserved delimiter cannot be losslessly reconstructed after serialization. A future encoding that permits such values would require an explicit specification change.
 
 ### 7.2 Single-evidence caller records
 
@@ -554,7 +558,7 @@ Examples:
 
 Contig names may contain underscores or hyphens. Parsers must not split coordinate strings using the first underscore or first hyphen without validating the resulting coordinates.
 
-SVCF 1.1 does **not** permit `:` inside contig names used by record-level `CHROM` or `INFO/CHR2`. The fixed evidence block uses `:` as its field delimiter and `CO` embeds those contig names without an escaping layer, so a colon-bearing contig cannot currently be serialized and parsed losslessly. A conforming writer must reject such records rather than emit an ambiguous evidence block. Full support for colon-bearing contig names requires a future explicit encoding/specification change.
+SVCF 1.1 does **not** permit `:` inside contig names used by record-level `CHROM` or `INFO/CHR2`, or inside FORMAT `SC`. The fixed evidence block uses `:` as its field delimiter: `CO` embeds `CHROM`/`CHR2`, and `SC` occupies the fixed `ID:SC:REF:ALT:CO` tail without an escaping layer. Allowing `:` in any of these atoms would make the evidence block ambiguous and prevent lossless round-tripping. A conforming writer must reject such records rather than emit an ambiguous evidence block. Full support would require a future explicit encoding/specification change.
 
 Source record IDs may contain colons. BND ALT strings and symbolic ALT values may also contain colons, for example:
 
@@ -855,7 +859,9 @@ For SVCF 1.1, validation includes:
 - caller/source/evidence column counts;
 - `SOURCE_IDS` positional consistency when present;
 - representable SVCF 1.1 `SOURCES` / `SOURCE_IDS` item syntax, including reserved-character and missing-value rules;
+- exact/case-sensitive source identity, including the prohibition of `:` in `SOURCES` labels and FORMAT `SC`;
 - sample-column count consistency in multi mode;
+- absence of `:` in `CHROM`, `CHR2`, and FORMAT `SC`;
 - structural-variant coordinate checks;
 - BND breakend ALT/CHR2/END agreement;
 - TRA breakpoint validation, including breakend ALT/CHR2/END agreement when breakend notation is used and `CHR2` plus numeric `END` when symbolic `<TRA>` is used;
@@ -903,7 +909,9 @@ Software that writes SVCF 1.1 should:
 - preserve explicit source/evidence bindings;
 - preserve duplicate source labels when multiple records from one caller support the same event;
 - preserve positional `.` placeholders in `SOURCE_IDS`;
-- reject `SOURCES` / non-missing `SOURCE_IDS` items containing reserved delimiters or whitespace rather than silently rewriting them;
+- preserve source labels as exact, case-sensitive identities; do not case-fold or otherwise normalize them;
+- reject `SOURCES` / non-missing `SOURCE_IDS` items containing their reserved delimiters or whitespace rather than silently rewriting them; in particular, `SOURCES` labels and FORMAT `SC` must not contain `:`;
+- reject `:` in `CHROM`, `CHR2`, or FORMAT `SC` rather than emitting an ambiguously encoded evidence block;
 - avoid reconstructing known source identity from filenames, record-ID prefixes, or column order;
 - fail rather than silently downgrade when a versioned header/schema cannot be written correctly.
 
@@ -912,6 +920,8 @@ Software that reads SVCF 1.1 should:
 - treat the declared version/mode as authoritative;
 - reject unsupported versions rather than silently interpreting them as 1.1;
 - reject a FORMAT that disagrees with the declared mode;
+- treat explicit source labels as exact, case-sensitive identities;
+- reject `:` in `CHROM`, `CHR2`, FORMAT `SC`, or `SOURCES` source labels;
 - parse colon-containing IDs/ALT values with a structure-aware SVCF block parser;
 - distinguish raw caller evidence from synthesized sample calls;
 - distinguish unobserved sample placeholders from evidence-backed absence or unresolved calls.
@@ -919,6 +929,7 @@ Software that reads SVCF 1.1 should:
 Files without `##SVCFVersion` may be handled through explicit legacy compatibility paths, but legacy inference must not override an explicit versioned identity.
 
 The specification is the normative description of SVCF 1.1; the shared schema module and regression tests are the reference-implementation safeguards. When the contract changes, the specification, shared schema definition, writers, readers, validator, converters, and regression tests must be reviewed and updated together. A code change that intentionally changes a normative SVCF 1.1 rule must either remain backward-compatible with this specification or introduce a new SVCF version.
+
 ---
 
 ## Appendix A. Changes from legacy SVCF (non-normative)
@@ -935,6 +946,8 @@ This appendix summarizes migration-relevant differences between unversioned lega
 8. **Partial carrier genotype.** `1/.` means at least one ALT allele is established while the second allele is unresolved; it is distinct from `./.`.
 9. **Synthesized allele depth is unavailable.** Caller allele depths are not composable across callers, so synthesized sample calls use `AD=.,.` and VCF export uses `DP=.`.
 10. **Unobserved sample policy is explicit.** Internal `UV=0` placeholders remain distinguishable in SVCF and VCF export records the selected `missing|ref` interpretation in the output header.
-11. **Colon-containing values require structure-aware parsing.** Record IDs and ALT representations may contain colons; readers must not parse SVCF sample blocks with naive positional `split(":")` logic.
+11. **Colon-containing values require structure-aware parsing.** Record IDs and ALT representations may contain colons; readers must not parse SVCF sample blocks with naive positional `split(":")` logic. Contig names used by `CHROM`/`CHR2`, FORMAT `SC`, and `SOURCES` source labels must not contain colons in SVCF 1.1.
 12. **Legacy compatibility is explicit, not authoritative.** Unversioned files may still be read through compatibility paths, but legacy inference must never override an explicit versioned SVCF identity.
 13. **TRA orientation is optional.** `TRA` requires two known breakpoint coordinates, not necessarily known breakend orientation. Breakend-form `TRA` records encode the remote breakpoint and orientation in `ALT`; symbolic `<TRA>` records use `CHR2` and numeric `END` for the remote breakpoint and leave orientation unresolved. `BND` remains breakend-ALT only.
+14. **Site-only source calls do not imply heterozygosity.** When an input reports an SV event but provides no genotype field/sample genotype at all, OctopuSV uses `GT=1/.` to represent carrier presence with unresolved zygosity; an explicit source `.`/`./.` genotype remains missing.
+15. **Zero-record files are valid.** A header-only SVCF 1.1 is valid when its version/mode/header contract is valid; zero records must not be reinterpreted as an evidence-backed absence call.

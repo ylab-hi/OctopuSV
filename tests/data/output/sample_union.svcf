@@ -1,7 +1,7 @@
 ##fileformat=VCFv4.2
 ##SVCFVersion=1.1
 ##OctopuSV_mode=multi
-##fileDate=2026-09-16|10:02:39PM|
+##fileDate=2026-09-17|08:55:42AM|
 ##source=OctopuSV
 ##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
 ##contig=<ID=1,length=249250621>
