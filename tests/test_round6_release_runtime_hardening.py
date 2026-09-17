@@ -51,6 +51,36 @@ def test_cli_without_command_preserves_missing_command_behavior():
     assert "Missing command" in result.stderr
 
 
+def test_cli_correct_subprocess_executes_real_command_instead_of_version_callback(tmp_path):
+    input_vcf = tmp_path / "input.vcf"
+    output_svcf = tmp_path / "output.svcf"
+    input_vcf.write_text(
+        "##fileformat=VCFv4.2\n"
+        "##source=ROUND6_SMOKE\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        "chr1\t100\tdel1\tN\t<DEL>\t60\tPASS\t"
+        "SVTYPE=DEL;END=200;SVLEN=-100\tGT\t0/1\n",
+        encoding="utf-8",
+    )
+
+    result = _run_python(
+        "-m",
+        "octopusv",
+        "correct",
+        "-i",
+        str(input_vcf),
+        "-o",
+        str(output_svcf),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output_svcf.exists(), result.stderr
+    output_text = output_svcf.read_text(encoding="utf-8")
+    assert "SVTYPE=DEL" in output_text
+    assert "del1" in output_text
+    assert result.stdout.strip() != __version__
+
+
 def test_pyproject_version_matches_package_version_without_tomllib():
     text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     tool_poetry = text.split("[tool.poetry]", 1)[1].split("[", 1)[0]
@@ -177,9 +207,9 @@ def test_pyproject_runtime_dependency_cleanup():
     assert not re.search(r"^seaborn\s*=", runtime, re.MULTILINE)
     assert not re.search(r"^loguru\s*=", runtime, re.MULTILINE)
     # Dependency ranges were finalized after clean-environment validation:
-    # minimum: Typer 0.12.4 / Click 8.0.0 / Rich 13.7.1;
+    # cross-version-safe minimum: Typer 0.16.0; tested with Click 8.0.0 and 8.5.0;
     # latest tested: Typer 0.27.2 / Click 8.5.0 / Rich 15.0.0.
-    assert re.search(r'^typer\s*=\s*["\']>=0\.12\.4,<0\.28["\']', runtime, re.MULTILINE)
+    assert re.search(r'^typer\s*=\s*["\']>=0\.16\.0,<0\.28["\']', runtime, re.MULTILINE)
     assert re.search(r'^rich\s*=\s*["\']>=13\.7\.1,<16["\']', runtime, re.MULTILINE)
     assert not re.search(r"^click\s*=", runtime, re.MULTILINE)
     assert re.search(r"^pytest-cov\s*=", dev, re.MULTILINE)

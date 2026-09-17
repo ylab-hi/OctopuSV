@@ -14,7 +14,7 @@ documentation = "https://github.com/ylab-hi/OctopuSV#readme"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-typer = ">=0.12.4,<0.28"
+typer = ">=0.16.0,<0.28"
 rich = ">=13.7.1,<16"
 natsort = "^8.4.0"
 numpy = ">=1.23"
