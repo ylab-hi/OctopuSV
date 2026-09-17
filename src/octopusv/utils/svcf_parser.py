@@ -2,6 +2,10 @@ import logging
 import os
 import re
 
+from .svcf_sample_parser import parse_svcf_sample_block
+from .svcf_coordinate_parser import parse_svcf_co
+from .text_io import open_text_auto
+
 
 class SVCFEvent:
     """Represents a structural variant (SV) event parsed from an SVCF file.
@@ -111,52 +115,28 @@ class SVCFEvent:
         return info
 
     def _parse_sample(self, sample):
-        """Parses the sample string based on the format to extract all relevant data.
-        Handles fields that may contain colons (like ALT and CO).
-        """
-        format_keys = self.format.split(":")
-        sample_parts = sample.split(":")
-        result = {}
+        """Parse one SVCF evidence block using the shared SVCF parser."""
+        result = parse_svcf_sample_block(self.format, sample)
 
-        # Special handling of fields that may contain colons
-        special_fields = ["ALT", "CO", "REF"]  # Fields that might need special handling
-        special_field_index = None
-
-        for i, key in enumerate(format_keys):
-            if key in special_fields:
-                special_field_index = i
-                break
-
-        if special_field_index is not None:
-            # Regular fields
-            for i in range(special_field_index):
-                result[format_keys[i]] = sample_parts[i]
-
-            # Process the special field and all fields after it
-            result[format_keys[special_field_index]] = ":".join(sample_parts[special_field_index:])
-        else:
-            # If there are no special fields, handle them in the usual way
-            result = dict(zip(format_keys, sample_parts, strict=False))
-
-        # Store the complete original event ID to preserve IDs with colons (e.g., Manta IDs)
-        result['original_id'] = self.sv_id
+        # Keep the record-level ID used by existing merge/sample-mode code.
+        # The evidence-level ID remains available as result["ID"].
+        result["original_id"] = self.sv_id
 
         return result
 
     def _find_co_with_coords(self):
-        """Return a CO coordinate token that carries real coordinates.
+        """Return the first structurally valid CO coordinate token.
 
-        In multi-sample SVCF the leading samples are often 0/0 with CO='.',
-        while only the carrier sample holds 'chrA_posA-chrB_posB'. CO is the
-        LAST FORMAT field in OctopuSV SVCF and contains no colon, so the token
-        after the final ':' in each sample column is the CO value. Index-based,
-        no regex -> no catastrophic backtracking on long INS ALT sequences.
+        The shared parser is conservative and understands contig names that
+        contain underscores or hyphens. Ambiguous CO text is never guessed.
         """
         for col in self.raw_sample_columns:
             co_val = col.rsplit(":", 1)[-1]
-            if co_val and co_val != "." and "-" in co_val:
+            if parse_svcf_co(co_val) is not None:
                 return co_val
-        return self.sample.get("CO")
+
+        fallback = self.sample.get("CO")
+        return fallback if parse_svcf_co(fallback) is not None else None
 
     def _parse_coordinates(self):
         """Extracts and parses the coordinates of the SV from the ALT field or INFO field."""
@@ -227,26 +207,9 @@ class SVCFEvent:
         return start_chrom, start_pos, end_chrom, start_pos
 
     def _coords_from_co(self, co):
-        """Parse a CO token 'startChrom_startPos-endChrom_endPos' into coordinates.
+        """Parse CO through the shared unambiguous coordinate parser."""
+        return parse_svcf_co(co)
 
-        Returns (start_chrom, start_pos, end_chrom, end_pos) or None if the token
-        is missing / not splittable.
-
-        Robust to contig names that themselves contain underscores or hyphens
-        (e.g. 'chrY_KI270740v1_random', 'NC_007605'): the position is always the
-        final '_'-delimited field, so split the chrom/pos pair from the RIGHT
-        (rsplit) and split the start-end pair only at the FIRST '-'.
-        """
-        if not co or "-" not in co:
-            return None
-        try:
-            start, end = co.split("-", 1)  # split only at the first '-'
-            start_chrom, start_pos = start.rsplit("_", 1)  # pos is the last '_' field
-            end_chrom, end_pos = end.rsplit("_", 1)
-            return start_chrom, int(start_pos), end_chrom, int(end_pos)
-        except (ValueError, AttributeError):
-            # Malformed CO token -> let the caller fall back to INFO/main columns.
-            return None
 
 
 class SVCFFileEventCreator:
@@ -262,34 +225,40 @@ class SVCFFileEventCreator:
         self.events = []
 
     def parse(self):
-        """Parses each file in the filenames list, creating SVCFEvent objects for each valid SV record."""
+        """Parse all SVCF records, failing loudly on malformed data rows."""
         for filename in self.filenames:
-            with open(filename) as file:
+            with open_text_auto(filename) as file:
                 sample_name = None
                 sample_names = None
-                for line in file:
+                for line_number, line in enumerate(file, 1):
                     if line.startswith("#CHROM"):
                         header_parts = line.strip().split("\t")
                         if len(header_parts) > 9:
-                            # Keep ALL trailing sample/column names (sample-mode
-                            # inspect needs the full list); sample_name stays the
-                            # first one for legacy single-sample behavior.
                             sample_names = header_parts[9:]
                             sample_name = sample_names[0]
                         else:
-                            sample_name = os.path.basename(filename)  # Use filename as sample name if not provided
+                            sample_name = os.path.basename(filename)
                             sample_names = [sample_name]
                         continue
-                    if line.startswith("#"):
-                        continue  # Skip comment lines that start with '#'
+                    if line.startswith("#") or not line.strip():
+                        continue
+
                     parts = line.strip().split("\t")
                     if len(parts) < 10:
-                        continue  # Ensure that there are enough parts to form a complete SV event
-                    # Pass ALL sample columns (parts[9:]) so multi-sample data
-                    # survives parsing. *parts[:10] still supplies the first 9
-                    # columns + the first sample (for the legacy self.sample).
+                        raise ValueError(
+                            f"Malformed SVCF record in {filename!r} on line "
+                            f"{line_number}: expected at least 10 tab-separated "
+                            f"columns, got {len(parts)}."
+                        )
+
+                    if sample_name is None:
+                        raise ValueError(
+                            f"Malformed SVCF {filename!r}: data record on line "
+                            f"{line_number} appears before a #CHROM header."
+                        )
+
                     sv_event = SVCFEvent(
                         *parts[:10], source_file=filename, sample_name=sample_name,
                         raw_sample_columns=parts[9:], sample_names=sample_names,
                     )
-                    self.events.append(sv_event)  # Add the event to the list of events
+                    self.events.append(sv_event)

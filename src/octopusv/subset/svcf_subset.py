@@ -40,12 +40,21 @@ Core rules:
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from octopusv.filtering.svcf_filter import parse_info
+from octopusv.utils.atomic_write import atomic_output_path
+from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.source_identity import (
+    case_only_source_candidates,
+    explicit_record_sources,
+    format_case_only_source_error,
+)
+from octopusv.utils.svcf_validator import validate_versioned_svcf_for_downstream
 
 
 LEGAL_MODES = {"auto", "sample", "caller"}
@@ -157,6 +166,25 @@ def split_info_list(value) -> list[str]:
     return items
 
 
+def split_positional_info_list(value) -> list[str]:
+    """Split a positional INFO list while preserving missing-value slots.
+
+    This is intentionally narrower than ``split_info_list``. It is for INFO
+    fields whose item positions are meaningful, especially SOURCE_IDS where
+    ``a,.,c`` means that the second evidence block exists but its source ID is
+    missing. Dropping the dot would shift all later IDs out of alignment.
+    """
+    if value is None or value is True or value == "":
+        return []
+
+    items = []
+    for item in str(value).split(","):
+        item = item.strip()
+        items.append(item if item else ".")
+
+    return items
+
+
 def update_info_string(info_string: str, updates: dict[str, str]) -> str:
     """Update INFO while preserving existing field order as much as possible."""
     if info_string in MISSING_VALUES:
@@ -235,6 +263,7 @@ class SVCFSubset:
 
         self.warning_counts = Counter()
         self.mode_warnings: list[str] = []
+        self.selection_warnings: list[str] = []
 
         self.header_info: Optional[HeaderInfo] = None
 
@@ -244,13 +273,24 @@ class SVCFSubset:
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        output_handle = None
-        if not self.config.dry_run:
-            output_handle = Path(self.config.output_file).open("w")
+        validate_versioned_svcf_for_downstream(
+            input_path, consumer="octopusv subset"
+        )
 
-        try:
-            with input_path.open() as handle:
-                for line in handle:
+        with ExitStack() as stack:
+            output_handle = None
+            if not self.config.dry_run:
+                if self.config.output_file is None:
+                    raise ValueError("output_file is required unless dry_run=True.")
+                temp_output = stack.enter_context(
+                    atomic_output_path(self.config.output_file)
+                )
+                output_handle = stack.enter_context(
+                    open(temp_output, "w", encoding="utf-8")
+                )
+
+            with open_text_auto(input_path) as handle:
+                for line_number, line in enumerate(handle, 1):
                     if line.startswith("##"):
                         self._collect_meta_header_line(line)
                         continue
@@ -268,7 +308,18 @@ class SVCFSubset:
                         continue
 
                     if self.header_info is None:
-                        raise ValueError("Malformed SVCF: data record found before #CHROM header.")
+                        raise ValueError(
+                            f"Malformed SVCF in {str(input_path)!r} on line "
+                            f"{line_number}: data record found before #CHROM header."
+                        )
+
+                    fields = line.rstrip("\r\n").split("\t")
+                    if len(fields) < 10:
+                        raise ValueError(
+                            f"Malformed SVCF record in {str(input_path)!r} on line "
+                            f"{line_number}: expected at least 10 tab-separated "
+                            f"columns, got {len(fields)}."
+                        )
 
                     self.input_records += 1
 
@@ -281,9 +332,12 @@ class SVCFSubset:
                     if output_handle is not None:
                         output_handle.write(output_line)
 
-        finally:
-            if output_handle is not None:
-                output_handle.close()
+            # Caller identities are discovered from records rather than the
+            # header.  Validate case-only typos before the atomic output is
+            # published; truly unobserved callers remain a legitimate empty
+            # subset and are reported as warnings instead.
+            if self.detected_mode == "caller":
+                self._finalize_caller_selection()
 
         if self.header_info is None:
             raise ValueError("Malformed SVCF: missing #CHROM header line.")
@@ -430,6 +484,27 @@ class SVCFSubset:
         else:
             raise ValueError(f"Internal error: unknown detected mode {self.detected_mode}")
 
+    def _finalize_caller_selection(self) -> None:
+        observed = set(self.available_callers_counter)
+        for requested in self.config.selected_callers:
+            if requested in observed:
+                continue
+
+            candidates = case_only_source_candidates(requested, observed)
+            if candidates:
+                raise ValueError(
+                    format_case_only_source_error(requested, candidates)
+                )
+
+            observed_text = ", ".join(sorted(observed)) if observed else "."
+            message = (
+                f"Requested caller {requested!r} was not observed in this SVCF. "
+                f"Observed callers: {observed_text}. Returning the exact-match "
+                "subset; this caller may legitimately have no surviving events."
+            )
+            self.selection_warnings.append(message)
+            self.warning_counts["requested_caller_not_observed"] += 1
+
     def _render_output_header_lines(self) -> list[str]:
         assert self.header_info is not None
 
@@ -469,10 +544,9 @@ class SVCFSubset:
     def _process_sample_mode_record(self, line: str) -> Optional[str]:
         assert self.header_info is not None
 
-        fields = line.rstrip("\n").split("\t")
-        if len(fields) < 9:
-            self.warning_counts["malformed_record"] += 1
-            return None
+        fields = line.rstrip("\r\n").split("\t")
+        if len(fields) < 10:
+            raise ValueError("Malformed SVCF record: expected at least 10 columns.")
 
         fixed = fields[:9]
         info_string = fields[7]
@@ -534,7 +608,7 @@ class SVCFSubset:
         retained_sources: list[str],
     ) -> str:
         sources = split_info_list(info.get("SOURCES"))
-        source_ids = split_info_list(info.get("SOURCE_IDS"))
+        source_ids = split_positional_info_list(info.get("SOURCE_IDS"))
 
         if "SOURCE_IDS" not in info:
             return "."
@@ -562,10 +636,9 @@ class SVCFSubset:
         return ",".join(retained_ids) if retained_ids else "."
 
     def _process_caller_mode_record(self, line: str) -> Optional[str]:
-        fields = line.rstrip("\n").split("\t")
-        if len(fields) < 9:
-            self.warning_counts["malformed_record"] += 1
-            return None
+        fields = line.rstrip("\r\n").split("\t")
+        if len(fields) < 10:
+            raise ValueError("Malformed SVCF record: expected at least 10 columns.")
 
         fixed = fields[:9]
         info_string = fields[7]
@@ -575,7 +648,19 @@ class SVCFSubset:
         info = parse_info(info_string)
         sources = split_info_list(info.get("SOURCES"))
 
-        for source in sources:
+        # Keep the caller-mode positional contract based on SOURCES when it
+        # exists.  For a direct single-evidence caller record, use the same
+        # explicit FORMAT/SC fallback as source filtering rather than guessing
+        # from IDs or filenames.
+        if not sources and len(evidence_fields) == 1:
+            try:
+                explicit_sources, _ = explicit_record_sources(info, fields)
+            except ValueError:
+                explicit_sources = set()
+            if len(explicit_sources) == 1:
+                sources = [next(iter(explicit_sources))]
+
+        for source in dict.fromkeys(sources):
             self.available_callers_counter[source] += 1
 
         selected_set = set(self.config.selected_callers)
@@ -625,7 +710,7 @@ class SVCFSubset:
         retained_sources = [sources[index] for index in retained_indices]
         selected_evidence = [evidence_fields[index] for index in retained_indices]
 
-        for source in retained_sources:
+        for source in dict.fromkeys(retained_sources):
             self.retained_callers_counter[source] += 1
 
         if not retained_sources and not self.config.keep_empty:
@@ -665,7 +750,7 @@ class SVCFSubset:
         sources: list[str],
         retained_indices: list[int],
     ) -> str:
-        source_ids = split_info_list(info.get("SOURCE_IDS"))
+        source_ids = split_positional_info_list(info.get("SOURCE_IDS"))
 
         if "SOURCE_IDS" not in info:
             return "."
@@ -712,6 +797,7 @@ class SVCFSubset:
             "retained_callers": sorted(self.retained_callers_counter),
             "warning_counts": dict(self.warning_counts),
             "mode_warnings": self.mode_warnings,
+            "selection_warnings": self.selection_warnings,
         }
 
     @staticmethod
@@ -767,6 +853,12 @@ class SVCFSubset:
             lines.append("")
             lines.append("Mode warnings:")
             for warning in summary["mode_warnings"]:
+                lines.append(f"  {warning}")
+
+        if summary["selection_warnings"]:
+            lines.append("")
+            lines.append("Selection warnings:")
+            for warning in summary["selection_warnings"]:
                 lines.append(f"  {warning}")
 
         if summary["warning_counts"]:

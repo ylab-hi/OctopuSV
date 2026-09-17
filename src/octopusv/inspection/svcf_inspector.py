@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Optional
 
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
+from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 
 # SV types with a meaningful linear intra-chromosomal span.
@@ -42,112 +44,11 @@ NON_LINEAR_SVTYPES = {"TRA", "BND"}
 
 # FORMAT subfields that may themselves contain ':' and therefore must absorb all
 # remaining colon-delimited tokens once reached (mirrors SVCFEvent._parse_sample).
-_SPECIAL_FORMAT_FIELDS = ("ALT", "CO", "REF")
-
 MODE_MULTI_MARKER = "##OctopuSV_mode=multi"
 
 def parse_format_block(format_keys, block):
-    """Split one FORMAT sample/evidence block into a {key: value} dict.
-
-    OctopuSV's standard FORMAT tail is:
-        ...:ID:SC:REF:ALT:CO
-
-    ID may contain ':' for some caller/BND-derived IDs.
-    ALT may contain ':' for BND/TRA alleles.
-    CO is the final field and does not contain ':'.
-
-    Therefore we parse from both ends:
-      - fixed fields before ID from the left
-      - CO from the far right
-      - ALT from the right, allowing BND ALT to contain one ':'
-      - REF and SC immediately before ALT
-      - everything left in the middle becomes ID
-    """
-    if not block:
-        return {}
-
-    parts = block.split(":")
-    result = {}
-
-    # Most OctopuSV SVCF records use this standard tail.
-    standard_tail = ["ID", "SC", "REF", "ALT", "CO"]
-    has_standard_tail = (
-        len(format_keys) >= 5
-        and format_keys[-5:] == standard_tail
-    )
-
-    if not has_standard_tail:
-        # Generic fallback: positional parse; final key absorbs overflow.
-        for i, key in enumerate(format_keys):
-            if i < len(parts):
-                if i == len(format_keys) - 1:
-                    result[key] = ":".join(parts[i:])
-                else:
-                    result[key] = parts[i]
-            else:
-                result[key] = "."
-        return result
-
-    n_head = len(format_keys) - 5
-
-    # Placeholder or malformed short block: positional fill, do not guess.
-    if len(parts) < len(format_keys):
-        for i, key in enumerate(format_keys):
-            result[key] = parts[i] if i < len(parts) else "."
-        return result
-
-    # Parse fields before ID from the left.
-    for i in range(n_head):
-        result[format_keys[i]] = parts[i] if i < len(parts) else "."
-
-    # Remaining tokens correspond to ID:SC:REF:ALT:CO,
-    # but ID and ALT may contain ':'.
-    tail_parts = parts[n_head:]
-
-    if len(tail_parts) < 5:
-        # Should not happen for valid OctopuSV blocks, but keep safe fallback.
-        tail_keys = standard_tail
-        for i, key in enumerate(tail_keys):
-            result[key] = tail_parts[i] if i < len(tail_parts) else "."
-        return result
-
-    co_val = tail_parts[-1]
-    before_co = tail_parts[:-1]
-
-    # Detect BND/TRA ALT split by ':'.
-    # Examples after split:
-    #   G[hs37d5:6434738[  -> ["G[hs37d5", "6434738["]
-    #   ]10:87115249]T    -> ["]10", "87115249]T"]
-    if (
-        len(before_co) >= 4
-        and ("[" in before_co[-1] or "]" in before_co[-1])
-        and ("[" in before_co[-2] or "]" in before_co[-2])
-    ):
-        alt_tokens = before_co[-2:]
-        ref_index = len(before_co) - 3
-    else:
-        alt_tokens = [before_co[-1]]
-        ref_index = len(before_co) - 2
-
-    if ref_index < 1:
-        # Not enough tokens for SC + REF + ALT.
-        # Fall back conservatively.
-        for i, key in enumerate(format_keys):
-            result[key] = parts[i] if i < len(parts) else "."
-        return result
-
-    ref_val = before_co[ref_index]
-    sc_val = before_co[ref_index - 1]
-    id_tokens = before_co[:ref_index - 1]
-    id_val = ":".join(id_tokens) if id_tokens else "."
-
-    result["ID"] = id_val
-    result["SC"] = sc_val
-    result["REF"] = ref_val
-    result["ALT"] = ":".join(alt_tokens)
-    result["CO"] = co_val
-
-    return result
+    """Backward-compatible wrapper around the shared SVCF block parser."""
+    return parse_svcf_sample_block(format_keys, block)
 
 
 def _split_list_field(value) -> list[str]:
@@ -382,7 +283,7 @@ class SVCFInspector:
 
     def _detect_file_layout(self) -> str:
         """Header-only layout detection."""
-        with open(self.input_file, encoding="utf-8-sig") as fh:
+        with open_text_auto(self.input_file) as fh:
             for line in fh:
                 if line.startswith("##"):
                     if line.strip() == MODE_MULTI_MARKER:

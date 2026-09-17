@@ -1,4 +1,3 @@
-import difflib
 import logging
 import os
 import subprocess
@@ -58,18 +57,25 @@ def run_octopusv(command, *args, verbose=False):
         raise
 
 
-def compare_files(file1, file2, verbose=False):
+def compare_files(
+    file1,
+    file2,
+    verbose=False,
+    max_reported_diffs=10,
+):
     """
     Compare generated and standard files while ignoring meta-header lines
     beginning with ## and normalizing path components.
 
     The #CHROM line and all variant records are compared exactly after
     path normalization.
+
+    When differences are found, report a compact line-level summary instead
+    of running a character-by-character diff on very long SVCF records.
     """
+    import re
 
     def normalize_line(line):
-        import re
-
         # Remove absolute paths while retaining the final basename.
         line = re.sub(
             r"/[^,\s;]*/([^/,\s;]+)",
@@ -87,12 +93,84 @@ def compare_files(file1, file2, verbose=False):
         return line.rstrip("\r\n")
 
     def read_file(filename):
-        with open(filename, "r", encoding="utf-8-sig") as f:
+        with open(
+            filename,
+            "r",
+            encoding="utf-8-sig",
+        ) as handle:
             return [
                 normalize_line(line)
-                for line in f
+                for line in handle
                 if not line.startswith("##")
             ]
+
+    def parse_info(info_text):
+        info = {}
+
+        for item in info_text.split(";"):
+            if "=" in item:
+                key, value = item.split("=", 1)
+                info[key] = value
+            elif item:
+                info[item] = True
+
+        return info
+
+    def summarize_line(line):
+        fields = line.split("\t")
+
+        if not fields:
+            return "<empty line>"
+
+        if fields[0] == "#CHROM":
+            preview = fields[:12]
+            suffix = " ..." if len(fields) > 12 else ""
+            return (
+                f"#CHROM header with {len(fields)} columns: "
+                f"{preview}{suffix}"
+            )
+
+        if len(fields) < 8:
+            preview = line[:300]
+            if len(line) > 300:
+                preview += "..."
+            return preview
+
+        info = parse_info(fields[7])
+        record_key = (
+            fields[0],
+            fields[1],
+            fields[2],
+        )
+
+        summary = [
+            f"record={record_key}",
+            f"SOURCES={info.get('SOURCES', '.')}",
+            f"SOURCE_IDS={info.get('SOURCE_IDS', '.')}",
+        ]
+
+        if len(fields) > 8:
+            format_keys = fields[8].split(":")
+
+            if "ID" in format_keys:
+                id_index = format_keys.index("ID")
+                evidence_ids = []
+
+                for sample in fields[9:]:
+                    values = sample.split(":")
+
+                    if id_index < len(values):
+                        evidence_ids.append(values[id_index])
+                    else:
+                        evidence_ids.append("<missing>")
+
+                summary.append(f"evidence_IDs={evidence_ids}")
+
+            summary.append(
+                f"evidence_blocks={max(0, len(fields) - 9)}"
+            )
+
+        return "; ".join(summary)
 
     content1 = read_file(file1)
     content2 = read_file(file2)
@@ -100,50 +178,52 @@ def compare_files(file1, file2, verbose=False):
     if len(content1) != len(content2):
         if verbose:
             print(
-                "Files have different number of lines: "
-                f"{len(content1)} vs {len(content2)}"
+                "\nFiles have different numbers of non-meta lines:"
             )
-
-            print("\nContent of file1:")
-            for line in content1:
-                print(repr(line))
-
-            print("\nContent of file2:")
-            for line in content2:
-                print(repr(line))
+            print(f"  generated: {len(content1)}")
+            print(f"  standard:  {len(content2)}")
 
         return False
 
-    differences = []
+    difference_count = 0
+    reported_count = 0
 
-    for i, (line1, line2) in enumerate(zip(content1, content2), 1):
-        if line1 != line2:
-            if verbose:
-                print(f"\nDifference at line {i}:")
-                print(f"File 1: {repr(line1)}")
-                print(f"File 2: {repr(line2)}")
+    for line_number, (line1, line2) in enumerate(
+        zip(content1, content2),
+        start=1,
+    ):
+        if line1 == line2:
+            continue
 
-                if len(line1) != len(line2):
-                    print(
-                        "Line lengths differ: "
-                        f"{len(line1)} vs {len(line2)}"
-                    )
+        difference_count += 1
 
-                for j, s in enumerate(difflib.ndiff(line1, line2)):
-                    if s[0] == " ":
-                        continue
-                    if s[0] == "-":
-                        print(
-                            f"Delete '{s[-1]}' from position {j}"
-                        )
-                    elif s[0] == "+":
-                        print(
-                            f"Add '{s[-1]}' to position {j}"
-                        )
+        if verbose and reported_count < max_reported_diffs:
+            reported_count += 1
 
-            differences.append((i, line1, line2))
+            print()
+            print("=" * 80)
+            print(
+                f"Difference at non-meta line {line_number}"
+            )
 
-    return len(differences) == 0
+            print("Generated:")
+            print("  " + summarize_line(line1))
+
+            print("Standard:")
+            print("  " + summarize_line(line2))
+
+    if verbose and difference_count:
+        print()
+        print(
+            f"Total differing lines: {difference_count}"
+        )
+
+        if difference_count > reported_count:
+            print(
+                f"Only the first {reported_count} differences were shown."
+            )
+
+    return difference_count == 0
 
 
 class TestOctopusV:
@@ -158,7 +238,7 @@ class TestOctopusV:
         The fixed order is:
             sniffles, svim, pbsv
 
-        Merge output provenance ordering depends on input order, so all merge
+        Merge output source ordering depends on input order, so all merge
         regression tests use this same order.
         """
         corrected_files = []
@@ -345,7 +425,7 @@ class TestOctopusV:
         biological sample model. Their basenames become the sample labels:
             sniffles, svim, pbsv
 
-        This protects sample-column ordering and source/evidence provenance.
+        This protects sample-column ordering and source/evidence mapping.
         """
         corrected_files = self._prepare_corrected_merge_inputs()
 

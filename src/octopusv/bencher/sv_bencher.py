@@ -2,8 +2,9 @@ import logging
 from pathlib import Path
 
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
+from octopusv.utils.svcf_validator import validate_versioned_svcf_for_downstream
 
-from .bench_utils import calculate_metrics, write_summary, write_vcf
+from .bench_utils import calculate_metrics, read_safe_vcf_meta, write_summary, write_vcf
 
 
 class SVBencher:
@@ -55,7 +56,14 @@ class SVBencher:
             raise
 
     def _parse_files(self):
-        """Parse input VCF files."""
+        """Validate versioned inputs, then parse truth and call events."""
+        validate_versioned_svcf_for_downstream(
+            self.truth_file, consumer="octopusv benchmark truth input"
+        )
+        validate_versioned_svcf_for_downstream(
+            self.call_file, consumer="octopusv benchmark call input"
+        )
+
         self.logger.info("Parsing truth file...")
         truth_parser = SVCFFileEventCreator([str(self.truth_file)])
         truth_parser.parse()
@@ -75,16 +83,15 @@ class SVBencher:
             if self.pass_only and event.filter != "PASS":
                 continue
 
-            # Get event size
+            # Breakpoint events (TRA/BND) are defined by two genomic
+            # breakpoints, potentially on different chromosomes. Numeric
+            # subtraction between their coordinates is not an SV length and
+            # must never drive --size-min/--size-max filtering.
             try:
-                if event.sv_type == "TRA":
-                    size = 0  # TRA events don't have a meaningful size
-                else:
+                if not self._is_breakpoint_event(event):
                     size = abs(event.end_pos - event.start_pos)
-
-                # Skip if outside size range (except for TRA)
-                if event.sv_type != "TRA" and (size < self.size_min or size > self.size_max):
-                    continue
+                    if size < self.size_min or size > self.size_max:
+                        continue
 
                 filtered.append(event)
             except AttributeError as e:
@@ -96,13 +103,26 @@ class SVBencher:
     def _meets_matching_criteria(self, truth_event, call_event) -> bool:
         """Check if two events meet the matching criteria based on GIAB standards."""
         try:
-            # Check SV type unless ignored
+            # Check SV type unless ignored. --type-ignore relaxes the exact
+            # SVTYPE label, but it must not mix incompatible geometries: a
+            # two-breakpoint event (TRA/BND) is never an interval event.
             if not self.type_ignore and truth_event.sv_type != call_event.sv_type:
                 return False
 
-            # Special handling for translocations
-            if truth_event.sv_type == "TRA":
-                return self._compare_tra_events(truth_event, call_event)
+            truth_is_breakpoint = self._is_breakpoint_event(truth_event)
+            call_is_breakpoint = self._is_breakpoint_event(call_event)
+            if truth_is_breakpoint != call_is_breakpoint:
+                return False
+
+            if truth_is_breakpoint:
+                return self._compare_breakpoint_events(truth_event, call_event)
+
+            # Ordinary interval SVs must occur on the same chromosome.
+            # end_chrom is intentionally not required here because legacy
+            # SVCF may carry CHR2=. for otherwise valid intra-chromosomal
+            # records; CHROM/POS and END define the interval geometry.
+            if truth_event.start_chrom != call_event.start_chrom:
+                return False
 
             # Check reference distance
             start_dist = abs(truth_event.start_pos - call_event.start_pos)
@@ -133,8 +153,18 @@ class SVBencher:
             self.logger.warning(f"Error comparing events: {e!s}")
             return False
 
-    def _compare_tra_events(self, truth_event, call_event) -> bool:
-        """Special comparison logic for translocation events."""
+    @staticmethod
+    def _is_breakpoint_event(event) -> bool:
+        """Return whether an event uses two-breakpoint TRA/BND geometry."""
+        return event.sv_type in {"TRA", "BND"}
+
+    def _compare_breakpoint_events(self, truth_event, call_event) -> bool:
+        """Compare TRA/BND events by their ordered breakpoint geometry.
+
+        Endpoint swapping is intentionally not attempted here; this preserves
+        the historical benchmark contract while fixing chromosome-aware BND
+        handling.
+        """
         try:
             # Check chromosomes match
             if truth_event.start_chrom != call_event.start_chrom or truth_event.end_chrom != call_event.end_chrom:
@@ -154,7 +184,7 @@ class SVBencher:
             return True
 
         except AttributeError as e:
-            self.logger.warning(f"Error comparing TRA events: {e!s}")
+            self.logger.warning(f"Error comparing breakpoint events: {e!s}")
             return False
 
     def _calculate_sequence_similarity(self, truth_event, call_event) -> float:
@@ -199,8 +229,8 @@ class SVBencher:
     def _calculate_overlap(self, event1, event2) -> float:
         """Calculate reciprocal overlap between two events."""
         try:
-            if event1.sv_type == "TRA" or event2.sv_type == "TRA":
-                return 1.0  # TRA events are compared by breakpoints only
+            if self._is_breakpoint_event(event1) or self._is_breakpoint_event(event2):
+                return 1.0  # TRA/BND events are compared by breakpoints only
 
             overlap_start = max(event1.start_pos, event2.start_pos)
             overlap_end = min(event1.end_pos, event2.end_pos)
@@ -265,10 +295,29 @@ class SVBencher:
         self.logger.info("Writing results...")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        write_vcf(self.output_dir / "tp-base.vcf", self.results["tp_base"])
-        write_vcf(self.output_dir / "tp-call.vcf", self.results["tp_call"])
-        write_vcf(self.output_dir / "fp.vcf", self.results["fp"])
-        write_vcf(self.output_dir / "fn.vcf", self.results["fn"])
+        truth_meta = read_safe_vcf_meta(self.truth_file)
+        call_meta = read_safe_vcf_meta(self.call_file)
+
+        write_vcf(
+            self.output_dir / "tp-base.vcf",
+            self.results["tp_base"],
+            source_meta_lines=truth_meta,
+        )
+        write_vcf(
+            self.output_dir / "tp-call.vcf",
+            self.results["tp_call"],
+            source_meta_lines=call_meta,
+        )
+        write_vcf(
+            self.output_dir / "fp.vcf",
+            self.results["fp"],
+            source_meta_lines=call_meta,
+        )
+        write_vcf(
+            self.output_dir / "fn.vcf",
+            self.results["fn"],
+            source_meta_lines=truth_meta,
+        )
 
         metrics = calculate_metrics(self.results)
         write_summary(self.output_dir / "summary.json", metrics)

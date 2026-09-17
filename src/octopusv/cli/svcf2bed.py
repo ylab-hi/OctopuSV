@@ -23,8 +23,10 @@ def svcf2bed(
         sv_event_creator.parse()
 
         if not sv_event_creator.events:
-            typer.echo("Warning: No events found in SVCF file", err=True)
-            raise typer.Exit(code=1)
+            typer.echo(
+                "Warning: No events found in SVCF file; writing a valid empty conversion.",
+                err=True,
+            )
 
         # Convert to BED
         converter = SVCFtoBEDConverter(sv_event_creator.events, minimal=minimal)
@@ -38,6 +40,8 @@ def svcf2bed(
         typer.echo(f"Output written to {output_file}")
         typer.echo(f"Total events converted: {len(sv_event_creator.events)}")
 
+    except typer.Exit:
+        raise
     except FileNotFoundError:
         typer.echo(f"Error: Input file '{input_file}' not found.", err=True)
         raise typer.Exit(code=1)

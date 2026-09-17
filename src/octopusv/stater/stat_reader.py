@@ -7,6 +7,15 @@ consumes that same in-memory list. INFO parsing is centralized and safe
 (handles flags and values containing '=').
 """
 
+from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.svcf_schema import (
+    MODE_MULTI,
+    parse_identity_from_meta_lines,
+    validate_format_for_identity,
+    validate_header_columns_for_identity,
+    validate_versioned_identity,
+)
+
 
 def parse_info(info_str):
     """Parse an INFO column into a dict. Flags (no '=') map to True.
@@ -49,23 +58,97 @@ class SVRecord:
 
 
 def read_records(input_file):
-    """Read an SVCF file once. Returns (records, sample_names).
+    """Read an SVCF file once. Returns (records, sample_names, mode).
 
-    sample_names comes from the #CHROM header (columns after FORMAT); it has
-    one entry in single/caller mode and N entries in sample/multi mode.
+    Versioned SVCF uses the shared schema contract: unsupported versions and
+    mode/FORMAT conflicts fail loudly. Unversioned files retain the historical
+    compatibility behavior, including multi-sample inference from either the
+    legacy ``##OctopuSV_mode=multi`` marker or multiple trailing columns.
     """
     records = []
     sample_names = []
-    with open(input_file) as fh:
-        for line in fh:
+    meta_lines = []
+    identity = None
+
+    with open_text_auto(input_file) as fh:
+        for line_number, line in enumerate(fh, 1):
+            stripped = line.rstrip("\r\n")
+
+            if line.startswith("##"):
+                meta_lines.append(stripped)
+                continue
+
             if line.startswith("#CHROM"):
-                header = line.rstrip("\n").split("\t")
+                try:
+                    identity = parse_identity_from_meta_lines(meta_lines)
+                    validate_versioned_identity(identity)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid SVCF identity in {str(input_file)!r}: {exc}"
+                    ) from exc
+
+                header = stripped.split("\t")
                 sample_names = header[9:] if len(header) > 9 else []
+                try:
+                    validate_header_columns_for_identity(
+                        identity,
+                        len(sample_names),
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid SVCF header in {str(input_file)!r}: {exc}"
+                    ) from exc
                 continue
-            if line.startswith("#"):
+
+            if line.startswith("#") or not stripped:
                 continue
-            fields = line.rstrip("\n").split("\t")
-            if len(fields) < 8:
-                continue
-            records.append(SVRecord(fields))
-    return records, sample_names
+
+            fields = stripped.split("\t")
+            if len(fields) < 10:
+                raise ValueError(
+                    f"Malformed SVCF record in {str(input_file)!r} on line "
+                    f"{line_number}: expected at least 10 tab-separated columns, "
+                    f"got {len(fields)}."
+                )
+
+            if identity is None:
+                try:
+                    identity = parse_identity_from_meta_lines(meta_lines)
+                    validate_versioned_identity(identity)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid SVCF identity in {str(input_file)!r}: {exc}"
+                    ) from exc
+
+            record = SVRecord(fields)
+            if identity.is_versioned:
+                try:
+                    validate_format_for_identity(identity, record.format)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid SVCF schema in {str(input_file)!r}: {exc}"
+                    ) from exc
+
+            records.append(record)
+
+    if identity is None:
+        try:
+            identity = parse_identity_from_meta_lines(meta_lines)
+            validate_versioned_identity(identity)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid SVCF identity in {str(input_file)!r}: {exc}"
+            ) from exc
+
+    if identity.is_versioned:
+        # Once a file declares SVCF 1.1 identity, mode is explicit and column
+        # count must not override it. Legacy inference is reserved for
+        # unversioned inputs only.
+        mode = "sample" if identity.mode == MODE_MULTI else "caller"
+    else:
+        mode = (
+            "sample"
+            if identity.mode == MODE_MULTI or len(sample_names) > 1
+            else "caller"
+        )
+    return records, sample_names, mode

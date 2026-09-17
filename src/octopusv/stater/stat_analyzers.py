@@ -17,7 +17,12 @@ Correctness fixes baked in here:
 import statistics
 from collections import Counter, defaultdict
 
-from octopusv.utils.genotype_resolver import resolve_multi_caller_genotype
+from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.sample_mode_semantics import (
+    downstream_sample_gt,
+    is_unobserved_sample,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -239,28 +244,27 @@ class QCAnalyzer:
 # ---------------------------------------------------------------------------
 
 class GenotypeAnalyzer:
-    """Genotype distribution, mode-aware.
+    """Genotype distribution using the same caller consensus as svcf2vcf.
 
-    Single/caller mode -> one resolved genotype per record (caller-mode uses
-    the shared multi-caller voting rule). Sample/multi mode -> per-sample and
-    overall distributions.
+    Caller mode preserves a single evidence block directly.  Records with
+    multiple caller/evidence blocks are synthesized through the shared
+    order-independent sample-consensus state machine.  Sample-mode SVCF already
+    contains synthesized GT values, so those are counted directly and are not
+    re-resolved.
     """
 
-    def __init__(self, records, sample_names):
+    def __init__(self, records, sample_names, mode=None):
         self.records = records
         self.sample_names = sample_names
+        self.mode = mode or ("sample" if len(sample_names) > 1 else "caller")
 
-    def _gt_from_segment(self, fmt, segment):
-        keys = fmt.split(":")
-        if "GT" not in keys:
-            return None
-        idx = keys.index("GT")
-        parts = segment.split(":")
-        return parts[idx] if idx < len(parts) else None
+    @staticmethod
+    def _gt_from_segment(fmt, segment):
+        parsed = parse_svcf_sample_block(fmt, segment)
+        return parsed.get("GT")
 
     def analyze(self):
-        # Sample/multi mode: more than one declared sample column.
-        if len(self.sample_names) > 1:
+        if self.mode == "sample":
             return self._analyze_sample_mode()
         return self._analyze_caller_mode()
 
@@ -272,11 +276,9 @@ class GenotypeAnalyzer:
             if len(r.sample_cols) == 1:
                 gt = self._gt_from_segment(r.format, r.sample_cols[0])
             else:
-                # Reconstruct the INFO string for SOURCES-order tie-break.
-                info_str = ";".join(
-                    k if v is True else f"{k}={v}" for k, v in r.info.items()
-                )
-                gt = resolve_multi_caller_genotype(r.format, r.sample_cols, info_str)
+                gt = resolve_caller_svcf_consensus(
+                    r.format, r.sample_cols, r.info
+                ).gt
             if gt:
                 genotypes[gt] += 1
         total = sum(genotypes.values())
@@ -290,18 +292,40 @@ class GenotypeAnalyzer:
 
     def _analyze_sample_mode(self):
         per_sample = {name: Counter() for name in self.sample_names}
+        no_evidence_per_sample = Counter()
+
         for r in self.records:
             cols = r.sample_cols[:len(self.sample_names)]
             for i, name in enumerate(self.sample_names):
                 if i < len(cols):
-                    gt = self._gt_from_segment(r.format, cols[i])
+                    parsed = parse_svcf_sample_block(r.format, cols[i])
+
+                    # Keep no-event layout placeholders visible as a separate
+                    # statistic.  They remain a subset of the downstream ./.
+                    # count under the default missing policy, so existing
+                    # genotype distributions retain their established shape.
+                    if is_unobserved_sample(parsed):
+                        no_evidence_per_sample[name] += 1
+
+                    gt = downstream_sample_gt(parsed)
                     if gt:
                         per_sample[name][gt] += 1
+
         overall = Counter()
         for c in per_sample.values():
             overall.update(c)
+
+        no_evidence = {
+            "overall": sum(no_evidence_per_sample.values()),
+            "per_sample": {
+                name: no_evidence_per_sample.get(name, 0)
+                for name in self.sample_names
+            },
+        }
+
         return {
             "mode": "sample",
             "per_sample": {name: dict(c) for name, c in per_sample.items()},
             "overall": dict(overall),
+            "no_evidence": no_evidence,
         }

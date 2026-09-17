@@ -232,7 +232,9 @@ class QualityFilter:
 
         # Try FORMAT/SAMPLE fields
         sample_dict = self._parse_sample_fields(event)
-        sample_fields = ["DV", "DR", "AD"]
+        # DV is alternate-support depth. DR is reference-read depth and must
+        # never be interpreted as support for the structural variant.
+        sample_fields = ["DV", "AD"]
 
         for field in sample_fields:
             if field in sample_dict:

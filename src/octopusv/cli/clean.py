@@ -6,7 +6,6 @@ naming against a reference FASTA, then sorts, bgzips and tabix-indexes the
 output. It never filters variants — all records are preserved.
 """
 
-import gzip
 import logging
 import re
 import shutil
@@ -14,6 +13,8 @@ import subprocess
 from pathlib import Path
 
 import typer
+
+from octopusv.utils.text_io import open_text_auto
 
 logger = logging.getLogger(__name__)
 
@@ -442,11 +443,10 @@ def _process_vcf(
         style = _detect_fasta_style(fasta_contigs)
         typer.echo(f"Detected FASTA naming style: {style}")
 
-    # Read input VCF (plain or gzip).
-    opener = gzip.open if str(input_vcf).endswith(".gz") else open
+    # Read input VCF (plain or gzip/bgzip, detected by file content).
     header_lines: list[str] = []
     data_lines: list[str] = []
-    with opener(input_vcf, "rt") as f:
+    with open_text_auto(input_vcf) as f:
         for line in f:
             line = line.rstrip("\n")
             if line.startswith("#"):

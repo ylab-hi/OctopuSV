@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from octopusv.utils.atomic_write import atomic_output_path
+from octopusv.utils.text_io import open_text_auto
 
 
 # Standard BND ALT pattern fragment. We only rewrite the mate contig and keep
@@ -398,9 +402,9 @@ def normalize_record_line(
     raw = line.rstrip("\n")
     cols = raw.split("\t")
 
-    if len(cols) < 8:
+    if len(cols) < 10:
         summary.malformed_records += 1
-        return line
+        raise ValueError("Malformed SVCF record: expected at least 10 columns.")
 
     summary.records_processed += 1
 
@@ -462,17 +466,20 @@ class SVCFContigNormalizer:
             dry_run=self.dry_run,
         )
 
-        out_handle = None
-        try:
+        with ExitStack() as stack:
+            out_handle = None
             if not self.dry_run:
                 assert self.output_file is not None
                 self.output_file.parent.mkdir(parents=True, exist_ok=True)
-                out_handle = self.output_file.open("w")
+                temp_output = stack.enter_context(atomic_output_path(self.output_file))
+                out_handle = stack.enter_context(
+                    open(temp_output, "w", encoding="utf-8")
+                )
 
-            with self.input_file.open() as in_handle:
+            with open_text_auto(self.input_file) as in_handle:
                 audit_written = False
 
-                for line in in_handle:
+                for line_number, line in enumerate(in_handle, 1):
                     if line.startswith("##"):
                         if is_stale_audit_header(line):
                             continue
@@ -490,14 +497,22 @@ class SVCFContigNormalizer:
                             out_handle.write(line)
                         continue
 
+                    if not line.strip():
+                        continue
+
+                    fields = line.rstrip("\r\n").split("\t")
+                    if len(fields) < 10:
+                        summary.malformed_records += 1
+                        raise ValueError(
+                            f"Malformed SVCF record in {str(self.input_file)!r} on line "
+                            f"{line_number}: expected at least 10 tab-separated "
+                            f"columns, got {len(fields)}."
+                        )
+
                     new_line = normalize_record_line(line, self.style, summary)
                     summary.records_written += 1
                     if out_handle is not None:
                         out_handle.write(new_line)
-
-        finally:
-            if out_handle is not None:
-                out_handle.close()
 
         # Deduplicate repeated warning text while preserving order.
         if summary.warnings:

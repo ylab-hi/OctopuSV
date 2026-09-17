@@ -1,4 +1,19 @@
+import logging
 import os
+
+from octopusv.merger.name_mapper import default_label_from_path
+from octopusv.utils.sample_consensus import resolve_sample_consensus
+from octopusv.utils.source_path import normalize_source_path
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
+from octopusv.utils.svcf_sort import sort_events_for_output
+from octopusv.utils.vcf_info import format_vcf_info_item
+from octopusv.utils.svcf_schema import (
+    MODE_CALLER,
+    mode_header,
+    validate_source_id,
+    validate_source_label,
+    version_header,
+)
 
 
 class MergeWriterMixin:
@@ -13,10 +28,7 @@ class MergeWriterMixin:
                 value = "."
             values.append(str(value))
 
-        result = ":".join(values)
-        if result.endswith(":.:."):
-            result = result[:-4]
-        return result
+        return ":".join(values)
 
     def _input_file_matches_event_sources(self, input_file, event_source_tokens):
         """Return whether an input file belongs to an event source set.
@@ -158,40 +170,403 @@ class MergeWriterMixin:
 
     @staticmethod
     def _normalize_source_path(source_file):
-        """Return a stable key for exact input-file provenance matching."""
-        return os.path.normcase(
-            os.path.realpath(
-                os.path.abspath(str(source_file))
+        """Return a stable key for exact input-file matching."""
+        return normalize_source_path(source_file)
+
+    def _display_name_for_input(self, input_file, name_mapper=None):
+        """Return the output label for one input file."""
+        if name_mapper is not None:
+            return name_mapper.get_display_name(str(input_file))
+
+        return default_label_from_path(input_file)
+
+    @staticmethod
+    def _source_id_from_sample_data(sample_data):
+        """Return one original record ID from an evidence block."""
+        if not isinstance(sample_data, dict):
+            return "."
+
+        # The evidence-block ID is the source record ID represented by this
+        # block. ``original_id`` is retained only as a compatibility fallback
+        # for older/manually-created objects that do not carry ID.
+        source_id = sample_data.get(
+            "ID",
+            sample_data.get("original_id", "."),
+        )
+
+        if source_id in (None, "", "unknown"):
+            return "."
+
+        return str(source_id)
+
+    def _prepare_caller_records_exact(self, event, name_mapper=None):
+        """Build caller-mode records from exact source-to-evidence bindings.
+
+        Fresh merge events carry ``merged_sample_records`` entries shaped as:
+            (source_file, sample_name, sample_format, sample_data)
+
+        Each entry remains a separate output evidence block. Therefore a source
+        may appear more than once in SOURCES when it contributes more than one
+        record to the same merged event. SOURCES, SOURCE_IDS, and evidence
+        blocks are all generated from this same ordered list.
+
+        Returns:
+            list[dict] when exact source mapping is available.
+            None when the event is a legacy object without merged_sample_records.
+
+        Raises:
+            ValueError if merged_sample_records exists but cannot be mapped
+            unambiguously to the merge inputs.
+        """
+        records = getattr(event, "merged_sample_records", None)
+        if records is None:
+            return None
+
+        if not all(
+            isinstance(record, (tuple, list)) and len(record) == 4
+            for record in records
+        ):
+            raise ValueError(
+                "Invalid merged_sample_records: expected "
+                "(source_file, sample_name, sample_format, sample_data) entries"
+            )
+
+        input_files = [str(path) for path in self.all_input_files]
+        input_indices_by_path = {}
+
+        for index, input_file in enumerate(input_files):
+            normalized = self._normalize_source_path(input_file)
+            input_indices_by_path.setdefault(normalized, []).append(index)
+
+        ordered_records = []
+
+        for record_order, record in enumerate(records):
+            source_file, sample_name, sample_format, sample_data = record
+            normalized_source = self._normalize_source_path(source_file)
+            candidate_indices = input_indices_by_path.get(
+                normalized_source,
+                [],
+            )
+
+            if len(candidate_indices) != 1:
+                if not candidate_indices:
+                    reason = "does not match any merge input"
+                else:
+                    reason = "matches more than one merge input"
+
+                raise ValueError(
+                    "Cannot map caller evidence to exactly one input file: "
+                    f"{source_file!r} {reason}."
+                )
+
+            input_index = candidate_indices[0]
+            input_file = input_files[input_index]
+
+            ordered_records.append(
+                {
+                    "input_index": input_index,
+                    "record_order": record_order,
+                    "source_name": self._display_name_for_input(
+                        input_file,
+                        name_mapper,
+                    ),
+                    "source_id": self._source_id_from_sample_data(
+                        sample_data
+                    ),
+                    "sample_name": sample_name,
+                    "sample_format": sample_format,
+                    "sample_data": sample_data,
+                }
+            )
+
+        ordered_records.sort(
+            key=lambda record: (
+                record["input_index"],
+                record["record_order"],
             )
         )
 
-    def _prepare_events_for_sample_mode(self, events, name_mapper):
-        """Prepare merged events for sample-mode output.
+        return ordered_records
 
-        Freshly merged events carry ``merged_sample_records`` entries shaped as:
+    def _prepare_caller_records_legacy(self, event, name_mapper=None):
+        """Best-effort compatibility path for old manually-created events.
+
+        New merge output must use merged_sample_records instead. This fallback
+        keeps older external objects usable, but source identity cannot always
+        be determined exactly when that information was never stored.
+        """
+        self._legacy_caller_event_count = getattr(
+            self,
+            "_legacy_caller_event_count",
+            0,
+        ) + 1
+
+        input_files = [str(path) for path in self.all_input_files]
+        event_source_tokens = self._event_source_tokens(event)
+        candidate_input_files = [
+            input_file
+            for input_file in input_files
+            if self._input_file_matches_event_sources(
+                input_file,
+                event_source_tokens,
+            )
+        ]
+
+        assigned_basenames = set()
+        legacy_records = []
+
+        for record_order, (
+            sample_name,
+            sample_format,
+            sample_data,
+        ) in enumerate(getattr(event, "merged_samples", [])):
+            inferred_basename = self._infer_input_basename_for_sample_data(
+                sample_name=sample_name,
+                sample_data=sample_data,
+                candidate_input_files=candidate_input_files,
+                assigned_basenames=assigned_basenames,
+            )
+
+            if inferred_basename is None:
+                inferred_basename = next(
+                    (
+                        os.path.basename(input_file)
+                        for input_file in candidate_input_files
+                        if os.path.basename(input_file) not in assigned_basenames
+                    ),
+                    None,
+                )
+
+            if inferred_basename is None:
+                self._legacy_caller_unresolved_evidence_count = getattr(
+                    self,
+                    "_legacy_caller_unresolved_evidence_count",
+                    0,
+                ) + 1
+                continue
+
+            input_index = next(
+                (
+                    index
+                    for index, input_file in enumerate(input_files)
+                    if os.path.basename(input_file) == inferred_basename
+                ),
+                None,
+            )
+
+            if input_index is None:
+                self._legacy_caller_unresolved_evidence_count = getattr(
+                    self,
+                    "_legacy_caller_unresolved_evidence_count",
+                    0,
+                ) + 1
+                continue
+
+            assigned_basenames.add(inferred_basename)
+            input_file = input_files[input_index]
+
+            legacy_records.append(
+                {
+                    "input_index": input_index,
+                    "record_order": record_order,
+                    "source_name": self._display_name_for_input(
+                        input_file,
+                        name_mapper,
+                    ),
+                    "source_id": self._source_id_from_sample_data(
+                        sample_data
+                    ),
+                    "sample_name": sample_name,
+                    "sample_format": sample_format,
+                    "sample_data": sample_data,
+                }
+            )
+
+        legacy_records.sort(
+            key=lambda record: (
+                record["input_index"],
+                record["record_order"],
+            )
+        )
+
+        return legacy_records
+
+    def _prepare_caller_records(self, event, name_mapper=None):
+        """Return caller evidence in deterministic input-file order."""
+        exact_records = self._prepare_caller_records_exact(
+            event,
+            name_mapper=name_mapper,
+        )
+
+        if exact_records is not None:
+            return exact_records
+
+        return self._prepare_caller_records_legacy(
+            event,
+            name_mapper=name_mapper,
+        )
+
+    @staticmethod
+    def _payload_from_sample_data(sample_data):
+        if not isinstance(sample_data, dict):
+            return None
+        payload = sample_data.get("_octopusv_evidence_payload")
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _split_explicit_sources(source_value):
+        """Split positional SOURCES without dropping placeholders."""
+        if source_value in (None, ""):
+            return []
+        return [token.strip() for token in str(source_value).split(",")]
+
+    def _caller_genotypes_from_payload(self, payload):
+        """Return exact ``(caller, GT)`` pairs from one caller-mode payload.
+
+        Source identity comes only from explicit SVCF data: INFO/SOURCES when
+        present, otherwise the evidence block's SC field.  We never derive a
+        caller from record ID, filename, or evidence order.
+        """
+        format_field = str(payload.get("format", "") or "")
+        blocks = list(payload.get("blocks", ()) or ())
+        if not format_field or not blocks:
+            raise ValueError(
+                "Sample consensus requires preserved caller evidence blocks."
+            )
+
+        parsed_blocks = [
+            parse_svcf_sample_block(format_field, block)
+            for block in blocks
+        ]
+
+        sources = self._split_explicit_sources(payload.get("sources"))
+        if sources and len(sources) != len(parsed_blocks):
+            raise ValueError(
+                "Cannot synthesize sample consensus: SOURCES lists "
+                f"{len(sources)} item(s), but the input record contains "
+                f"{len(parsed_blocks)} caller evidence block(s)."
+            )
+
+        caller_genotypes = []
+        for index, parsed in enumerate(parsed_blocks):
+            source = sources[index] if sources else None
+            if source in (None, "", "."):
+                source = parsed.get("SC")
+
+            if source in (None, "", ".", "OctopuSV"):
+                raise ValueError(
+                    "Cannot synthesize sample consensus because one caller "
+                    "evidence block has no explicit caller identity."
+                )
+
+            caller_genotypes.append((str(source), parsed.get("GT", ".")))
+
+        return caller_genotypes
+
+    @staticmethod
+    def _sample_length_from_record(record):
+        svlen = record.get("svlen", ".")
+        if svlen not in (None, "", "."):
+            try:
+                return str(abs(int(svlen)))
+            except (TypeError, ValueError):
+                pass
+        return "."
+
+    @staticmethod
+    def _sample_coordinate_from_record(record):
+        chrom = record.get("chrom", ".")
+        pos = record.get("pos", ".")
+        end_chrom = record.get("end_chrom", ".")
+        end_pos = record.get("end_pos", ".")
+        if any(value in (None, "", ".") for value in (chrom, pos, end_chrom, end_pos)):
+            return "."
+        return f"{chrom}_{pos}-{end_chrom}_{end_pos}"
+
+    def _synthesize_sample_data(self, sample_records):
+        """Synthesize one sample-mode column from exact caller evidence.
+
+        ``sample_records`` contains one or more source records from the same
+        biological-sample input that core merge placed in the same merged event.
+        All underlying caller evidence contributes to genotype consensus, while
+        record-level representation fields come from the first deterministic
+        input record already chosen by the core merge ordering.  This function
+        runs only after core grouping/representative selection, so it cannot
+        change merge topology or representative-event selection.
+        """
+        if not sample_records:
+            return None
+
+        caller_genotypes = []
+        payloads = []
+        for sample_data in sample_records:
+            payload = self._payload_from_sample_data(sample_data)
+            if payload is None:
+                raise ValueError(
+                    "Sample-mode consensus requires preserved caller evidence "
+                    "for every fresh merge record."
+                )
+            payloads.append(payload)
+            caller_genotypes.extend(
+                self._caller_genotypes_from_payload(payload)
+            )
+
+        consensus = resolve_sample_consensus(caller_genotypes)
+        record = payloads[0].get("record")
+        if not isinstance(record, dict):
+            raise ValueError(
+                "Sample-mode consensus is missing preserved record-level data."
+            )
+
+        return {
+            "GT": consensus.gt,
+            "AD": ".,.",
+            "UC": str(consensus.unique_carrier_callers),
+            "UV": str(consensus.valid_caller_votes),
+            "LN": self._sample_length_from_record(record),
+            "ST": str(record.get("strand", ".") or "."),
+            "QV": str(record.get("quality", ".") or "."),
+            "TY": str(record.get("svtype", ".") or "."),
+            "ID": str(record.get("id", ".") or "."),
+            "SC": "OctopuSV",
+            "REF": str(record.get("ref", ".") or "."),
+            "ALT": str(record.get("alt", ".") or "."),
+            "CO": self._sample_coordinate_from_record(record),
+        }
+
+    def _prepare_events_for_sample_mode(self, events, name_mapper):
+        """Prepare exact synthesized sample columns after core merge.
+
+        Fresh merge events carry ``merged_sample_records`` entries shaped as::
+
             (source_file, sample_name, sample_format, sample_data)
 
-        The exact source path is the primary key. The older inference logic is
-        retained only as a compatibility fallback for legacy or manually-created
-        event objects that do not carry exact provenance.
+        Exact source paths determine biological-sample columns.  For each input
+        sample, every preserved caller evidence block from every contributing
+        input record is reduced by the shared sample-consensus resolver.  No
+        caller is selected merely because it appeared first.
+
+        Legacy/manual events without exact bindings retain the historical
+        best-effort mapping path and are reported in the returned summary.
         """
         processed_events = []
         input_files = [str(input_file) for input_file in self.all_input_files]
 
-        # Use input indices, rather than basenames, as output-column identities.
-        # This also avoids collisions when two different directories contain the
-        # same filename.
         input_indices_by_path = {}
         for index, input_file in enumerate(input_files):
             normalized_path = self._normalize_source_path(input_file)
             input_indices_by_path.setdefault(normalized_path, []).append(index)
 
+        stats = {
+            "legacy_sample_events": 0,
+            "legacy_sample_unresolved_evidence_blocks": 0,
+        }
+
         for event in events:
             merged_samples = list(getattr(event, "merged_samples", []))
             merged_sample_records = getattr(event, "merged_sample_records", None)
 
-            # Key: index in self.all_input_files; value: parsed sample evidence.
-            source_to_sample = {}
+            source_to_records = {}
             unresolved_samples = []
 
             records_are_valid = (
@@ -203,7 +578,6 @@ class MergeWriterMixin:
                 )
             )
 
-            # Preferred path for events produced by the fixed selector.
             if records_are_valid:
                 for record in merged_sample_records:
                     source_file, sample_name, sample_format, sample_data = record
@@ -213,35 +587,27 @@ class MergeWriterMixin:
                         [],
                     )
 
-                    if not candidate_indices:
-                        unresolved_samples.append(
-                            (sample_name, sample_format, sample_data)
+                    if len(candidate_indices) != 1:
+                        if not candidate_indices:
+                            reason = "does not match any merge input"
+                        else:
+                            reason = "matches more than one merge input"
+                        raise ValueError(
+                            "Cannot map sample evidence to exactly one input file: "
+                            f"{source_file!r} {reason}."
                         )
-                        continue
 
-                    # Usually there is exactly one index. Supporting a list keeps
-                    # behavior deterministic even if the same path was supplied
-                    # more than once on the command line.
-                    target_index = next(
-                        (
-                            index
-                            for index in candidate_indices
-                            if index not in source_to_sample
-                        ),
-                        None,
-                    )
-
-                    if target_index is not None:
-                        source_to_sample[target_index] = sample_data
-                    # If this source already owns its output column, do not spill
-                    # another nearby record from the same source into a different
-                    # sample column.
+                    target_index = candidate_indices[0]
+                    source_to_records.setdefault(target_index, []).append(sample_data)
             else:
+                stats["legacy_sample_events"] += 1
                 unresolved_samples.extend(merged_samples)
 
-            # Compatibility fallback for old event objects without exact source
-            # provenance. This keeps existing external callers working, but fresh
-            # merge output should not enter this branch.
+            source_to_sample = {
+                target_index: self._synthesize_sample_data(sample_records)
+                for target_index, sample_records in source_to_records.items()
+            }
+
             if unresolved_samples:
                 event_source_tokens = self._event_source_tokens(event)
 
@@ -272,7 +638,6 @@ class MergeWriterMixin:
                     )
 
                     target_index = None
-
                     if inferred_basename is not None:
                         for index in candidate_indices:
                             if index in source_to_sample:
@@ -281,8 +646,6 @@ class MergeWriterMixin:
                                 target_index = index
                                 break
 
-                    # Preserve the previous last-resort behavior for legacy data:
-                    # first unassigned supporting input in original input order.
                     if target_index is None:
                         target_index = next(
                             (
@@ -295,6 +658,10 @@ class MergeWriterMixin:
 
                     if target_index is not None:
                         source_to_sample[target_index] = sample_data
+                    else:
+                        stats[
+                            "legacy_sample_unresolved_evidence_blocks"
+                        ] += 1
 
             event.ordered_samples = [
                 source_to_sample.get(index)
@@ -302,7 +669,7 @@ class MergeWriterMixin:
             ]
             processed_events.append(event)
 
-        return processed_events
+        return processed_events, stats
 
     def write_results(self, output_file, events, contigs, mode="caller", name_mapper=None, input_files=None):
         """Write merged results to output file with proper VCF header definitions.
@@ -315,230 +682,210 @@ class MergeWriterMixin:
             name_mapper: NameMapper instance for name handling
             input_files: List of input file paths for dynamic header extraction
         """
+        self._legacy_caller_event_count = 0
+        self._legacy_caller_unresolved_evidence_count = 0
+
         if name_mapper and mode == "sample":
-            import sys
-
-            # Preprocess events for sample mode to avoid O(n³) complexity
-
-            processed_events = self._prepare_events_for_sample_mode(events, name_mapper)
-
-            import importlib.util, faulthandler
-            spec = importlib.util.find_spec(__package__ + ".multi_sample_writer")
+            processed_events, summary = self._prepare_events_for_sample_mode(
+                events,
+                name_mapper,
+            )
 
             from .multi_sample_writer import MultiSampleWriter
 
-            writer = MultiSampleWriter(name_mapper)
-
+            writer = MultiSampleWriter(name_mapper, input_files=input_files)
             writer.write_results(output_file, processed_events, contigs)
 
+            legacy_events = summary.get("legacy_sample_events", 0)
+            legacy_unresolved = summary.get(
+                "legacy_sample_unresolved_evidence_blocks",
+                0,
+            )
+            if legacy_events:
+                logging.warning(
+                    "Sample-mode writer used legacy source inference for %d "
+                    "event(s); %d evidence block(s) could not be mapped.",
+                    legacy_events,
+                    legacy_unresolved,
+                )
+
+            return summary
+
         else:
-            # Enhanced caller mode with proper VCF header generation
+            # Caller mode. SOURCES, SOURCE_IDS, and evidence blocks are all
+            # generated from the same ordered source-to-record mapping.
+            ordered_events = sort_events_for_output(events, contigs.keys())
             with open(output_file, "w") as f:
-                # Generate proper VCF header with dynamic field definitions
-                self._write_vcf_header(f, contigs, input_files)
+                self._write_vcf_header(
+                    f,
+                    contigs,
+                    input_files,
+                )
 
-                for event in events:
-                    # Step 1: Find which input files contributed to this event
-                    event_source_files = event.source_file.split(",")
-                    event_source_basenames = {os.path.basename(f.strip()) for f in event_source_files}
+                for event in ordered_events:
+                    ordered_records = self._prepare_caller_records(
+                        event,
+                        name_mapper=name_mapper,
+                    )
 
-                    # Step 2: Build SOURCES and samples in input file order
-                    sources_in_order = []
-                    samples_in_order = []
-                    merged_samples = getattr(event, "merged_samples", [])
+                    sources_in_order = [
+                        record["source_name"]
+                        for record in ordered_records
+                    ]
+                    source_ids_in_order = [
+                        record["source_id"]
+                        for record in ordered_records
+                    ]
 
-                    # Create a mapping from source basename to list of sample data
-                    # (one source file can contribute multiple merged events)
-                    source_to_samples = {}
-                    for sample_name, sample_format, sample_data in merged_samples:
-                        # Try to determine which source file this sample came from
-                        sample_assigned = False
-                        for input_file in self.all_input_files:
-                            input_basename = os.path.basename(input_file)
+                    # SVCF 1.1 positional INFO lists deliberately have no
+                    # escaping layer.  Reject source labels/IDs that would
+                    # make SOURCES or SOURCE_IDS ambiguous or syntactically
+                    # invalid rather than silently emitting a corrupt file.
+                    sources_in_order = [
+                        validate_source_label(value)
+                        for value in sources_in_order
+                    ]
+                    source_ids_in_order = [
+                        validate_source_id(value)
+                        for value in source_ids_in_order
+                    ]
 
-                            # Check multiple ways to match sample to source
-                            if isinstance(sample_data, dict):
-                                # Method 1: Check source_file field
-                                source_file_field = sample_data.get('source_file', '')
-                                if input_basename in source_file_field or input_file in source_file_field:
-                                    if input_basename not in source_to_samples:
-                                        source_to_samples[input_basename] = []
-                                    source_to_samples[input_basename].append((sample_name, sample_format, sample_data))
-                                    sample_assigned = True
-                                    break
+                    display_sources = (
+                        ",".join(sources_in_order)
+                        if sources_in_order
+                        else "."
+                    )
+                    display_source_ids = (
+                        ",".join(source_ids_in_order)
+                        if source_ids_in_order
+                        else "."
+                    )
 
-                                # Method 2: Check if input file appears in sample data
-                                sample_str = str(sample_data)
-                                input_name = os.path.splitext(input_basename)[0]
-                                if input_name.lower() in sample_str.lower():
-                                    if input_basename not in source_to_samples:
-                                        source_to_samples[input_basename] = []
-                                    source_to_samples[input_basename].append((sample_name, sample_format, sample_data))
-                                    sample_assigned = True
-                                    break
-
-                        # If no specific match found, assign to first available input file
-                        if not sample_assigned:
-                            for input_file in self.all_input_files:
-                                input_basename = os.path.basename(input_file)
-                                if input_basename not in source_to_samples and input_basename in event_source_basenames:
-                                    if input_basename not in source_to_samples:
-                                        source_to_samples[input_basename] = []
-                                    source_to_samples[input_basename].append((sample_name, sample_format, sample_data))
-                                    break
-
-                    # Step 3: Generate SOURCES and samples in input file order
-                    for input_file in self.all_input_files:
-                        input_basename = os.path.basename(input_file)
-                        if input_basename in event_source_basenames:
-                            # This input file contributed to this event
-                            if name_mapper:
-                                display_name = name_mapper.get_display_name(input_file)
-                            else:
-                                display_name = os.path.splitext(input_basename)[0]
-                            sources_in_order.append(display_name)
-
-                            # Get corresponding sample data (use first one for sample column display)
-                            if input_basename in source_to_samples:
-                                samples_in_order.append(source_to_samples[input_basename][0])
-
-                    # Step 4: Generate SOURCES field
-                    display_sources = ",".join(sources_in_order)
-
-                    # Step 5: Collect original IDs for SOURCE_IDS field (supports multiple IDs per source)
-                    source_ids_in_order = []
-                    for input_file in self.all_input_files:
-                        input_basename = os.path.basename(input_file)
-                        if input_basename in event_source_basenames:
-                            if input_basename in source_to_samples:
-                                # Collect ALL IDs from this source file
-                                ids_from_this_source = []
-                                for _, _, sample_data in source_to_samples[input_basename]:
-                                    if isinstance(sample_data, dict):
-                                        # Use original_id field which preserves complete IDs with colons
-                                        original_id = sample_data.get('original_id', sample_data.get('ID', 'unknown'))
-                                        if original_id and original_id != 'unknown':
-                                            ids_from_this_source.append(original_id)
-
-                                # Join multiple IDs from same source with semicolon
-                                if ids_from_this_source:
-                                    source_ids_in_order.append(";".join(ids_from_this_source))
-                                else:
-                                    source_ids_in_order.append('unknown')
-                            else:
-                                source_ids_in_order.append('unknown')
-
-                    display_source_ids = ",".join(source_ids_in_order)
-
-                    # Prepare INFO field with ordered SOURCES and SOURCE_IDS.
-                    # Drop stale per-record SOURCES / SOURCE_IDS from the representative event,
-                    # then write exactly one merged SOURCES and one merged SOURCE_IDS field.
+                    # Do not inherit stale merged source fields from the
+                    # representative record. Rebuild them from this output's
+                    # ordered evidence records.
                     info_items = []
-                    for k, v in event.info.items():
-                        if k in {"SOURCES", "SOURCE_IDS"}:
+                    for key, value in event.info.items():
+                        if key in {"SOURCES", "SOURCE_IDS"}:
                             continue
-                        info_items.append(f"{k}={v}")
+                        info_items.append(format_vcf_info_item(key, value))
 
-                    info_items.append(f"SOURCES={display_sources if display_sources else '.'}")
-                    info_items.append(f"SOURCE_IDS={display_source_ids if display_source_ids else '.'}")
-
+                    info_items.append(
+                        f"SOURCES={display_sources}"
+                    )
+                    info_items.append(
+                        f"SOURCE_IDS={display_source_ids}"
+                    )
                     info_field = ";".join(info_items)
 
-                    # Step 6: Get FORMAT field
                     format_field = event.format
                     format_keys = format_field.split(":")
 
-                    # Step 7: Generate sample data in input file order
-                    if samples_in_order:
+                    if ordered_records:
                         sample_strings = []
-                        for _, _, sample_data in samples_in_order:
+                        for record in ordered_records:
+                            sample_data = record["sample_data"]
+
                             if isinstance(sample_data, dict):
-                                values = []
-                                for key in format_keys:
-                                    value = sample_data.get(key, ".")
-                                    values.append(str(value))
-                                sample_str = ":".join(values)
-                                if sample_str.endswith(":.:."):
-                                    sample_str = sample_str[:-4]
-                                sample_strings.append(sample_str)
+                                sample_str = self.format_sample_values(
+                                    format_keys,
+                                    sample_data,
+                                )
                             else:
                                 sample_str = str(sample_data)
-                                if sample_str.endswith(":.:."):
-                                    sample_str = sample_str[:-4]
-                                sample_strings.append(sample_str)
+
+                            sample_strings.append(sample_str)
 
                         sample_part = "\t".join(sample_strings)
                     elif hasattr(event, "sample"):
-                        # Single sample case
-                        formatted_values = self.format_sample_values(format_keys, event.sample)
-                        if formatted_values.endswith(":.:."):
-                            formatted_values = formatted_values[:-4]
-                        sample_part = formatted_values
+                        sample_part = self.format_sample_values(
+                            format_keys,
+                            event.sample,
+                        )
                     else:
                         sample_part = "./."
 
-                    # Step 8: Write the complete record
-                    record_part1 = f"{event.chrom}\t{event.pos}\t{event.sv_id}\t{event.ref}\t{event.alt}\t"
-                    record_part2 = f"{event.quality}\t{event.filter}\t{info_field}\t{format_field}\t"
-                    f.write(record_part1 + record_part2 + sample_part + "\n")
+                    record_part1 = (
+                        f"{event.chrom}\t{event.pos}\t{event.sv_id}\t"
+                        f"{event.ref}\t{event.alt}\t"
+                    )
+                    record_part2 = (
+                        f"{event.quality}\t{event.filter}\t{info_field}\t"
+                        f"{format_field}\t"
+                    )
+                    f.write(
+                        record_part1
+                        + record_part2
+                        + sample_part
+                        + "\n"
+                    )
+
+            if self._legacy_caller_event_count:
+                logging.warning(
+                    "Caller-mode writer used legacy source inference for %d "
+                    "event(s); %d evidence block(s) could not be mapped and "
+                    "were omitted.",
+                    self._legacy_caller_event_count,
+                    self._legacy_caller_unresolved_evidence_count,
+                )
+
+            return {
+                "legacy_caller_events": self._legacy_caller_event_count,
+                "legacy_caller_unresolved_evidence_blocks": (
+                    self._legacy_caller_unresolved_evidence_count
+                ),
+            }
 
     def _write_vcf_header(self, file_handle, contigs, input_files):
-        """Write VCF header with dynamic field definitions extracted from ALL input files.
+        """Write the caller-mode SVCF 1.1 header.
 
-        Args:
-            file_handle: File handle to write to
-            contigs: Dictionary of contig information
-            input_files: List of input file paths for extracting original definitions
+        Header generation is part of the SVCF contract. If dynamic header
+        extraction fails, abort rather than appending a second fallback header
+        to a partially written file.
         """
-        try:
-            # Extract and merge header definitions from all input files
-            merged_definitions = self._extract_and_merge_all_headers(input_files)
+        # Extract and merge header definitions from all input files.
+        merged_definitions = self._extract_and_merge_all_headers(input_files)
 
-            # Write basic header info
-            import datetime
-            file_handle.write("##fileformat=VCFv4.2\n")
-            file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
-            file_handle.write(f"##fileDate={file_date}\n")
-            file_handle.write("##source=OctopuSV\n")
+        import datetime
 
-            # Write contig information
-            for contig_id, contig_length in contigs.items():
-                file_handle.write(f"##contig=<ID={contig_id},length={contig_length}>\n")
+        file_handle.write("##fileformat=VCFv4.2\n")
+        file_handle.write(version_header() + "\n")
+        file_handle.write(mode_header(MODE_CALLER) + "\n")
+        file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
+        file_handle.write(f"##fileDate={file_date}\n")
+        file_handle.write("##source=OctopuSV\n")
 
-            # Write ALT definitions
-            for alt_line in merged_definitions['alt_lines']:
-                file_handle.write(alt_line + "\n")
-
-            # Write INFO definitions (original + OctopuSV)
-            for info_line in merged_definitions['info_lines']:
-                file_handle.write(info_line + "\n")
-
-            # Write FILTER definitions (original + basic PASS)
-            for filter_line in merged_definitions['filter_lines']:
-                file_handle.write(filter_line + "\n")
-
-            # Write FORMAT definitions
-            for format_line in merged_definitions['format_lines']:
-                file_handle.write(format_line + "\n")
-
-            # Add SOURCES field definition for merged results
+        for contig_id, contig_length in contigs.items():
             file_handle.write(
-                '##INFO=<ID=SOURCES,Number=.,Type=String,Description="List of input files that support this variant">\n')
+                f"##contig=<ID={contig_id},length={contig_length}>\n"
+            )
 
-            # Add SOURCE_IDS field definition for merged results
-            file_handle.write(
-                '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers">\n')
+        for alt_line in merged_definitions["alt_lines"]:
+            file_handle.write(alt_line + "\n")
 
-            # Write the column header line
-            sample_names = ["SAMPLE"]
-            header_line = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(sample_names) + "\n"
-            file_handle.write(header_line)
+        # SOURCES / SOURCE_IDS are defined exactly once below.
+        for info_line in merged_definitions["info_lines"]:
+            info_id = self._extract_id_from_line(info_line, "INFO")
+            if info_id in {"SOURCES", "SOURCE_IDS"}:
+                continue
+            file_handle.write(info_line + "\n")
 
-        except Exception as e:
-            # Fallback to basic header if dynamic generation fails
-            import logging
-            logging.warning(f"Failed to generate dynamic VCF header: {e}. Using basic header.")
-            self._write_basic_vcf_header(file_handle, contigs)
+        for filter_line in merged_definitions["filter_lines"]:
+            file_handle.write(filter_line + "\n")
+
+        for format_line in merged_definitions["format_lines"]:
+            file_handle.write(format_line + "\n")
+
+        file_handle.write(
+            '##INFO=<ID=SOURCES,Number=.,Type=String,Description="Input source for each merged evidence block, in output order">\n'
+        )
+        file_handle.write(
+            '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original record ID for each merged evidence block, in output order">\n'
+        )
+
+        file_handle.write(
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
+        )
 
     def _extract_and_merge_all_headers(self, input_files):
         """Extract header definitions from all input files and merge them.
@@ -569,44 +916,40 @@ class MergeWriterMixin:
         seen_format_ids = set()
         seen_alt_ids = set()
 
-        # Extract definitions from each input file
+        # Extract definitions from each input file. Header extraction is part
+        # of the output contract: if one input header cannot be read, abort
+        # instead of silently dropping its custom definitions.
         if input_files:
             for input_file in input_files:
-                try:
-                    file_headers = extract_original_header_definitions(input_file)
+                file_headers = extract_original_header_definitions(input_file)
 
-                    # Add FILTER definitions (avoid duplicates)
-                    for line in file_headers.get('filter_lines', []):
-                        filter_id = self._extract_id_from_line(line, 'FILTER')
-                        if filter_id and filter_id not in seen_filter_ids:
-                            all_original_definitions['filter_lines'].append(line)
-                            seen_filter_ids.add(filter_id)
+                # Add FILTER definitions (avoid duplicates)
+                for line in file_headers.get('filter_lines', []):
+                    filter_id = self._extract_id_from_line(line, 'FILTER')
+                    if filter_id and filter_id not in seen_filter_ids:
+                        all_original_definitions['filter_lines'].append(line)
+                        seen_filter_ids.add(filter_id)
 
-                    # Add INFO definitions (avoid duplicates)
-                    for line in file_headers.get('info_lines', []):
-                        info_id = self._extract_id_from_line(line, 'INFO')
-                        if info_id and info_id not in seen_info_ids:
-                            all_original_definitions['info_lines'].append(line)
-                            seen_info_ids.add(info_id)
+                # Add INFO definitions (avoid duplicates)
+                for line in file_headers.get('info_lines', []):
+                    info_id = self._extract_id_from_line(line, 'INFO')
+                    if info_id and info_id not in seen_info_ids:
+                        all_original_definitions['info_lines'].append(line)
+                        seen_info_ids.add(info_id)
 
-                    # Add FORMAT definitions (avoid duplicates)
-                    for line in file_headers.get('format_lines', []):
-                        format_id = self._extract_id_from_line(line, 'FORMAT')
-                        if format_id and format_id not in seen_format_ids:
-                            all_original_definitions['format_lines'].append(line)
-                            seen_format_ids.add(format_id)
+                # Add FORMAT definitions (avoid duplicates)
+                for line in file_headers.get('format_lines', []):
+                    format_id = self._extract_id_from_line(line, 'FORMAT')
+                    if format_id and format_id not in seen_format_ids:
+                        all_original_definitions['format_lines'].append(line)
+                        seen_format_ids.add(format_id)
 
-                    # Add ALT definitions (avoid duplicates)
-                    for line in file_headers.get('alt_lines', []):
-                        alt_id = self._extract_id_from_line(line, 'ALT')
-                        if alt_id and alt_id not in seen_alt_ids:
-                            all_original_definitions['alt_lines'].append(line)
-                            seen_alt_ids.add(alt_id)
-
-                except Exception as e:
-                    import logging
-                    logging.warning(f"Failed to extract headers from {input_file}: {e}")
-                    continue
+                # Add ALT definitions (avoid duplicates)
+                for line in file_headers.get('alt_lines', []):
+                    alt_id = self._extract_id_from_line(line, 'ALT')
+                    if alt_id and alt_id not in seen_alt_ids:
+                        all_original_definitions['alt_lines'].append(line)
+                        seen_alt_ids.add(alt_id)
 
         # Merge with OctopuSV defaults
         return merge_header_definitions(all_original_definitions, octopus_defaults)
@@ -639,6 +982,8 @@ class MergeWriterMixin:
 
         # Basic header information
         file_handle.write("##fileformat=VCFv4.2\n")
+        file_handle.write(version_header() + "\n")
+        file_handle.write(mode_header(MODE_CALLER) + "\n")
         file_date = datetime.datetime.now().strftime("%Y-%m-%d|%I:%M:%S%p|")
         file_handle.write(f"##fileDate={file_date}\n")
         file_handle.write("##source=OctopuSV\n")
@@ -662,7 +1007,9 @@ class MergeWriterMixin:
         file_handle.write('##INFO=<ID=SVMETHOD,Number=1,Type=String,Description="Method used to detect SV">\n')
         file_handle.write('##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">\n')
         file_handle.write(
-            '##INFO=<ID=SOURCES,Number=.,Type=String,Description="List of input files that support this variant">\n')
+            '##INFO=<ID=SOURCES,Number=.,Type=String,Description="Input source for each merged evidence block, in output order">\n')
+        file_handle.write(
+            '##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original record ID for each merged evidence block, in output order">\n')
 
         # Basic ALT definitions
         file_handle.write('##ALT=<ID=DEL,Description="Deletion">\n')
@@ -678,7 +1025,7 @@ class MergeWriterMixin:
             '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">\n')
         file_handle.write('##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">\n')
         file_handle.write('##FORMAT=<ID=ST,Number=1,Type=String,Description="Strand orientation of SV">\n')
-        file_handle.write('##FORMAT=<ID=QV,Number=1,Type=Integer,Description="Quality value">\n')
+        file_handle.write('##FORMAT=<ID=QV,Number=1,Type=Float,Description="Quality value">\n')
         file_handle.write('##FORMAT=<ID=TY,Number=1,Type=String,Description="Type of SV">\n')
 
         # Write column headers
