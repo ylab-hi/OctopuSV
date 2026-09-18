@@ -113,24 +113,50 @@ def test_r4_unrecognized_iupac_bnd_alt_fails_instead_of_disappearing(tmp_path):
     assert not output.exists()
 
 
-def test_r5_true_single_breakend_fails_by_default_with_actionable_summary(tmp_path):
+def test_r5_true_single_breakend_is_skipped_by_default_with_audit_note(tmp_path):
+    result, output = _invoke(
+        tmp_path,
+        [
+            _bnd("chr1", 100, "r5.single", "N."),
+            _del("chr1", 300, "kept.del", 350),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    text = output.read_text()
+    assert "##OctopuSV_skipped_single_breakends=1" in text
+    rows = _records(output)
+    assert [row[2] for row in rows] == ["kept.del"]
+    assert _info(rows[0])["SVTYPE"] == "DEL"
+    assert "Note: skipped 1 true single-breakend BND record(s)" in result.output
+    assert "does not indicate an invalid input VCF" in result.output
+    assert "--strict-single-breakends" in result.output
+
+    validation = runner.invoke(app, ["validate-svcf", str(output)])
+    assert validation.exit_code == 0, validation.output
+    assert "Status: PASS" in validation.output
+
+
+def test_r5_strict_single_breakends_fails_with_actionable_summary(tmp_path):
     result, output = _invoke(
         tmp_path,
         [
             _bnd("chr1", 100, "r5.a", "N."),
             _bnd("chr1", 200, "r5.b", ".N"),
         ],
+        "--strict-single-breakends",
     )
 
     assert result.exit_code != 0
     assert "Found 2 true single-breakend BND record(s)" in result.output
-    assert "--skip-single-breakends" in result.output
+    assert "cannot be represented losslessly in SVCF 1.1" in result.output
+    assert "--strict-single-breakends requests this failure instead" in result.output
     assert "r5.a" in result.output
     assert "r5.b" in result.output
     assert not output.exists()
 
 
-def test_r5_explicit_skip_is_counted_in_output_header_and_other_records_survive(tmp_path):
+def test_r5_explicit_skip_remains_supported_and_audited(tmp_path):
     result, output = _invoke(
         tmp_path,
         [
@@ -146,7 +172,7 @@ def test_r5_explicit_skip_is_counted_in_output_header_and_other_records_survive(
     rows = _records(output)
     assert [row[2] for row in rows] == ["kept.del"]
     assert _info(rows[0])["SVTYPE"] == "DEL"
-    assert "Skipped 1 true single-breakend record(s)" in result.output
+    assert "Note: skipped 1 true single-breakend BND record(s)" in result.output
 
     validation = runner.invoke(app, ["validate-svcf", str(output)])
     assert validation.exit_code == 0, validation.output
