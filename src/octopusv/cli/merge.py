@@ -976,6 +976,33 @@ def merge(
         typer.echo("Error: --min-support must be a positive integer.", err=True)
         raise typer.Exit(code=1)
 
+    # Merge strategies are mutually exclusive. --min-support and
+    # --max-support together form one support-range strategy.
+    selected_strategies = [
+        name
+        for name, selected in (
+            ("--expression", expression is not None),
+            ("--intersect", intersect),
+            ("--union", union),
+            ("--specific", bool(specific)),
+            ("--exact-support", exact_support is not None),
+            (
+                "--min-support/--max-support",
+                min_support is not None or max_support is not None,
+            ),
+        )
+        if selected
+    ]
+
+    if len(selected_strategies) > 1:
+        typer.echo(
+            "Error: Conflicting merge strategies: "
+            + ", ".join(selected_strategies)
+            + ". Choose exactly one strategy.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     # Validate ordinary SV matching parameters.
     if max_distance is not None and max_distance < 0:
         typer.echo("Error: --max-distance must be non-negative.", err=True)
