@@ -1,4 +1,4 @@
-# OctopuSV: multi-sample, cross-platform structural variant comparison and analysis 🐙
+# OctopuSV: multi-caller, multi-sample, and cohort-scale structural variant comparison and analysis 🐙
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/logo.png" width="40%" height="40%">
@@ -12,24 +12,22 @@
 [![Python](https://img.shields.io/pypi/pyversions/octopusv.svg)](https://pypi.org/project/octopusv/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> *Unify, merge, inspect, query, compare, and export structural variants across callers and samples.*
+> *Standardize, integrate, compare, and analyze structural variants across callers, samples, and cohorts.*
 
 > [!NOTE]
-> **What's New in v0.4.3**
+> **What's new in v1.0.0**
 >
-> This release mainly focuses on merge behavior and SVCF coordinate handling.
+> - **SVCF 1.1** introduces a versioned caller and multi-sample data model.
+> - Multi-caller and multi-sample workflows now use explicit source, evidence, and sample relationships.
+> - Sample-mode merging supports cohort-scale analysis while preserving stable biological sample columns.
+> - BND, TRA, GRIDSS, VCF conversion, reference metadata, and contig compatibility handling have been tightened across the workflow.
+> - `--max-distance`, `--max-length-ratio`, and `--min-jaccard` are active merge controls, with conflicting merge strategies rejected early.
 >
-> - `--max-distance` and `--max-length-ratio` now work as real overrides. If they are not provided, OctopuSV keeps the existing adaptive merge thresholds.
-> - Added `--min-jaccard` for DEL, DUP, and INV. It is disabled by default (`0`); benchmarking did not show a benefit from enabling it by default, but the option is available when stricter interval overlap is desired.
-> - Fixed a `svcf2vcf` bug where merged records could take `END` from another caller's `CO` field. Record-level coordinates are now preserved during conversion.
->
-> **v0.4.2**
->
-> - Merge is about **40× faster** on a 100k-event benchmark (240.49 s → 6.07 s), with similar memory usage.
-> - Improved SV, TRA, and BND candidate matching, added SVIM-ASM compatibility, and improved TRA export.
+> See [`docs/RELEASE_NOTES_1.0.0.md`](docs/RELEASE_NOTES_1.0.0.md) for release details.
 
 > [!TIP]
-> **Genome-wide SV visualization** — `octopusv plot-circos` draws a genome-wide SV Circos overview from an SVCF file, with intra-chromosomal SV links, translocations, insertion markers, and breakpoint-density tracks.
+> **Genome-wide SV visualization**  
+> `octopusv plot-circos` draws a genome-wide SV Circos overview from an SVCF file, including intra-chromosomal SV links, translocations, insertion markers, and breakpoint-density tracks.
 >
 > ```bash
 > octopusv plot-circos \
@@ -43,7 +41,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Always use the latest version for best results.**
+> **Use the latest release for current SVCF 1.1 behavior.**
 >
 > ```bash
 > conda install bioconda::octopusv
@@ -52,47 +50,118 @@
 <details>
 <summary><b>Previous releases</b></summary>
 
-- **v0.4.1** — Improved multi-sample merging, TRA/BND integration, and Circos plotting, including fixes for sample evidence placement, reciprocal breakend merging, and insertion visualization.
-- **v0.4.0** — Added a more complete SVCF operation layer for validation, inspection, querying, filtering, subsetting, normalization, and improved VCF export and provenance handling.
-- **v0.3.5** — Added genome-wide SV visualization with `octopusv plot-circos`.
-- **v0.3.3** — Improved `octopusv correct` support for multi-sample VCFs, including joint-called outputs from GRIDSS, DELLY, and related callers.
-- **v0.3.2** — Added `octopusv clean`, which sanitizes broken VCFs so strict tools such as Truvari and bcftools can parse them.
-- **v0.3.1** — Added native GRIDSS support. `octopusv correct` resolves paired BND records into standard SV types directly, without external preprocessing.
+- **v0.4.3** — Merge-control fixes and safer SVCF coordinate handling.
+- **v0.4.2** — Major merge-performance improvements, SVIM-ASM compatibility, and TRA/BND updates.
+- **v0.4.1** — Multi-sample merging, TRA/BND integration, and Circos improvements.
+- **v0.4.0** — Added the SVCF operation layer for validation, inspection, querying, filtering, subsetting, normalization, and export.
+- **v0.3.x** — Added GRIDSS support, `clean`, genome-wide visualization, and early multi-sample support.
 
 </details>
 
 ---
 
-**OctopuSV** addresses four key challenges in structural variant (SV) analysis:
+## What OctopuSV is for
 
-1. **Smart BND standardization** — Converts paired BND records into standard SV types (DEL/INV/DUP/INS/TRA), while preserving potential complex rearrangements as BNDs. Works out of the box with BND-heavy callers such as GRIDSS and SvABA.
-2. **Multi-caller integration** — Merges SVs from different tools such as Manta, Delly, GRIDSS, Sniffles, PBSV, SVIM, CuteSV, and others with flexible support-based or Boolean strategies.
-3. **Multi-sample integration** — Compares and analyzes SVs across samples or cohorts with structure-preserving sample-level merging.
-4. **SVCF-centered operations** — Validates, inspects, queries, filters, subsets, normalizes, visualizes, and exports merged SV records while preserving caller/sample provenance.
+Structural variant callers often describe the same event in different ways. Coordinates, BND notation, FORMAT fields, caller-specific IDs, sample columns, and metadata can all differ between tools.
 
-Whether you are analyzing single samples, cohorts, or tumor/normal pairs, OctopuSV standardizes your workflow from raw SV calls to consistent SVCF and standard downstream-compatible outputs.
+OctopuSV provides one workflow for bringing those calls into a consistent representation and working with them across callers and samples.
+
+The main use cases are:
+
+1. **BND standardization**  
+   Resolve paired BND records into DEL, INV, DUP, INS, or TRA when the breakpoint evidence supports it. Records that cannot be resolved safely can remain BND.
+
+2. **Multi-caller integration**  
+   Merge calls from tools such as Manta, Delly, GRIDSS, Sniffles, PBSV, SVIM, CuteSV, and others using support thresholds, intersections, unions, specific-set queries, or Boolean expressions.
+
+3. **Multi-sample and cohort integration**  
+   Compare SVs across biological samples while keeping a stable sample matrix and sample-level call structure.
+
+4. **SVCF-aware downstream analysis**  
+   Validate, inspect, query, filter, subset, normalize, visualize, and export SV records without losing the source/evidence/sample relationships created during integration.
+
+OctopuSV can be used for single samples, multi-caller analyses, tumor/normal workflows, and larger cohorts.
 
 ---
 
-## How OctopuSV Works
+## SVCF 1.1
 
-OctopuSV converts SV caller VCF outputs into a unified intermediate format (**SVCF**), enabling consistent merging, comparison, inspection, and conversion across callers and samples. Results can be exported back to standard VCF, BED, or BEDPE formats.
+SVCF is the intermediate format used by OctopuSV. Version 1.1 is the format contract for OctopuSV 1.0.
+
+SVCF 1.1 has two explicit data models.
+
+### Caller mode
+
+Caller mode keeps the source-level evidence associated with each merged SV event.
+
+```text
+SV event
+  ├── source A evidence
+  ├── source B evidence
+  └── source B evidence
+```
+
+When `SOURCES` and `SOURCE_IDS` are present, their positions are bound to the evidence blocks:
+
+```text
+SOURCES[i]
+↔ SOURCE_IDS[i]
+↔ evidence block i
+```
+
+A caller may contribute more than one evidence record to the same event. Those records are preserved individually.
+
+### Multi mode
+
+Multi mode stores one fixed column per biological sample and synthesizes a sample-level call from the caller evidence available for that sample.
+
+```text
+SV event
+  ├── sample 1
+  ├── sample 2
+  └── sample 3
+```
+
+Caller votes are counted by unique caller, so multiple records from the same caller do not count as multiple independent votes.
+
+True unobserved sample/event combinations remain distinguishable from evidence-backed `0/0` calls. During VCF export, unobserved samples are written as `./.` by default.
+
+For the full format definition, see:
+
+📋 [SVCF 1.1 specification](docs/SVCF_specifications.md)
+
+> [!NOTE]
+> Caller-mode SVCF is an intermediate format and is not guaranteed to behave like a conventional VCF sample matrix. Use `octopusv svcf2vcf` before passing merged SVCF files to tools such as bcftools or vcftools.
+
+For cohort workflows, the recommended pattern is to create one caller-mode SVCF per biological sample and then merge those files with `--mode sample`.
+
+---
+
+## How OctopuSV works
 
 ```mermaid
 flowchart TD
-    A["Raw VCFs from multiple SV callers<br/>(Manta · Delly · GRIDSS · Sniffles · PBSV · ...)"] -->|octopusv correct| B["Unified SVCF format"]
-    B -->|octopusv merge| C["Merged SVCF<br/>multi-caller / multi-sample"]
-    C -->|validate / inspect| D["Checked and inspectable<br/>SVCF records"]
-    C -->|query / filter / subset| E["Selected SVCF records<br/>structure preserved"]
-    C -->|stat / plot / plot-circos| F["Statistics and visualizations"]
-    C -->|svcf2vcf / svcf2bed / svcf2bedpe| G["Standard output formats"]
-    B -->|octopusv somatic| H["Somatic SVCF<br/>tumor-specific SVs"]
-    B -->|octopusv clean| I["Truvari-ready VCF.gz<br/>sanitized + indexed"]
+    A["Raw SV VCFs<br/>(Manta · Delly · GRIDSS · Sniffles · PBSV · ...)"] -->|octopusv correct| B["SVCF 1.1 caller mode"]
+    B -->|octopusv merge --mode caller| C["Merged caller-mode SVCF"]
+    B -->|octopusv merge --mode sample| D["SVCF 1.1 multi mode<br/>sample / cohort matrix"]
+
+    C --> E["validate · inspect · query · filter · subset"]
+    D --> E
+
+    C --> F["stat · plot · plot-circos"]
+    D --> F
+
+    C --> G["svcf2vcf · svcf2bed · svcf2bedpe"]
+    D --> G
+
+    B -->|octopusv somatic| H["Somatic SVCF"]
+
+    A -->|octopusv clean| I["Sanitized VCF.gz<br/>for strict downstream tools"]
 
     style A fill:#f5f5f5,stroke:#999
     style B fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
     style C fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style D fill:#fff3e0,stroke:#f57c00
+    style D fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style E fill:#fff3e0,stroke:#f57c00
     style F fill:#ede7f6,stroke:#673ab7
     style G fill:#e0f7fa,stroke:#00838f
@@ -100,55 +169,59 @@ flowchart TD
     style I fill:#fff8e1,stroke:#f9a825
 ```
 
-**Why SVCF?** Different SV callers implement VCF inconsistently: varying field names, BND notations, coordinate conventions, and sample/caller evidence fields. SVCF reduces these compatibility issues by providing a unified intermediate format for practical SV operations.
+Different callers use different field names, coordinate conventions, breakpoint representations, and sample layouts. SVCF gives OctopuSV a consistent internal representation so the same downstream operations can be applied across those inputs.
+
+A typical multi-caller workflow looks like this:
 
 ```bash
-# Step 1: Standardize caller outputs
-octopusv correct manta_output.vcf manta.svcf
-octopusv correct gridss_output.vcf gridss.svcf
-octopusv correct sniffles_output.vcf sniffles.svcf
+# Step 1: standardize caller outputs
+octopusv correct -i manta_output.vcf -o manta.svcf
+octopusv correct -i gridss_output.vcf -o gridss.svcf
+octopusv correct -i sniffles_output.vcf -o sniffles.svcf
 
-# Step 2: Merge and analyze with a consistent format
-octopusv merge -i manta.svcf gridss.svcf sniffles.svcf -o merged.svcf --min-support 2
+# Step 2: merge and inspect
+octopusv merge \
+  -i manta.svcf gridss.svcf sniffles.svcf \
+  -o merged.svcf \
+  --min-support 2
+
 octopusv validate-svcf -i merged.svcf
 octopusv inspect -i merged.svcf --id Sniffles2.INS.1DS0
 
-# Step 3: Convert back to standard formats
+# Step 3: export to standard formats
 octopusv svcf2vcf -i merged.svcf -o final_results.vcf
 octopusv svcf2bedpe -i merged.svcf -o final_results.bedpe
 ```
 
-📋 **SVCF Format Details**: See the [SVCF specification document](https://github.com/ylab-hi/OctopuSV/blob/main/docs/SVCF_specifications.md) for technical details.
-
 ---
 
-## Supported SV Callers
+## Supported SV callers
 
-**Long-read callers**: Sniffles, Severus, SVDSS, DeBreak, SVIM, SVIM-ASM, CuteSV, PBSV, nanomonsv
+**Long-read callers:** Sniffles, Severus, SVDSS, DeBreak, SVIM, SVIM-ASM, CuteSV, PBSV, nanomonsv
 
-**Short-read callers**: Manta, Delly, GRIDSS, Lumpy, SvABA, Octopus, CLEVER
+**Short-read callers:** Manta, Delly, GRIDSS, Lumpy, SvABA, Octopus, CLEVER
 
-**CNV callers**: Dragen CNV, with automatic conversion of CNV records to DEL/DUP when appropriate
+**CNV callers:** DRAGEN CNV, with automatic conversion of supported CNV records to DEL/DUP
 
-Support for additional callers continues to expand.
+Support for additional callers can be added as new formats and edge cases are reported.
 
 ---
 
 ## Installation
 
-### Bioconda recommended
+### Bioconda
 
 ```bash
 conda install bioconda::octopusv
 ```
 
-Or with mamba for faster dependency resolution:
+or:
 
 ```bash
 mamba install bioconda::octopusv
 ```
 
-Bioconda installation includes the required Python dependencies and command-line tools used by OctopuSV workflows.
+Bioconda is the recommended installation route because it includes the external command-line tools used by OctopuSV workflows.
 
 ### PyPI
 
@@ -157,13 +230,11 @@ pip install octopusv
 ```
 
 > [!NOTE]
-> The `octopusv clean` subcommand requires `bcftools`, `bgzip`, and `tabix` as external tools. If you installed OctopuSV via pip, install them separately:
+> `octopusv clean` requires `bcftools`, `bgzip`, and `tabix`. If OctopuSV was installed with pip, install those tools separately:
 >
 > ```bash
 > conda install -c bioconda bcftools htslib
 > ```
->
-> If you installed OctopuSV via Bioconda, these tools are already included.
 
 ### Docker
 
@@ -171,9 +242,11 @@ pip install octopusv
 docker pull quay.io/biocontainers/octopusv:<tag>
 ```
 
-See [octopusv/tags](https://quay.io/repository/biocontainers/octopusv?tab=tags) for available container tags.
+See the available container tags at:
 
-### From source for developers
+https://quay.io/repository/biocontainers/octopusv?tab=tags
+
+### From source
 
 ```bash
 git clone https://github.com/ylab-hi/OctopuSV.git
@@ -185,233 +258,423 @@ poetry install
 
 ---
 
-## Quick Start
+# Quick start
 
-### 1. Correct and Standardize BND Annotations
+## 1. Correct and standardize SV calls
 
-`octopusv correct` converts raw SV caller output into standardized SVCF format. This includes resolving paired BND records into concrete SV types and detecting insertions from BND pairs with long inserted sequences.
+`octopusv correct` converts raw caller output into SVCF.
 
 ```bash
 # Basic correction
-octopusv correct input.vcf output.svcf
+octopusv correct -i input.vcf -o output.svcf
 
-# With position tolerance control for BND pairing
-octopusv correct -i input.vcf -o output.svcf --pos-tolerance 5
+# BND pairing tolerance
+octopusv correct \
+  -i input.vcf \
+  -o output.svcf \
+  --pos-tolerance 5
 
-# Apply quality filters
-octopusv correct -i input.vcf -o output.svcf --min-svlen 50 --max-svlen 100000 --filter-pass
+# Apply size and FILTER constraints
+octopusv correct \
+  -i input.vcf \
+  -o output.svcf \
+  --min-svlen 50 \
+  --max-svlen 100000 \
+  --filter-pass
 ```
 
-### 2. Merge SV Calls Multi-caller or Multi-sample
+For paired BND records, OctopuSV resolves the event into a standard SV type when the available breakpoint information supports it.
 
-`octopusv merge` combines standardized SVCF files using flexible support and set-operation strategies.
+True single-breakends are skipped by default with an explicit note in the command output and a count in the SVCF header. Use:
 
 ```bash
-# Intersection: SVs found by all input files
-octopusv merge -i manta.svcf sniffles.svcf pbsv.svcf -o intersection.svcf --intersect
+--strict-single-breakends
+```
 
-# Union: SVs found by any input file
-octopusv merge -i caller1.svcf caller2.svcf caller3.svcf -o union.svcf --union
+if you prefer `correct` to stop on these records.
 
-# Minimum support: SVs supported by at least N callers or samples
-octopusv merge -i a.svcf b.svcf c.svcf d.svcf -o supported.svcf --min-support 3
+---
 
-# Specific input: SVs unique to one caller or sample
-octopusv merge -i manta.svcf sniffles.svcf -o manta_specific.svcf --specific manta.svcf
+## 2. Merge SV calls
 
-# Complex Boolean logic: A and B but not C or D
-octopusv merge -i A.svcf B.svcf C.svcf D.svcf \
-  --expression "(A AND B) AND NOT (C OR D)" -o filtered.svcf
+`octopusv merge` works in caller mode or sample mode.
 
-# Multi-sample mode with custom names
-octopusv merge -i sample1.svcf sample2.svcf sample3.svcf \
-  --mode sample --sample-names Patient1,Patient2,Patient3 \
-  --min-support 2 -o cohort.svcf
+### Multi-caller
 
-# Generate an UpSet plot
-octopusv merge -i a.svcf b.svcf c.svcf -o merged.svcf --intersect \
-  --upsetr --upsetr-output venn_diagram.png
+```bash
+# Intersection
+octopusv merge \
+  -i manta.svcf sniffles.svcf pbsv.svcf \
+  -o intersection.svcf \
+  --intersect
+
+# Union
+octopusv merge \
+  -i caller1.svcf caller2.svcf caller3.svcf \
+  -o union.svcf \
+  --union
+
+# Minimum source support
+octopusv merge \
+  -i a.svcf b.svcf c.svcf d.svcf \
+  -o supported.svcf \
+  --min-support 3
+
+# Specific input
+octopusv merge \
+  -i manta.svcf sniffles.svcf \
+  -o manta_specific.svcf \
+  --specific manta.svcf
+
+# Boolean expression
+octopusv merge \
+  -i A.svcf B.svcf C.svcf D.svcf \
+  -o filtered.svcf \
+  --expression "(A AND B) AND NOT (C OR D)"
+```
+
+Custom source labels can be supplied with:
+
+```bash
+--caller-names "manta,gridss,sniffles"
+```
+
+These labels affect source identity in the output. They do not change the merge criteria.
+
+### Multi-sample / cohort
+
+```bash
+octopusv merge \
+  -i sample1.svcf sample2.svcf sample3.svcf \
+  -o cohort.svcf \
+  --mode sample \
+  --sample-names Patient1,Patient2,Patient3 \
+  --min-support 2
+```
+
+Sample mode keeps one fixed output column per biological sample.
+
+### Merge controls
+
+For DEL, DUP, and INV, matching can be adjusted with:
+
+```bash
+--max-distance
+--max-length-ratio
+--min-jaccard
+```
+
+`--min-jaccard` is disabled by default (`0`).
+
+Merge strategies are mutually exclusive. For example, use either:
+
+```bash
+--intersect
+```
+
+or:
+
+```bash
+--min-support 3
+```
+
+rather than supplying both.
+
+### UpSet plot
+
+```bash
+octopusv merge \
+  -i a.svcf b.svcf c.svcf \
+  -o merged.svcf \
+  --intersect \
+  --upsetr \
+  --upsetr-output venn_diagram.png
 ```
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/up_upset.png" width="70%" height="70%">
 </p>
 
-### 3. Validate and Inspect SVCF Files
+---
 
-OctopuSV v0.4.0 adds inspection and validation commands for checking SVCF structure, provenance, and individual merged records.
+## 3. Validate and inspect SVCF files
 
 ```bash
-# Show the header and metadata contract
+# Show SVCF header and metadata
 octopusv header -i merged.svcf
 
-# Validate SVCF structure and provenance consistency
+# Validate SVCF structure
 octopusv validate-svcf -i merged.svcf
 
-# Inspect one merged SV record by ID
-octopusv inspect -i merged.svcf --id Sniffles2.INS.1DS0
+# Inspect one record
+octopusv inspect \
+  -i merged.svcf \
+  --id Sniffles2.INS.1DS0
 
 # Inspect multiple records and export JSONL
-octopusv inspect -i merged.svcf --id-file candidate_ids.txt --jsonl > records.jsonl
+octopusv inspect \
+  -i merged.svcf \
+  --id-file candidate_ids.txt \
+  --jsonl > records.jsonl
 ```
 
-`inspect` reports parsed endpoints, span, `SOURCES`, `SOURCE_IDS`, and per-caller or per-sample evidence blocks. This is useful for checking merged records before conversion, visualization, benchmarking, or other downstream workflows.
+`validate-svcf` checks the SVCF version and mode, FORMAT layout, required INFO fields, source/evidence binding, sample-column structure, BND/TRA coordinates, and other SVCF 1.1 rules.
 
-### 4. Query, Filter, and Subset SVCF Records
+`inspect` reports event coordinates, `SOURCES`, `SOURCE_IDS`, and the associated evidence or sample blocks.
 
-OctopuSV v0.4.0 provides structure-preserving SVCF operations. These commands keep the SVCF header, INFO fields, FORMAT fields, sample/caller columns, and provenance fields consistent.
+---
+
+## 4. Query, filter, and subset
+
+These commands preserve SVCF structure while selecting records or sample/source columns.
 
 ```bash
-# Query records by genomic region
-octopusv query -i merged.svcf --region chr1:1000000-2000000 -o region_hits.svcf
+# Query by region
+octopusv query \
+  -i merged.svcf \
+  --region chr1:1000000-2000000 \
+  -o region_hits.svcf
 
-# See all target-query options, including feature-based query modes
+# Filter by SV type
+octopusv filter \
+  -i merged.svcf \
+  --svtype DEL \
+  --svtype DUP \
+  -o del_dup.svcf
+
+# Filter by support
+octopusv filter \
+  -i merged.svcf \
+  --min-support 2 \
+  -o support2.svcf
+
+# Subset sample/source columns
+octopusv subset \
+  -i merged.svcf \
+  --sample sampleA \
+  --sample sampleB \
+  -o subset.svcf
+```
+
+See the command help for additional query and filtering options:
+
+```bash
 octopusv query -h
-
-# Filter records by SV type
-octopusv filter -i merged.svcf --svtype DEL --svtype DUP -o del_dup.svcf
-
-# Filter records by support
-octopusv filter -i merged.svcf --min-support 2 -o support2.svcf
-
-# Subset sample/caller evidence columns
-octopusv subset -i merged.svcf --sample sampleA --sample sampleB -o subset.svcf
+octopusv filter -h
+octopusv subset -h
 ```
 
-These operations are SVCF-aware: they preserve both breakpoints, `CHR2`/`END`, caller/sample provenance, and merged evidence columns.
+---
 
-### 5. Normalize SVCF Contig Names
+## 5. Normalize contig names
 
-Use `normalize-contigs` when input files use different standard chromosome naming styles, such as `chr1` versus `1`.
+Use `normalize-contigs` when files use different naming styles such as `1` and `chr1`.
 
 ```bash
-# Normalize standard contig names without changing coordinates
-octopusv normalize-contigs -i merged.svcf -o merged.normalized.svcf
+octopusv normalize-contigs \
+  -i merged.svcf \
+  -o merged.normalized.svcf
 ```
 
-This command normalizes standard contig names only. It does not lift over coordinates or alter breakpoint positions.
+This changes contig naming only. It does not perform coordinate liftover.
 
-### 6. Somatic SV Calling
+OctopuSV also checks known contig lengths before merge. Inputs with conflicting lengths for the same contig are rejected rather than silently combined.
 
-Use any SV caller to analyze tumor and normal samples separately, then let OctopuSV find tumor-specific variants. This works even with callers not designed specifically for cancer analysis.
+---
+
+## 6. Somatic SV analysis
+
+Tumor and normal calls can be compared after correction to SVCF.
 
 ```bash
-# Basic somatic calling
-octopusv somatic -t tumor.svcf -n normal.svcf -o somatic.svcf
-
-# With custom matching parameters
-octopusv somatic -t tumor.svcf -n normal.svcf -o somatic.svcf \
-  --max-distance 100 --min-jaccard 0.8
-
-# Convert to standard VCF for downstream analysis
-octopusv svcf2vcf -i somatic.svcf -o somatic.vcf
+octopusv somatic \
+  -t tumor.svcf \
+  -n normal.svcf \
+  -o somatic.svcf
 ```
 
-Example multi-caller somatic workflow:
+Matching parameters can be adjusted when needed:
 
 ```bash
-# Standardize tumor calls from multiple callers
-octopusv correct manta_tumor.vcf manta_tumor.svcf
-octopusv correct delly_tumor.vcf delly_tumor.svcf
-octopusv correct gridss_tumor.vcf gridss_tumor.svcf
-
-# Keep SVs supported by at least 2 out of 3 callers
-octopusv merge -i manta_tumor.svcf delly_tumor.svcf gridss_tumor.svcf \
-  -o high_confidence_somatic.svcf --min-support 2
+octopusv somatic \
+  -t tumor.svcf \
+  -n normal.svcf \
+  -o somatic.svcf \
+  --max-distance 100 \
+  --min-jaccard 0.8
 ```
 
-### 7. Clean Broken VCFs for Downstream Tools
-
-Some callers produce VCFs that are technically valid but break strict parsers such as Truvari or bcftools due to missing header definitions, illegal characters in INFO fields, inconsistent chromosome naming, missing `GT`, or missing `SVLEN`.
-
-`octopusv clean` fixes these issues without filtering variants, producing a sorted, bgzipped, tabix-indexed VCF ready for downstream benchmarking.
+The result can be converted back to VCF:
 
 ```bash
-# Basic clean without chromosome harmonization
+octopusv svcf2vcf \
+  -i somatic.svcf \
+  -o somatic.vcf
+```
+
+A multi-caller tumor workflow can also be built first:
+
+```bash
+octopusv correct -i manta_tumor.vcf -o manta_tumor.svcf
+octopusv correct -i delly_tumor.vcf -o delly_tumor.svcf
+octopusv correct -i gridss_tumor.vcf -o gridss_tumor.svcf
+
+octopusv merge \
+  -i manta_tumor.svcf delly_tumor.svcf gridss_tumor.svcf \
+  -o high_confidence_somatic.svcf \
+  --min-support 2
+```
+
+---
+
+## 7. Clean VCFs for strict downstream tools
+
+Some VCFs contain missing definitions or formatting choices that strict tools such as Truvari or bcftools will reject.
+
+`octopusv clean` produces a sorted, bgzipped, tabix-indexed VCF for downstream use.
+
+```bash
+# Basic cleaning
 octopusv clean broken.vcf fixed.vcf.gz
 
-# With reference FASTA for chromosome name harmonization
-octopusv clean broken.vcf fixed.vcf.gz -g /path/to/reference.fa
+# Harmonize chromosome names against a reference FASTA
+octopusv clean \
+  broken.vcf \
+  fixed.vcf.gz \
+  -g /path/to/reference.fa
 
-# Typical workflow before Truvari benchmark
-octopusv clean calls.vcf calls_clean.vcf.gz -g GRCh38.fa
-truvari bench -b truth.vcf.gz -c calls_clean.vcf.gz -f GRCh38.fa -o bench_results/
+# Example before Truvari
+octopusv clean \
+  calls.vcf \
+  calls_clean.vcf.gz \
+  -g GRCh38.fa
+
+truvari bench \
+  -b truth.vcf.gz \
+  -c calls_clean.vcf.gz \
+  -f GRCh38.fa \
+  -o bench_results/
 ```
 
-What `clean` fixes:
+`clean` can:
 
-- Removes `RNAMES` field and sanitizes illegal characters in INFO
-- Fills missing `SVLEN` based on `SVTYPE` and `END`
-- Ensures `GT` is the first FORMAT field with a valid value
-- Auto-generates missing INFO/FORMAT header definitions
-- Harmonizes chromosome names against a reference FASTA when `-g` is provided
-- Sorts, bgzips, and tabix-indexes the output
+- remove `RNAMES` and sanitize problematic INFO values
+- fill missing `SVLEN` when it can be derived from the record
+- ensure a valid `GT` field
+- add missing INFO/FORMAT definitions
+- harmonize contig names against a reference FASTA
+- sort, bgzip, and tabix-index the output
 
-### 8. Benchmark Against Truth Sets
+---
+
+## 8. Benchmark against a truth set
 
 ```bash
-octopusv benchmark truth.vcf calls.svcf \
+octopusv benchmark \
+  truth.vcf \
+  calls.svcf \
   -o benchmark_results \
   --reference-distance 500 \
   --size-similarity 0.7 \
   --reciprocal-overlap 0.0 \
-  --size-min 50 --size-max 50000
+  --size-min 50 \
+  --size-max 50000
 ```
 
-### 9. Generate Statistics and Visualizations
+---
+
+## 9. Statistics and visualization
 
 ```bash
-# Basic stat collection
-octopusv stat -i input.svcf -o stats.txt
+# Basic statistics
+octopusv stat \
+  -i input.svcf \
+  -o stats.txt
 
 # Add an HTML report
-octopusv stat -i input.svcf -o stats.txt --report
+octopusv stat \
+  -i input.svcf \
+  -o stats.txt \
+  --report
 
-# Plot figures from stats
-octopusv plot stats.txt -o figure_prefix
+# Plot figures from the statistics file
+octopusv plot \
+  stats.txt \
+  -o figure_prefix
 ```
 
-The `--report` flag outputs an interactive HTML report covering SV type and size distributions, chromosome breakdowns, quality score summaries, genotype features, and depth features.
+The HTML report includes SV type and size distributions, chromosome summaries, quality metrics, genotype features, and depth-related summaries when available.
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/html_example.png" width="70%" height="70%">
 </p>
 
-`octopusv plot-circos` draws a whole-genome SV landscape directly from an SVCF: an inner link layer for DEL/DUP/INV/TRA and an outer breakpoint-density histogram. It is useful for spotting chromosome-level breakpoint clustering and complex-rearrangement regions at a glance.
+### Circos overview
 
 ```bash
-# Basic Circos overview
-octopusv plot-circos -i input.svcf -o circos.png
+# Basic genome-wide view
+octopusv plot-circos \
+  -i input.svcf \
+  -o circos.png
 
-# Plot only translocations
-octopusv plot-circos -i input.svcf -o circos_tra.png --tra-only
+# Translocations only
+octopusv plot-circos \
+  -i input.svcf \
+  -o circos_tra.png \
+  --tra-only
 
-# Use a custom reference .fai for chromosome sizes
-octopusv plot-circos -i input.svcf -o circos.png --fai reference.fa.fai
+# Custom reference sizes
+octopusv plot-circos \
+  -i input.svcf \
+  -o circos.png \
+  --fai reference.fa.fai
 ```
 
-INS is excluded from links by default. Events larger than `--intra-max-span` are written to an oversized-intra table next to the figure for manual inspection. See `octopusv plot-circos -h` for all options, including support thresholds, span filters, per-type toggles, and arc styling.
-
-### 10. Format Conversion
+INS is excluded from links by default. See:
 
 ```bash
-# To BED
-octopusv svcf2bed -i input.svcf -o output.bed
-
-# To BEDPE
-octopusv svcf2bedpe -i input.svcf -o output.bedpe
-
-# To standard VCF
-octopusv svcf2vcf -i input.svcf -o output.vcf
+octopusv plot-circos -h
 ```
 
-`octopusv svcf2vcf` generates VCF4.2-compatible output. In v0.4.0 and later, converted VCF records preserve `SOURCES` and `SOURCE_IDS` in the INFO field so caller/sample provenance remains visible after conversion.
+for support thresholds, span filters, per-type toggles, insertion display, and styling options.
 
 ---
 
-## Example Visualizations
+## 10. Format conversion
 
-OctopuSV generates publication-ready visualizations:
+```bash
+# SVCF to BED
+octopusv svcf2bed \
+  -i input.svcf \
+  -o output.bed
+
+# SVCF to BEDPE
+octopusv svcf2bedpe \
+  -i input.svcf \
+  -o output.bedpe
+
+# SVCF to standard VCF
+octopusv svcf2vcf \
+  -i input.svcf \
+  -o output.vcf
+```
+
+`svcf2vcf` writes VCF4.2-compatible output while keeping the merged event information needed for downstream analysis.
+
+For SVCF 1.1 multi-mode files, true unobserved sample/event placeholders are exported as `./.` by default. To export those placeholders as `0/0` instead:
+
+```bash
+octopusv svcf2vcf \
+  -i cohort.svcf \
+  -o cohort.vcf \
+  --unobserved-sample-gt ref
+```
+
+For insertions, OctopuSV uses an internal SVCF span during processing. VCF export writes the conventional insertion endpoint with `END=POS`.
+
+---
+
+## Example visualizations
 
 <p align="center">
   <img src="https://github.com/ylab-hi/octopusV/blob/main/imgs/chromosome_distribution.png" width="50%" height="50%">
@@ -431,7 +694,7 @@ OctopuSV generates publication-ready visualizations:
 
 If you use OctopuSV in your research, please cite:
 
-> Guo, Qingxiang, Yangyang Li, Ting-You Wang, Abhi Ramakrishnan, and Rendong Yang. "OctopuSV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis." Bioinformatics (2025): btaf599. doi: https://doi.org/10.1093/bioinformatics/btaf599
+> Guo, Qingxiang, Yangyang Li, Ting-You Wang, Abhi Ramakrishnan, and Rendong Yang. "OctopuSV and TentacleSV: a one-stop toolkit for multi-sample, cross-platform structural variant comparison and analysis." *Bioinformatics* (2025): btaf599. https://doi.org/10.1093/bioinformatics/btaf599
 
 ```bibtex
 @article{guo2025octopusv,
@@ -444,15 +707,15 @@ If you use OctopuSV in your research, please cite:
 }
 ```
 
-If you find OctopuSV useful, a ⭐ on GitHub helps others discover the project.
+If OctopuSV is useful in your work, a ⭐ on GitHub helps other users find the project.
 
-See the companion pipeline: [TentacleSV](https://github.com/ylab-hi/TentacleSV)
+Companion pipeline: [TentacleSV](https://github.com/ylab-hi/TentacleSV)
 
 ---
 
 ## Contributing
 
-We welcome issues, suggestions, and pull requests.
+Issues, suggestions, and pull requests are welcome.
 
 ```bash
 git clone https://github.com/ylab-hi/OctopuSV.git
@@ -463,8 +726,10 @@ poetry install
 pre-commit run -a
 ```
 
+---
+
 ## Contact
 
-- GitHub Issues: [https://github.com/ylab-hi/OctopuSV/issues](https://github.com/ylab-hi/OctopuSV/issues)
-- Email: [qingxiang.guo@northwestern.edu](mailto:qingxiang.guo@northwestern.edu)
-- Email: [yangyang.li@northwestern.edu](mailto:yangyang.li@northwestern.edu)
+- GitHub Issues: https://github.com/ylab-hi/OctopuSV/issues
+- Qingxiang Guo: qingxiang.guo@northwestern.edu
+- Yangyang Li: yangyang.li@northwestern.edu
