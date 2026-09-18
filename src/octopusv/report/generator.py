@@ -7,8 +7,6 @@ from pathlib import Path
 from jinja2 import Template
 from octopusv import __PACKAGE_NAME__
 
-logging.basicConfig(level=logging.INFO)
-
 def load_template() -> Path:
     """Load HTML template for report generation."""
     template_path = Path(sys.modules[__PACKAGE_NAME__].__file__)

@@ -1,15 +1,7 @@
-import logging
 from pathlib import Path
 
 import typer
-from rich.logging import RichHandler
-
 from octopusv.bencher.sv_bencher import SVBencher
-
-# Set logging style
-FORMAT = "%(message)s"
-logging.basicConfig(level="INFO", format=FORMAT, datefmt="[%X]", handlers=[RichHandler()])
-
 
 def bench(
     truth_file: Path = typer.Argument(..., help="Path to the truth (ground truth) SVCF file."),

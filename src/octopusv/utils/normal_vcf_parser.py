@@ -618,8 +618,9 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
             "without a remote breakpoint coordinate. These records cannot be "
             "represented losslessly in SVCF 1.1. "
             f"Examples: {examples}. "
-            "Re-run with --skip-single-breakends only if you explicitly want "
-            "OctopuSV to omit these one-ended breakends."
+            "These one-ended breakends must be omitted for SVCF 1.1 conversion. "
+            "The octopusv correct CLI skips them by default; "
+            "--strict-single-breakends requests this failure instead."
         )
 
     if recognized_sv_count == 0 and data_record_count > 0:

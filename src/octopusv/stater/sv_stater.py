@@ -266,6 +266,13 @@ class SVStater:
         genotype_dist = {
             gt: (count, 0.0) for gt, count in g.get("overall", {}).items()
         }
+        sample_genotypes = {}
+        for sample_name, dist in g.get("per_sample", {}).items():
+            total = sum(dist.values())
+            sample_genotypes[sample_name] = {
+                gt: (count, (count / total * 100) if total else 0.0)
+                for gt, count in dist.items()
+            }
 
         return {
             "input_file": self.input_file,
@@ -282,7 +289,7 @@ class SVStater:
             "filter_status": filter_status,
             "avg_read_support": qc["support"]["mean"] or 0.0,
             "genotype_dist": genotype_dist,
-            "sample_genotypes": g.get("per_sample", {}),
+            "sample_genotypes": sample_genotypes,
             "no_evidence": g.get("no_evidence", {}),
             "population_genotypes": {},
         }

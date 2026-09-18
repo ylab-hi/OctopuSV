@@ -1,7 +1,8 @@
 ##fileformat=VCFv4.2
-##fileDate=2026-09-17|09:38:00AM|
+##fileDate=2026-09-18|11:45:14AM|
 ##source=OctopuSV
 ##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
+##reference=file:///projects/b1171/qgn1237/1_my_database/GRCh37_hs37d5/hs37d5.fa
 ##SVCFVersion=1.1
 ##OctopuSV_mode=caller
 ##contig=<ID=1,length=249250621>

@@ -8,6 +8,10 @@ from octopusv.utils.caller_consensus import resolve_caller_svcf_consensus
 from octopusv.utils.svcf_parser import SVCFEvent
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.svcf_utils import (
+    global_meta_audit_lines,
+    merge_safe_global_meta_lines,
+)
 from octopusv.utils.vcf_info import format_vcf_info_item
 from octopusv.utils.svcf_schema import (
     MODE_MULTI,
@@ -20,8 +24,6 @@ from octopusv.utils.sample_mode_semantics import (
     downstream_sample_gt,
     normalize_unobserved_sample_gt,
 )
-
-logging.basicConfig(level=logging.INFO)
 
 
 class SVCFtoVCFConverter:
@@ -417,6 +419,16 @@ class SVCFtoVCFConverter:
         contig_lines = self._read_contig_lines()
 
         header = "##fileformat=VCFv4.2\n"
+
+        for meta_line in merge_safe_global_meta_lines(
+            [(self.input_svcf_file, self._meta_lines)]
+        ):
+            header += meta_line + "\n"
+
+        # Preserve input-specific reference/assembly audit metadata created by
+        # merge when a single standard declaration could not be verified.
+        for meta_line in global_meta_audit_lines(self._meta_lines):
+            header += meta_line + "\n"
 
         if self._supports_unobserved_sample_policy:
             header += (

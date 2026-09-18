@@ -135,12 +135,13 @@ def correct(
             False, "--exclude-nocall", help="Exclude variants with ./. genotype"
         ),
         skip_single_breakends: bool = typer.Option(
-            False,
-            "--skip-single-breakends",
+            True,
+            "--skip-single-breakends/--strict-single-breakends",
             help=(
-                "Explicitly omit true one-ended BND records such as N. or .N. "
-                "By default correct fails because these records have no remote "
-                "breakpoint and cannot be represented losslessly in SVCF 1.1."
+                "Skip true one-ended BND records such as N. or .N (default). "
+                "These records lack a remote breakpoint coordinate and cannot "
+                "be represented as complete SVCF 1.1 events. Use "
+                "--strict-single-breakends to stop instead."
             ),
         ),
 ):
@@ -179,10 +180,11 @@ def correct(
         raise typer.Exit(code=1)
 
     # Parse the input VCF file.
-    # non_bnd_events means DEL, INV, INS, DUP.  True single-breakends are
-    # rejected by default because SVCF 1.1 requires an explicit remote BND
-    # coordinate.  A user may explicitly opt into skipping only that narrow
-    # class; malformed/unsupported paired BND ALT strings still fail.
+    # non_bnd_events means DEL, INV, INS, DUP. True single-breakends have no
+    # remote breakpoint coordinate, so they cannot satisfy the locked SVCF 1.1
+    # BND contract. The CLI skips only that narrow class by default and records
+    # the count in the output; --strict-single-breakends opts into failure.
+    # Malformed/unsupported paired BND ALT strings still fail.
     parse_stats = {}
     try:
         contig_lines, same_chr_bnd_events, diff_chr_bnd_events, non_bnd_events = parse_vcf(
@@ -337,7 +339,7 @@ def correct(
     input_data_records = int(parse_stats.get("data_records", 0))
     output_sample_count = parse_stats.get("output_sample_count")
     extra_meta_lines = []
-    if skip_single_breakends and skipped_single_breakends:
+    if skipped_single_breakends:
         extra_meta_lines.append(
             f"##OctopuSV_skipped_single_breakends={skipped_single_breakends}"
         )
@@ -360,8 +362,13 @@ def correct(
         )
     if skipped_single_breakends:
         _echo(
-            f"Skipped {skipped_single_breakends} true single-breakend record(s) "
-            "by explicit --skip-single-breakends request."
+            f"Note: skipped {skipped_single_breakends} true single-breakend BND "
+            "record(s). These one-ended calls report a local breakend but do "
+            "not specify a remote breakpoint coordinate, so they cannot be "
+            "represented as complete SVCF 1.1 events. This can occur in callers "
+            "such as GRIDSS and does not indicate an invalid input VCF. Any "
+            "other supported records were processed normally, and the original "
+            "VCF was not modified. Use --strict-single-breakends to stop instead."
         )
     if skipped_non_sv_records:
         _echo(

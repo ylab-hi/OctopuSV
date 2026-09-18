@@ -1,9 +1,10 @@
 ##fileformat=VCFv4.2
 ##SVCFVersion=1.1
 ##OctopuSV_mode=multi
-##fileDate=2026-09-17|09:38:01AM|
+##fileDate=2026-09-18|11:45:14AM|
 ##source=OctopuSV
 ##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
+##reference=file:///projects/b1171/qgn1237/1_my_database/GRCh37_hs37d5/hs37d5.fa
 ##contig=<ID=1,length=249250621>
 ##contig=<ID=2,length=243199373>
 ##contig=<ID=3,length=198022430>

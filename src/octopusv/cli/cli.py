@@ -2,6 +2,7 @@ import logging
 import sys
 
 import typer
+from rich.console import Console
 from rich.logging import RichHandler
 
 from octopusv import __version__
@@ -48,7 +49,7 @@ logging.basicConfig(
     level="INFO",
     format=FORMAT,
     datefmt="[%X]",
-    handlers=[RichHandler()],
+    handlers=[RichHandler(console=Console(stderr=True))],
 )
 
 
@@ -151,8 +152,23 @@ app.command(
 )(somatic)
 
 
+def _version_callback(value: bool) -> None:
+    """Print the package version and exit before command dispatch."""
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
 @app.callback()
-def display_version_info():
+def display_version_info(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the OctopuSV version and exit.",
+    ),
+):
     """OctopuSV command-line interface."""
 
 

@@ -38,6 +38,7 @@ class SVBencher:
         self.size_max = size_max
         self.pass_only = pass_only
         self.enable_sequence_comparison = enable_sequence_comparison
+        self._sequence_ratio = self._load_sequence_ratio() if enable_sequence_comparison else None
 
         self.truth_events = None
         self.call_events = None
@@ -187,22 +188,35 @@ class SVBencher:
             self.logger.warning(f"Error comparing breakpoint events: {e!s}")
             return False
 
+    @staticmethod
+    def _load_sequence_ratio():
+        """Load Levenshtein ratio or fail before scientific comparison starts."""
+        try:
+            from Levenshtein import ratio
+        except ImportError as exc:
+            raise RuntimeError(
+                "Sequence comparison requires the Levenshtein package. "
+                "Install OctopuSV with its declared runtime dependencies "
+                "before using --enable-sequence-comparison."
+            ) from exc
+        return ratio
+
     def _calculate_sequence_similarity(self, truth_event, call_event) -> float:
         """Calculate sequence similarity between events."""
         truth_seq = self._get_sequence_from_event(truth_event)
         call_seq = self._get_sequence_from_event(call_event)
 
-        # If no sequence information available, assume similarity
+        # If no sequence information is available for either event, sequence
+        # evidence is not used to reject the geometric match.
         if not truth_seq or not call_seq:
             return 1.0
 
-        try:
-            from Levenshtein import ratio
-
-            return ratio(truth_seq, call_seq)
-        except ImportError:
-            self.logger.warning("Levenshtein package not available, using simple comparison")
-            return float(truth_seq == call_seq)
+        if self._sequence_ratio is None:
+            raise RuntimeError(
+                "Internal error: sequence comparison was requested without a "
+                "Levenshtein similarity function."
+            )
+        return self._sequence_ratio(truth_seq, call_seq)
 
     def _get_sequence_from_event(self, event) -> str | None:
         """Extract sequence information from an event."""

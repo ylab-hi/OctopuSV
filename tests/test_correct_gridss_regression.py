@@ -227,7 +227,7 @@ def test_gridss_same_chromosome_inv_geometry_preserves_nonpass_filter(tmp_path):
     _assert_valid_svcf(output)
 
 
-def test_gridss_true_single_breakend_fails_by_default_with_actionable_message(tmp_path):
+def test_gridss_true_single_breakend_is_skipped_by_default_and_output_validates(tmp_path):
     result, output = _run_correct(
         tmp_path,
         [
@@ -237,17 +237,29 @@ def test_gridss_true_single_breakend_fails_by_default_with_actionable_message(tm
                 "gridss.single.1",
                 "GAATTC.",
                 qual=42.0,
-                extra_info="EVENT=event.single",
+                extra_info=(
+                    "EVENT=event.single;"
+                    "BEALN=chr10:19050080|+|285M|0"
+                ),
             )
         ],
         contigs=("chr1",),
     )
 
-    assert result.exit_code != 0
-    assert "true single-breakend BND record(s)" in result.output
-    assert "gridss.single.1" in result.output
-    assert "--skip-single-breakends" in result.output
-    assert not output.exists()
+    assert result.exit_code == 0, result.output
+    text = output.read_text()
+    assert "##OctopuSV_skipped_single_breakends=1" in text
+    assert "gridss.single.1" not in text
+    assert "chr10:19050080" not in text
+    assert _records(output) == []
+    assert "Note: skipped 1 true single-breakend BND record(s)" in result.output
+    assert "callers such as GRIDSS" in result.output
+    assert "does not indicate an invalid input VCF" in result.output
+    assert "--strict-single-breakends" in result.output
+
+    validation = RUNNER.invoke(app, ["validate-svcf", str(output)])
+    assert validation.exit_code == 0, validation.output
+    assert "Status: PASS" in validation.output
 
 
 def test_gridss_single_breakend_can_be_explicitly_skipped_and_output_validates(tmp_path):
@@ -271,11 +283,35 @@ def test_gridss_single_breakend_can_be_explicitly_skipped_and_output_validates(t
     text = output.read_text()
     assert "##OctopuSV_skipped_single_breakends=1" in text
     assert _records(output) == []
-    assert "Skipped 1 true single-breakend record(s)" in result.output
+    assert "Note: skipped 1 true single-breakend BND record(s)" in result.output
 
     validation = RUNNER.invoke(app, ["validate-svcf", str(output)])
     assert validation.exit_code == 0, validation.output
     assert "Status: PASS" in validation.output
+
+
+def test_gridss_single_breakend_strict_mode_fails_without_output(tmp_path):
+    result, output = _run_correct(
+        tmp_path,
+        [
+            _bnd(
+                "chr1",
+                70000,
+                "gridss.single.1",
+                "GAATTC.",
+                qual=42.0,
+                extra_info="EVENT=event.single",
+            )
+        ],
+        "--strict-single-breakends",
+        contigs=("chr1",),
+    )
+
+    assert result.exit_code != 0
+    assert "Found 1 true single-breakend BND record(s)" in result.output
+    assert "gridss.single.1" in result.output
+    assert "cannot be represented losslessly in SVCF 1.1" in result.output
+    assert not output.exists()
 
 
 def test_gridss_explicit_missing_gt_is_not_rewritten_to_carrier_unknown(tmp_path):

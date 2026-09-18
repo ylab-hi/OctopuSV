@@ -8,7 +8,6 @@ import typer
 from octopusv.merger.name_mapper import NameMapper, default_label_from_path
 from octopusv.merger.sv_merge_selection import validate_selection_inputs
 from octopusv.merger.sv_merger import SVMerger
-from octopusv.merger.upset_plotter import UpSetPlotter
 from octopusv.utils.SV_classifier_by_chromosome import SVClassifiedByChromosome
 from octopusv.utils.SV_classifier_by_type import SVClassifierByType
 from octopusv.utils.atomic_write import atomic_output_path
@@ -977,6 +976,33 @@ def merge(
         typer.echo("Error: --min-support must be a positive integer.", err=True)
         raise typer.Exit(code=1)
 
+    # Merge strategies are mutually exclusive. --min-support and
+    # --max-support together form one support-range strategy.
+    selected_strategies = [
+        name
+        for name, selected in (
+            ("--expression", expression is not None),
+            ("--intersect", intersect),
+            ("--union", union),
+            ("--specific", bool(specific)),
+            ("--exact-support", exact_support is not None),
+            (
+                "--min-support/--max-support",
+                min_support is not None or max_support is not None,
+            ),
+        )
+        if selected
+    ]
+
+    if len(selected_strategies) > 1:
+        typer.echo(
+            "Error: Conflicting merge strategies: "
+            + ", ".join(selected_strategies)
+            + ". Choose exactly one strategy.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     # Validate ordinary SV matching parameters.
     if max_distance is not None and max_distance < 0:
         typer.echo("Error: --max-distance must be non-negative.", err=True)
@@ -1151,6 +1177,10 @@ def merge(
     # Generate UpSet plot if requested.
     if upsetr:
         try:
+            # Import plotting only when requested.  This keeps ordinary merge,
+            # --help, and non-plot CLI startup independent of matplotlib.
+            from octopusv.merger.upset_plotter import UpSetPlotter
+
             plot_file = str(upsetr_output) if upsetr_output else str(output_file).rsplit(".", 1)[0] + "_upset.png"
             plotter = UpSetPlotter(sv_merger.get_all_merged_events(), all_input_files)
             plotter.plot(plot_file)

@@ -400,5 +400,5 @@ def test_summary_gives_actionable_migration_note_for_source_or_format_errors(tmp
 
     assert "E_SRC_004" in _codes(validator)
     assert "Migration note:" in summary
-    assert "re-run the original merge with OctopuSV 0.5.0" in summary
+    assert "re-run the original merge with the current OctopuSV release" in summary
     assert "manually editing SOURCE_IDS" in summary

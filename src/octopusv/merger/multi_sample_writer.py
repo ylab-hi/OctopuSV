@@ -70,6 +70,9 @@ class MultiSampleWriter:
             "before bcftools/vcftools\n"
         )
 
+        for meta_line in passthrough.get("safe_meta_lines", []):
+            file_handle.write(meta_line + "\n")
+
         for contig_id, contig_length in contigs.items():
             file_handle.write(f"##contig=<ID={contig_id},length={contig_length}>\n")
 
@@ -177,14 +180,24 @@ class MultiSampleWriter:
         from octopusv.utils.svcf_utils import (
             extract_id_from_header_line,
             extract_original_header_definitions,
+            merge_safe_global_meta_lines,
         )
 
         canonical_info_ids = {
             "SVTYPE", "END", "SVLEN", "CHR2", "SUPPORT", "SVMETHOD",
             "RTID", "AF", "STRAND", "RNAMES", "SOURCES", "SOURCE_IDS",
         }
-        collected = {"alt_lines": [], "info_lines": [], "filter_lines": []}
-        seen = {key: set() for key in collected}
+        collected = {
+            "alt_lines": [],
+            "info_lines": [],
+            "filter_lines": [],
+            "safe_meta_lines": [],
+        }
+        seen = {
+            key: set()
+            for key in ("alt_lines", "info_lines", "filter_lines")
+        }
+        safe_meta_sources = []
 
         category_prefix = {
             "alt_lines": "ALT",
@@ -194,6 +207,9 @@ class MultiSampleWriter:
 
         for input_file in self.input_files:
             header = extract_original_header_definitions(input_file)
+            safe_meta_sources.append(
+                (str(input_file), header.get("other_lines", []))
+            )
             for category, prefix in category_prefix.items():
                 for line in header.get(category, []):
                     item_id = extract_id_from_header_line(line, prefix)
@@ -205,6 +221,9 @@ class MultiSampleWriter:
                     seen[category].add(identity)
                     collected[category].append(line)
 
+        collected["safe_meta_lines"] = merge_safe_global_meta_lines(
+            safe_meta_sources
+        )
         return collected
 
     def _sample_id_from_data(self, sample_data, format_keys: List[str]) -> Optional[str]:
