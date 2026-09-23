@@ -216,6 +216,7 @@ The figure below summarizes F1 scores for two commonly used merging strategies: 
 <p align="center">
   <img src="imgs/octopusv_benchmark_f1.png" width="65%" alt="OctopuSV benchmarking across SV merging tools and sequencing platforms">
 </p>
+
 ---
 
 ## Installation
