@@ -207,6 +207,17 @@ Support for additional callers can be added as new formats and edge cases are re
 
 ---
 
+## Published benchmarking
+
+OctopuSV was benchmarked against commonly used SV merging tools across real and simulated short-read and long-read datasets.
+
+The figure below summarizes F1 scores for two commonly used merging strategies: requiring support from at least two callers and taking the union of all calls. Values are shown for NA12878 and VISOR datasets across Illumina, PacBio, and Oxford Nanopore sequencing.
+
+<p align="center">
+  <img src="imgs/octopusv_benchmark_f1.png" width="65%" alt="OctopuSV benchmarking across SV merging tools and sequencing platforms">
+</p>
+---
+
 ## Installation
 
 ### Bioconda
