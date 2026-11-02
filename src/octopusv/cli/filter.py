@@ -82,16 +82,18 @@ def filter_svcf(
         None,
         "--min-size",
         help=(
-            "Minimum SVCF-defined event size. DEL/DUP/INV/INS use SVLEN or END-POS; "
-            "TRA/BND do not pass size filters."
+            "Minimum SVCF-defined event size. DEL/DUP/INV use SVLEN or END-POS; "
+            "INS uses SVLEN. Records without a defined size (TRA/BND, INS without "
+            "SVLEN) are kept and counted in the summary; use --exclude-svtype to drop them."
         ),
     ),
     max_size: Optional[int] = typer.Option(
         None,
         "--max-size",
         help=(
-            "Maximum SVCF-defined event size. DEL/DUP/INV/INS use SVLEN or END-POS; "
-            "TRA/BND do not pass size filters."
+            "Maximum SVCF-defined event size. DEL/DUP/INV use SVLEN or END-POS; "
+            "INS uses SVLEN. Records without a defined size (TRA/BND, INS without "
+            "SVLEN) are kept and counted in the summary; use --exclude-svtype to drop them."
         ),
     ),
     min_support: Optional[int] = typer.Option(

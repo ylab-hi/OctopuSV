@@ -206,14 +206,18 @@ def svcf_event_size(svtype: str, pos: str, info: dict) -> Optional[int]:
     """Return OctopuSV SVCF-defined SV size.
 
     Rules:
-        DEL/DUP/INV/INS:
+        DEL/DUP/INV:
             use numeric SVLEN if available;
             otherwise use abs(END - POS).
+
+        INS:
+            numeric SVLEN only.  Without it the length is unknown (END equals
+            POS for an insertion point, which says nothing about its length).
 
         TRA/BND:
             no linear size; return None.
 
-    In OctopuSV SVCF, INS can have meaningful POS/END span.
+    None means "size not defined"; size filters do not apply to such records.
     """
     svtype = str(svtype).upper()
 
@@ -223,6 +227,8 @@ def svcf_event_size(svtype: str, pos: str, info: dict) -> Optional[int]:
     svlen = safe_int(info.get("SVLEN"))
     if svlen is not None:
         return abs(svlen)
+    if svtype == "INS":
+        return None
 
     pos_i = safe_int(pos)
     end_i = safe_int(info.get("END"))
@@ -351,6 +357,7 @@ class SVCFFilter:
         self.output_records = 0
 
         self.excluded_by_reason = Counter()
+        self.size_filter_not_applied = Counter()
         self.source_detection_used = Counter()
         self._observed_sources: set[str] = set()
 
@@ -479,15 +486,16 @@ class SVCFFilter:
         if self.config.min_size is not None or self.config.max_size is not None:
             size = svcf_event_size(svtype, pos, info)
 
+            # A record without a defined length cannot be "too small" or "too
+            # large": the size check is skipped and counted (issue #193); the
+            # remaining filters below still apply to it.
             if size is None:
-                if svtype in NON_LINEAR_SVTYPES:
-                    return False, "size_not_available_for_TRA_or_BND"
-                return False, "size_missing_or_invalid"
-
-            if self.config.min_size is not None and size < self.config.min_size:
+                self.size_filter_not_applied[
+                    "TRA_or_BND_no_linear_size" if svtype in NON_LINEAR_SVTYPES
+                    else f"{svtype}_length_unknown"] += 1
+            elif self.config.min_size is not None and size < self.config.min_size:
                 return False, "size_below_min"
-
-            if self.config.max_size is not None and size > self.config.max_size:
+            elif self.config.max_size is not None and size > self.config.max_size:
                 return False, "size_above_max"
 
         # SUPPORT filters
@@ -629,6 +637,7 @@ class SVCFFilter:
             ),
             "filters": self.config.active_filters(),
             "excluded_by_reason": dict(self.excluded_by_reason),
+            "size_filter_not_applied": dict(self.size_filter_not_applied),
             "source_detection_used": dict(self.source_detection_used),
         }
 
@@ -654,6 +663,12 @@ class SVCFFilter:
             lines.append("")
             lines.append("Excluded by reason:")
             for reason, count in sorted(summary["excluded_by_reason"].items()):
+                lines.append(f"  {reason}: {count}")
+
+        if summary.get("size_filter_not_applied"):
+            lines.append("")
+            lines.append("Size check not applicable (undefined length; other filters still apply):")
+            for reason, count in sorted(summary["size_filter_not_applied"].items()):
                 lines.append(f"  {reason}: {count}")
 
         if summary["source_detection_used"]:

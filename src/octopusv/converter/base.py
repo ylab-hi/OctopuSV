@@ -61,9 +61,12 @@ def get_alt_chrom_pos(alt):
 
 def is_same_bnd_event(event1, event2) -> bool:
     """Define whether the BND represent the same TRA events, used by MatePairMergeToTRAConverter."""
+    # VCF 4.x: the two ends of ONE novel adjacency are written as
+    # t[p[ <-> ]p]t, t]p] <-> t]p] and [p[t <-> [p[t.
     qualified_pairings = [
-        {"t[p[", "t]p]"},
-        {"]p]t", "t[p["},  # Added pattern.
+        {"]p]t", "t[p["},
+        {"t]p]"},
+        {"[p[t"},
     ]
     event1_pattern = get_bnd_pattern(event1.alt)
     event2_pattern = get_bnd_pattern(event2.alt)
@@ -71,11 +74,13 @@ def is_same_bnd_event(event1, event2) -> bool:
 
 
 def is_independent_bnd_event(event1, event2):
-    """Determine if two mate_pair_bnd events are independent events."""
+    """Determine if two mate_pair_bnd events are independent events.
+
+    Together with is_same_bnd_event and is_mate_pair_reciprocal_translocation
+    these tables cover every pattern pair exactly once.
+    """
     qualified_pairings = [
         {"t]p]", "]p]t"},
-        {"t]p]"},
-        {"[p[t"},
         {"t[p[", "t]p]"},
         {"t[p[", "[p[t"},
         {"]p]t", "[p[t"},

@@ -71,7 +71,13 @@ def test_correct_accepts_ordinary_four_sample_vcf(tmp_path):
     assert len(record.split("\t")) == 9 + len(sample_names)
 
 
-def test_svaba_13_column_special_path_is_preserved(tmp_path):
+def test_normal_four_sample_svaba_is_read_as_four_samples(tmp_path):
+    """A SvABA VCF whose header declares four samples is a normal VCF.
+
+    The old special path kept only the last sample and silently dropped the
+    other three.  Only the verified malformed layout (10-column header,
+    13-column records) is read specially; see test_correct_caller_evidence.
+    """
     input_vcf = tmp_path / "svaba.vcf"
     output_svcf = tmp_path / "svaba.svcf"
     sample_names = ["S1", "S2", "S3", "S4"]
@@ -82,18 +88,15 @@ def test_svaba_13_column_special_path_is_preserved(tmp_path):
 
     _, _, _, non_bnd = parse_vcf(input_vcf)
     assert len(non_bnd) == 1
-    # Historical SvABA behavior is intentionally preserved: the relevant
-    # sample is the final (13th) column, not a generic four-sample expansion.
-    assert non_bnd[0].samples == [sample_values[-1]]
-    assert non_bnd[0].sample == sample_values[-1]
+    assert non_bnd[0].samples == sample_values
 
     result = _invoke_correct(input_vcf, output_svcf)
     assert result.exit_code == 0, result.output
     lines = output_svcf.read_text().splitlines()
     chrom_header = next(line for line in lines if line.startswith("#CHROM"))
     record = next(line for line in lines if line and not line.startswith("#"))
-    assert chrom_header.split("\t")[9:] == [sample_names[-1]]
-    assert len(record.split("\t")) == 10
+    assert chrom_header.split("\t")[9:] == sample_names
+    assert len(record.split("\t")) == 13
 
 
 def test_correct_rejects_record_width_mismatch(tmp_path, caplog):

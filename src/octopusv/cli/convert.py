@@ -1,9 +1,10 @@
 import logging
+import os
 from pathlib import Path
 
 import typer
 
-from octopusv.converter.base import get_alt_chrom_pos
+from octopusv.converter.base import get_alt_chrom_pos, is_same_bnd_event
 from octopusv.converter.bnd_keeping import BNDKeepingConverter
 from octopusv.converter.mpi2tra import MatePairIndependentToTRAConverter
 from octopusv.converter.mpm2tra import MatePairMergeToTRAConverter
@@ -29,6 +30,57 @@ def _echo(message: str = "") -> None:
     This keeps stdout clean for future machine-readable output or pipelines.
     """
     typer.echo(message, err=True)
+
+
+def _write_svaba_side_file(path, rows) -> None:
+    with open(path, "w") as handle:
+        handle.write("input_line\tCHROM\tPOS\tID\textra_col10\textra_col11\textra_col12\n")
+        for row in rows:
+            handle.write("\t".join(str(value) for value in row) + "\n")
+
+
+def _print_correct_summary(input_records, events, mate_transformer, unmatched_pairs,
+                           skipped_single, svaba_extra, side_file) -> None:
+    """One compact block that makes lost evidence or odd conversions visible."""
+    from octopusv.utils.caller_evidence import source_label
+
+    positive = zero = missing = 0
+    callers = set()
+    for event in events:
+        value = str(event.info.get("SUPPORT", "."))
+        if value.isdigit():
+            if int(value) > 0:
+                positive += 1
+            else:
+                zero += 1
+        else:
+            missing += 1
+        callers.add(getattr(event, "support_caller", None))
+    labels = ", ".join(sorted(source_label(caller) for caller in callers)) or "."
+    _echo("OctopuSV correct summary")
+    _echo(f"  Input records:                   {input_records}")
+    _echo(f"  Output records:                  {len(events)}")
+    _echo(f"  BND mate pairs, same junction:   {mate_transformer.same_adjacency_pairs} (one record each)")
+    _echo(f"  BND mate pairs, two junctions:   {mate_transformer.distinct_adjacency_pairs} (two records each)")
+    if unmatched_pairs:
+        _echo(f"  BND mate pairs, no rule:         {unmatched_pairs} (kept as single TRA records)")
+    if MATEID_ORIENTATION_CONFLICTS:
+        _echo(f"  MATEID orientation conflicts:    {len(MATEID_ORIENTATION_CONFLICTS)} "
+              "(MATEID not used; paired by coordinates and orientation instead)")
+    _echo(f"  Single breakends skipped:        {skipped_single}")
+    _echo(f"  SUPPORT positive / zero / missing: {positive} / {zero} / {missing}")
+    _echo(f"  SUPPORT source:                  {labels}")
+    if svaba_extra:
+        _echo(
+            f"  SvABA layout:                    {len(svaba_extra)} records had three extra "
+            f"columns before the sample; the sample was read from the last column and the "
+            f"extra values were saved to {side_file}"
+        )
+    if events and missing:
+        _echo(
+            f"Warning: {missing} of {len(events)} output records have unknown SUPPORT. "
+            "Filtering on SUPPORT will treat them as missing, not as zero."
+        )
 
 
 def _print_correct_success_message(output_file: Path) -> None:
@@ -318,7 +370,8 @@ def correct(
         for event in pair
         if id(event) not in special_consumed_ids
     ]
-    single_TRA_inputs = other_single_TRA + special_unconsumed_events
+    mate_unmatched_events = [event for pair in mate_bnd_pair_transformer.unmatched for event in pair]
+    single_TRA_inputs = other_single_TRA + special_unconsumed_events + mate_unmatched_events
     single_TRA_transformed_events = single_TRA_transformer.apply_transforms(single_TRA_inputs)
     non_bnd_transformed_events = non_bnd_transformer.apply_transforms(non_bnd_events)
 
@@ -344,16 +397,43 @@ def correct(
             f"##OctopuSV_skipped_single_breakends={skipped_single_breakends}"
         )
 
-    with atomic_output_path(output_file) as temp_output:
-        write_sv_vcf(
-            contig_lines,
-            all_transformed_events,
-            temp_output,
-            str(input_file),
-            extra_meta_lines=extra_meta_lines,
-        )
-        if output_sample_count == 1:
-            _validate_versioned_correct_output(temp_output)
+    svaba_extra = parse_stats.get("svaba_extra_columns") or []
+    side_file = Path(f"{output_file}.svaba_extra_columns.tsv")
+    side_temp = side_file.with_name(f".{side_file.name}.{os.getpid()}.tmp")
+    try:
+        with atomic_output_path(output_file) as temp_output:
+            write_sv_vcf(
+                contig_lines,
+                all_transformed_events,
+                temp_output,
+                str(input_file),
+                extra_meta_lines=extra_meta_lines,
+            )
+            if output_sample_count == 1:
+                _validate_versioned_correct_output(temp_output)
+            # Both files are written before either is committed.
+            if svaba_extra:
+                _write_svaba_side_file(side_temp, svaba_extra)
+        if svaba_extra:
+            try:
+                os.replace(side_temp, side_file)
+            except BaseException:
+                Path(output_file).unlink(missing_ok=True)
+                raise
+        elif side_file.exists():
+            side_file.unlink()  # stale side file from an earlier run
+    finally:
+        side_temp.unlink(missing_ok=True)
+
+    _print_correct_summary(
+        input_data_records,
+        all_transformed_events,
+        mate_bnd_pair_transformer,
+        len(mate_unmatched_events) // 2,
+        skipped_single_breakends,
+        svaba_extra,
+        side_file,
+    )
 
     if input_data_records == 0:
         _echo(
@@ -378,10 +458,61 @@ def correct(
     _print_correct_success_message(output_file)
 
 
+def _mateid_pairs(events, pos_tolerance):
+    """Pairs declared by the caller: each record's MATEID names the other.
+
+    MATEID alone is not trusted: the two records must also point at each other's
+    coordinates (within the tolerance).  IDs that are not unique are ignored.
+    """
+    by_id = {}
+    for event in events:
+        by_id.setdefault(event.id, []).append(event)
+    pairs, used = [], set()
+    for event in events:
+        if id(event) in used:
+            continue
+        mate_id = event.info.get("MATEID")
+        if not mate_id or len(by_id.get(event.id, ())) != 1 or len(by_id.get(mate_id, ())) != 1:
+            continue
+        mate = by_id[mate_id][0]
+        if mate is event or id(mate) in used or mate.info.get("MATEID") != event.id:
+            continue
+        chrom_alt, pos_alt = get_alt_chrom_pos(event.alt)
+        mate_chrom_alt, mate_pos_alt = get_alt_chrom_pos(mate.alt)
+        if chrom_alt is None or mate_chrom_alt is None:
+            continue
+        if not (chrom_alt == mate.chrom and mate_chrom_alt == event.chrom
+                and abs(pos_alt - mate.pos) <= pos_tolerance
+                and abs(mate_pos_alt - event.pos) <= pos_tolerance):
+            continue
+        if not is_same_bnd_event(event, mate):
+            # MATEID names a mate whose ALT orientation is not the other end
+            # of the same junction: do not trust it; the records go through
+            # the coordinate search like any other.
+            MATEID_ORIENTATION_CONFLICTS.append((event.id, mate.id))
+            used.update((id(event), id(mate)))
+            continue
+        pairs.append((event, mate))
+        used.update((id(event), id(mate)))
+    return pairs
+
+
+# (record ID, mate ID) pairs whose MATEID contradicted their ALT orientation in
+# the current correct run; reported in the summary.
+MATEID_ORIENTATION_CONFLICTS = []
+
+
 def find_mate_bnd_events(events, pos_tolerance=3):
-    """Find mate BND events."""
+    """Find mate BND events.
+
+    Caller-declared mates (reciprocal MATEID with consistent coordinates) are
+    paired first; the remaining records use the reciprocal-coordinate search.
+    """
     event_dict = {}
-    mate_bnd_pairs = []
+    MATEID_ORIENTATION_CONFLICTS.clear()
+    mate_bnd_pairs = _mateid_pairs(events, pos_tolerance)
+    declared = {id(event) for pair in mate_bnd_pairs for event in pair}
+    events = [event for event in events if id(event) not in declared]
 
     for event in events:
         try:

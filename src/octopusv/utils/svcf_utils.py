@@ -139,26 +139,18 @@ def extract_original_header_definitions(input_vcf_file):
         'sample_names': ["Sample"],
     }
 
-    is_svaba_output = False
-
     with open_text_auto(input_vcf_file) as f:
         for line in f:
             line = line.rstrip("\n")
-            if line.startswith("##source=") and "svaba" in line.lower():
-                is_svaba_output = True
 
-            # Parse sample names from the #CHROM line, then stop.  Preserve the
-            # historical SvABA 13-column compatibility path used by the parser:
-            # that layout intentionally selects only the final sample column.
-            # Keeping the header selection aligned with the parser prevents a
-            # malformed SVCF with four declared samples but one sample block.
+            # Parse sample names from the #CHROM line, then stop.
             if line.startswith('#CHROM'):
                 cols = line.split("\t")
                 if len(cols) >= 10:
-                    if is_svaba_output and len(cols) == 13:
-                        header_info['sample_names'] = [cols[12]]
-                    else:
-                        header_info['sample_names'] = cols[9:]
+                    # Sample names always follow the header.  The known SvABA
+                    # single-sample layout has a 10-column header, so this
+                    # also gives its one sample name.
+                    header_info['sample_names'] = cols[9:]
                 break
             if not line.startswith('##'):
                 # Reached a data line without a #CHROM header; stop anyway.

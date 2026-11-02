@@ -185,6 +185,13 @@ class QualityFilter:
         if self.min_svlen is None and self.max_svlen is None:
             return True
 
+        # A translocation or breakend has no linear length (DeBreak writes
+        # SVLEN=0 for TRA, issue #193): length filters never apply to it, the
+        # same rule as NON_LINEAR_SVTYPES in octopusv filter.  SVLEN is kept.
+        from octopusv.filtering.svcf_filter import NON_LINEAR_SVTYPES
+        if str(event.info.get("SVTYPE", "")).upper() in NON_LINEAR_SVTYPES:
+            return True
+
         svlen_value = self._get_svlen_value(event)
         if svlen_value is None:
             return True  # Skip filtering if SVLEN is missing
@@ -220,6 +227,12 @@ class QualityFilter:
 
     def _get_support_value(self, event) -> Optional[int]:
         """Extract supporting reads value from event."""
+        # Support resolved once at parse time is final: '.' means unknown and
+        # must not be replaced here by a different caller field.
+        if getattr(event, "support_resolved", False):
+            value = event.info.get("SUPPORT", ".")
+            return None if value in (None, ".") else self._safe_int(value)
+
         # Try INFO field first (standardized SUPPORT)
         if "SUPPORT" in event.info and event.info["SUPPORT"] != ".":
             return self._safe_int(event.info["SUPPORT"])

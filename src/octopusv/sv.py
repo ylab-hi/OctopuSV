@@ -96,7 +96,9 @@ class SVEvent:
     def __str__(self):
         """Convert the SVEvent to a string in SVCF format."""
         # Process 'PR' for 'SUPPORT' if not already set and if FORMAT/SAMPLE fields exist
-        if "SUPPORT" not in self.info and self.format != "GT":
+        # Support resolved at parse time (utils.caller_evidence) is final.
+        if (not getattr(self, "support_resolved", False)
+                and "SUPPORT" not in self.info and self.format != "GT"):
             format_parts = self.format.split(":")
             sample_parts = self.sample.split(":")
             format_sample_dict = dict(zip(format_parts, sample_parts, strict=False))

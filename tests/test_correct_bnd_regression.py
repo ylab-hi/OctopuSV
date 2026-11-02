@@ -256,12 +256,11 @@ def test_correct_native_ins_uses_locked_svcf_internal_endpoint(tmp_path):
     assert event["CHR2"] == "chr1"
 
 
-def test_characterize_pending_decision_overlapping_mate_pair_strategies(tmp_path):
-    """Characterization only: do not treat this current duplicate as desired science.
+def test_t_bracket_open_and_t_bracket_close_mates_are_two_junctions(tmp_path):
+    """{t[p[, t]p]} at mirrored coordinates are two different junctions.
 
-    The {t[p[, t]p]} mate pair currently matches both the independent and merge
-    TRA converters.  Keep this test visibly named as a pending-decision snapshot
-    until R1 is resolved with stronger semantic evidence.
+    Previously this pair matched two conversion rules and was emitted three
+    times; each input record is now emitted exactly once.
     """
     records = _run_correct(
         tmp_path,
@@ -271,12 +270,5 @@ def test_characterize_pending_decision_overlapping_mate_pair_strategies(tmp_path
         ],
     )
 
-    # Step 4 sorts output records by header contig order + POS. The pending
-    # R1 duplicate behavior itself is deliberately unchanged: the same three
-    # records are still emitted, only their outer record order is genomic.
-    assert [record["ID"] for record in records] == [
-        "overlap.a",
-        "overlap.a",
-        "overlap.b",
-    ]
+    assert [record["ID"] for record in records] == ["overlap.a", "overlap.b"]
     assert all(record["SVTYPE"] == "TRA" for record in records)

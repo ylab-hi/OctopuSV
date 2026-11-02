@@ -5,6 +5,7 @@ import sys
 from octopusv.converter.base import get_bnd_pattern
 from octopusv.sv import SVEvent
 from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.caller_evidence import apply_caller_support
 from octopusv.utils.svcf_schema import validate_source_label
 
 
@@ -344,6 +345,28 @@ def is_same_chr_bnd(event):
     return False  # For non-BND, we won't categorize them as same_chr_bnd or diff_chr_bnd events
 
 
+def svaba_extra_column_problem(fields):
+    """Why a 13-column SvABA record does not match the verified layout, or None.
+
+    Known SvABA output: the header declares one sample (10 columns) while each
+    record carries three extra integer columns between FORMAT and the sample.
+    The last column is the sample; it must have one value per FORMAT key.
+    """
+    for value in fields[9:12]:
+        try:
+            int(value)
+        except ValueError:
+            return f"extra column value {value!r} is not an integer"
+    keys = fields[8].split(":")
+    values = fields[12].split(":")
+    if len(keys) != len(values):
+        return (f"the last column has {len(values)} values for "
+                f"{len(keys)} FORMAT keys")
+    if any(value == "" for value in values):
+        return "the last column has an empty sample value"
+    return None
+
+
 def check_vcf_format(vcf_file_path):
     """Check the format of a VCF file in a streaming pass.
 
@@ -354,10 +377,13 @@ def check_vcf_format(vcf_file_path):
     supported while rejecting truncated or structurally inconsistent rows.
     """
     chrom_header_fields = None
+    is_svaba = False
 
     with open_text_auto(vcf_file_path) as f:
         for line_number, line in enumerate(f, start=1):
             if line.startswith("##"):
+                if line.lower().startswith("##source=svaba"):
+                    is_svaba = True
                 continue
 
             if line.startswith("#CHROM"):
@@ -403,7 +429,25 @@ def check_vcf_format(vcf_file_path):
                 )
                 sys.exit(1)
 
-            if len(fields) != len(chrom_header_fields):
+            if (is_svaba and len(chrom_header_fields) == 10 and len(fields) == 13):
+                problem = svaba_extra_column_problem(fields)
+                if problem is not None:
+                    logging.error(
+                        f"Invalid VCF format at line {line_number}: SvABA record with 3 columns "
+                        f"more than the header, but {problem}. OctopuSV only accepts the "
+                        "verified SvABA layout (three integer columns between FORMAT and the "
+                        "sample). Please check this SvABA output."
+                    )
+                    sys.exit(1)
+            elif len(fields) != len(chrom_header_fields):
+                if is_svaba:
+                    logging.error(
+                        f"Invalid VCF format at line {line_number}: #CHROM declares "
+                        f"{len(chrom_header_fields)} columns, but the SvABA record has "
+                        f"{len(fields)}. This is not the known SvABA single-sample layout "
+                        "(10 header columns, 13 record columns), so it cannot be read safely."
+                    )
+                    sys.exit(1)
                 logging.error(
                     f"Invalid VCF format at line {line_number}: #CHROM declares "
                     f"{len(chrom_header_fields)} columns, but the record has {len(fields)}.",
@@ -448,6 +492,8 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
     non_bnd_events = []
     contig_lines = []
     is_svaba_output = False
+    svaba_header_columns = None
+    svaba_extra_columns = []
     source_info = "."
     single_breakend_count = 0
     single_breakend_examples = []
@@ -476,9 +522,8 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
                 contig_lines.append(line.strip())
             elif line.startswith("#CHROM"):
                 header_fields = line.rstrip("\r\n").split("\t")
-                if is_svaba_output and len(header_fields) == 13:
-                    output_sample_count = 1
-                elif len(header_fields) >= 10:
+                svaba_header_columns = len(header_fields) if is_svaba_output else None
+                if len(header_fields) >= 10:
                     output_sample_count = len(header_fields) - 9
                 else:
                     # Site-only 8/9-column VCFs are represented by one
@@ -495,12 +540,18 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
                     synthesized_format, synthesized_sample = _synthesize_site_only_sample(None)
                     core_fields = fields[:8] + [synthesized_format]
                     sample_fields = [synthesized_sample]
-                elif is_svaba_output and len(fields) == 13:
-                    # Preserve the historical SvABA path exactly: column 8 is
-                    # FORMAT and column 12 is the one selected sample.
+                elif is_svaba_output and svaba_header_columns == 10 and len(fields) == 13:
+                    # Verified SvABA single-sample layout (checked in
+                    # check_vcf_format): FORMAT, three extra integer columns,
+                    # then the one sample.  The extra columns go to the audit
+                    # side file.  A normal multi-sample SvABA VCF (header and
+                    # records of equal width) is read like any other VCF.
                     core_fields = fields[:8] + [fields[8]]
                     sample_fields = [fields[12]]
                     has_explicit_sample_columns = True
+                    svaba_extra_columns.append(
+                        (line_number, fields[0], fields[1], fields[2], fields[9], fields[10], fields[11])
+                    )
                 elif len(fields) >= 10:
                     core_fields = fields[:9]
                     sample_fields = fields[9:]
@@ -518,6 +569,7 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
                     samples=sample_fields,
                 )
                 event.source = source_info
+                apply_caller_support(event, source_info)
 
                 # Preserve compatibility with mixed gVCF/reference-block and
                 # ordinary non-SV records, but never silently discard a record
@@ -610,6 +662,7 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
         parse_stats["explicit_gt_count"] = explicit_gt_count
         parse_stats["explicit_missing_gt_count"] = explicit_missing_gt_count
         parse_stats["data_records"] = data_record_count
+        parse_stats["svaba_extra_columns"] = svaba_extra_columns
 
     if single_breakend_count and not skip_single_breakends:
         examples = "; ".join(single_breakend_examples)
