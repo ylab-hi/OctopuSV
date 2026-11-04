@@ -870,7 +870,13 @@ def merge(
             0.5, "--tra-min-overlap", help="Minimum overlap ratio for TRA events."
         ),
         tra_strand_consistency: bool = typer.Option(
-            True, "--tra-strand-consistency", help="Whether to require strand consistency for TRA events."
+            True,
+            "--tra-strand-consistency/--no-tra-strand-consistency",
+            help=(
+                "Require breakend orientation consistency when merging TRA events "
+                "(default: on). Use --no-tra-strand-consistency to match TRA "
+                "events by breakpoint coordinates only."
+            ),
         ),
         bnd_delta: int = typer.Option(
             50, "--bnd-delta", help="Position uncertainty threshold for BND events (in base pairs)."
