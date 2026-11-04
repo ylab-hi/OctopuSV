@@ -1,3 +1,4 @@
+from .merge_split import MODE_CALLER, GroupSplitter, select_with_split
 from .sv_selector import select_representative_sv
 from .bnd_merge_logic import parse_bnd_alt, should_merge_bnd
 
@@ -13,7 +14,7 @@ class BNDMerger:
     and provides methods to merge nearly identical breakends.
     """
 
-    def __init__(self, delta=50):
+    def __init__(self, delta=50, mode=MODE_CALLER):
         """Initialize the BND merger with configurable parameters.
 
         Args:
@@ -26,6 +27,10 @@ class BNDMerger:
         self.bnd_events = {}  # Dictionary to store BND events by chromosome pairs
         self.delta = delta
         self._merged_events_cache = None
+        self.splitter = GroupSplitter(mode, direct_match=self._direct_match)
+
+    def _direct_match(self, event1, event2):
+        return should_merge_bnd(event1, event2, self.delta)
 
     def add_event(self, event):
         """Add a BND event to the merger, organizing events by chromosome pairs.
@@ -163,10 +168,12 @@ class BNDMerger:
         all_chromosome_pair_events = self.merge_events()
         merged_events = []
         for _chromosome_pair, event_groups in all_chromosome_pair_events.items():
-            for event_group in event_groups:
-                representative_sv = select_representative_sv(event_group)
-                # source_file merging is handled within select_representative_sv
-                merged_events.append(representative_sv)
+            # source_file merging is handled within select_representative_sv;
+            # groups mixing different structures from one source are split
+            # first (issue #192, merge_split.py).
+            merged_events.extend(
+                select_with_split(event_groups, self.splitter, select_representative_sv)
+            )
 
         self._merged_events_cache = merged_events
         return self._merged_events_cache

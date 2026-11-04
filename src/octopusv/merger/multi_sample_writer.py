@@ -1,6 +1,7 @@
 import datetime
 from typing import List, Optional
 
+from .merge_split import MERGE_SPLIT_HEADER, needs_split_header
 from .name_mapper import NameMapper
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.svcf_sort import sort_events_for_output
@@ -45,12 +46,12 @@ class MultiSampleWriter:
         ordered_events = sort_events_for_output(events, contigs.keys())
 
         with open(output_file, "w") as f:
-            self._write_header(f, contigs)
+            self._write_header(f, contigs, merge_split=needs_split_header(ordered_events))
 
             for event in ordered_events:
                 self._write_event(f, event)
 
-    def _write_header(self, file_handle, contigs):
+    def _write_header(self, file_handle, contigs, merge_split=False):
         """Write SVCF header for sample mode."""
         # Extract passthrough definitions before writing any bytes so a header
         # read failure cannot leave a plausible partial header when this writer
@@ -77,8 +78,12 @@ class MultiSampleWriter:
             file_handle.write(f"##contig=<ID={contig_id},length={contig_length}>\n")
 
         self._write_standard_definitions(file_handle)
+        if merge_split:
+            file_handle.write(MERGE_SPLIT_HEADER + "\n")
         for category in ("alt_lines", "info_lines", "filter_lines"):
             for line in passthrough[category]:
+                if category == "info_lines" and "<ID=MERGE_SPLIT," in line:
+                    continue
                 file_handle.write(line + "\n")
 
         sample_names = self.name_mapper.get_all_display_names()

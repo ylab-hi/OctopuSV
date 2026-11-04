@@ -1,4 +1,5 @@
 from .bnd_merger import BNDMerger
+from .merge_split import MODE_CALLER, GroupSplitter, select_with_split
 from .sv_merge_logic import get_max_distance_threshold, should_merge
 from .sv_merge_selection import MergeSelectionMixin
 from .sv_merge_writer import MergeWriterMixin
@@ -18,6 +19,7 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
             max_length_ratio=None,
             min_jaccard=0.0,
             bnd_delta=50,
+            mode=MODE_CALLER,
     ):
         """Initialize SVMerger with the given parameters and events.
 
@@ -31,18 +33,25 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
             max_length_ratio: Optional SV length-ratio override; None uses SV-type-specific thresholds
             min_jaccard: Minimum interval Jaccard overlap for DEL, DUP, and INV
             bnd_delta: Position uncertainty threshold for BND events (default: 50)
+            mode: "caller" or "sample"; decides when records from one source
+                may stay in one group (issue #192, see merge_split.py)
         """
         self.classified_events = classified_events
         self.all_input_files = [str(file) for file in all_input_files]
         self.merged_events: dict[str, dict[str, list]] = {}
         self.event_groups: dict[str, dict[str, list[list]]] = {}
-        self.tra_merger = TRAMerger(tra_delta, tra_min_overlap_ratio, tra_strand_consistency)
-        self.bnd_merger = BNDMerger(bnd_delta)
+        self.mode = mode
+        self.tra_merger = TRAMerger(tra_delta, tra_min_overlap_ratio, tra_strand_consistency, mode=mode)
+        self.bnd_merger = BNDMerger(bnd_delta, mode=mode)
         self.max_distance = max_distance
         self.max_length_ratio = max_length_ratio
         self.min_jaccard = min_jaccard
         self._all_merged_cache = None
         self._active_start = {}
+        self.splitter = GroupSplitter(mode, direct_match=self._direct_match)
+
+    def _direct_match(self, event1, event2):
+        return should_merge(event1, event2, self.max_distance, self.max_length_ratio, self.min_jaccard)
 
     def merge(self):
         """Merge all SV events based on their types and chromosomes."""
@@ -134,12 +143,14 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
         elif sv_type == "BND":
             return self.bnd_merger.get_merged_events()
         if sv_type in self.event_groups and chromosome in self.event_groups[sv_type]:
-            events = []
-            for sv_group in self.event_groups[sv_type][chromosome]:
-                representative_sv = select_representative_sv(sv_group)
-                if representative_sv.start_pos <= end and representative_sv.end_pos >= start:
-                    events.append(representative_sv)
-            return events
+            representatives = select_with_split(
+                self.event_groups[sv_type][chromosome], self.splitter, select_representative_sv
+            )
+            return [
+                representative_sv
+                for representative_sv in representatives
+                if representative_sv.start_pos <= end and representative_sv.end_pos >= start
+            ]
         return []
 
     def get_all_merged_events(self):
@@ -152,9 +163,13 @@ class SVMerger(MergeSelectionMixin, MergeWriterMixin):
         merged_events.extend(self.bnd_merger.get_merged_events())
         for sv_type in self.event_groups:
             for chromosome in self.event_groups[sv_type]:
-                for sv_group in self.event_groups[sv_type][chromosome]:
-                    representative_sv = select_representative_sv(sv_group)
-                    merged_events.append(representative_sv)
+                merged_events.extend(
+                    select_with_split(
+                        self.event_groups[sv_type][chromosome],
+                        self.splitter,
+                        select_representative_sv,
+                    )
+                )
 
         self._all_merged_cache = merged_events
         return self._all_merged_cache

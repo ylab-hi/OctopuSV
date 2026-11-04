@@ -1105,6 +1105,7 @@ def merge(
         max_length_ratio=max_length_ratio,
         min_jaccard=min_jaccard,
         bnd_delta=bnd_delta,
+        mode=mode,
     )
     sv_merger.merge()
 

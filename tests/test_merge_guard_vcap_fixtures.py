@@ -14,8 +14,9 @@ Two kinds of tests:
 * Named behaviour tests: the specific facts each fixture exists to protect,
   so a failure says what broke.
 
-Tests marked STATUS QUO describe behaviour that issue #192 is expected to
-change on purpose; update them in that change and state the reason.
+The two chr5 fixtures were re-generated deliberately in the #192 change: the
+56 bp and 112 bp deletions are now two records linked by MERGE_SPLIT.  Every
+other fixture output is byte-identical to the pre-#192 baseline.
 """
 
 from __future__ import annotations
@@ -202,24 +203,35 @@ def test_manta_single_inverted_junction_stays_two_bnd_records(merged):
 
 
 # ---------------------------------------------------------------------------
-# STATUS QUO: expected to change in #192
+# Issue #192: different structures from one source are kept apart
 # ---------------------------------------------------------------------------
 
-def test_chr5_56bp_and_112bp_deletions_status_quo_before_192(merged):
-    # STATUS QUO (#192): six callers each report both a 56 bp and a 112 bp
-    # deletion here, yet they form one group (seed Sniffles2 56 bp; the DEL
-    # length-ratio limit 2.0 is inclusive).  #192 should split them.
-    rec = merged("del_chr5_56_112_a")["cuteSV.DEL.15482"]
-    assert (rec["pos"], rec["info"]["SVLEN"]) == (177467978, "55")
-    assert rec["n_blocks"] == 13
-    for caller in ("cutesv", "debreak", "hitsv", "pbsv", "sniffles2", "svim"):
-        assert rec["sources"].count(caller) == 2
+def _split_pair(records, short_id, long_id):
+    short, long_ = records[short_id], records[long_id]
+    assert short["info"]["MERGE_SPLIT"] == long_["info"]["MERGE_SPLIT"]
+    return short, long_
 
 
-def test_chr5_second_56_112_site_status_quo_before_192(merged):
-    rec = merged("del_chr5_56_112_b")["pbsv.DEL.17403"]
-    assert (rec["pos"], rec["info"]["SVLEN"]) == (179001504, "112")
-    assert rec["n_blocks"] == 13
+def test_chr5_56bp_and_112bp_deletions_are_kept_apart(merged):
+    # Before #192 these 13 records were one group (seed Sniffles2 56 bp; the
+    # DEL length-ratio limit 2.0 is inclusive) and the 112 bp deletion had no
+    # record of its own.  Six callers each report both lengths.
+    records = merged("del_chr5_56_112_a")
+    short, long_ = _split_pair(records, "cuteSV.DEL.15482", "pbsv.DEL.17337")
+    assert short["info"]["SVLEN"] == "55" and long_["info"]["SVLEN"] == "112"
+    assert short["info"]["MERGE_SPLIT"] == "chr5:177467970:DEL:Sniffles2.DEL.6EFS4"
+    assert short["sources"] == ["cutesv", "debreak", "hitsv", "pbsv", "sniffles2", "svim"]
+    assert long_["sources"] == [
+        "cutesv", "debreak", "hitsv", "manta", "pbsv", "sniffles2", "svim",
+    ]
+
+
+def test_chr5_second_56_112_site_is_kept_apart(merged):
+    records = merged("del_chr5_56_112_b")
+    short, long_ = _split_pair(records, "pbsv.DEL.17404", "pbsv.DEL.17403")
+    assert short["info"]["SVLEN"] == "56" and long_["info"]["SVLEN"] == "112"
+    assert short["n_blocks"] + long_["n_blocks"] == 13
+    assert "manta" in long_["sources"] and "manta" not in short["sources"]
 
 
 def test_inv_00000658_status_quo_pending_review(merged):

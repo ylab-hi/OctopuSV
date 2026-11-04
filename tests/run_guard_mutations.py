@@ -22,6 +22,7 @@ import sys
 import textwrap
 
 GUARD_TESTS = [
+    "tests/test_issue_192_merge_split.py",
     "tests/test_merge_guard_vcap_fixtures.py",
     "tests/test_merge_guard_sample_mode.py",
     "tests/test_issue_191_regression.py",
@@ -70,9 +71,7 @@ MUTATIONS = {
         import octopusv.merger.sv_merge_logic as m
         m._get_length_ratio_threshold = lambda sv_type: 1.5
         """,
-        [F + "test_chr5_56bp_and_112bp_deletions_status_quo_before_192",
-         F + "test_chr5_second_56_112_site_status_quo_before_192",
-         S + "test_same_sample_two_different_deletions_status_quo_before_192"],
+        [F + "test_fixture_output_is_locked[del_chr5_56_112_a]"],
     ),
     "inv_distance_5bp": (
         """
@@ -96,8 +95,8 @@ MUTATIONS = {
         """
         from octopusv.merger.bnd_merger import BNDMerger
         original = BNDMerger.__init__
-        def wide(self, delta=50):
-            original(self, 2000)
+        def wide(self, delta=50, **kwargs):
+            original(self, 2000, **kwargs)
         BNDMerger.__init__ = wide
         """,
         [F + "test_manta_single_inverted_junction_stays_two_bnd_records"],
@@ -114,7 +113,7 @@ MUTATIONS = {
         a.select_representative_sv = b.select_representative_sv = c.select_representative_sv = f
         """,
         [F + "test_sv3_translocation_merges_eight_callers_with_same_representative",
-         F + "test_chr5_56bp_and_112bp_deletions_status_quo_before_192"],
+         F + "test_chr5_56bp_and_112bp_deletions_are_kept_apart"],
     ),
     "evidence_order_reversed": (
         """
@@ -128,6 +127,49 @@ MUTATIONS = {
         [F + "test_both_manta_ends_of_one_translocation_merge",
          F + "test_two_delly_halves_of_one_inversion_merge",
          T191 + "test_no_flag_disables_orientation_consistency"],
+    ),
+    "split_disabled": (
+        """
+        import octopusv.merger.merge_split as m
+        m.GroupSplitter.split = lambda self, group: [group]
+        """,
+        [F + "test_chr5_56bp_and_112bp_deletions_are_kept_apart",
+         F + "test_chr5_second_56_112_site_is_kept_apart",
+         S + "test_same_sample_two_different_deletions_are_kept_apart"],
+    ),
+    "split_length_rule_loosened_to_2_1x": (
+        """
+        import octopusv.merger.merge_split as m
+        m.lengths_equivalent = lambda a, b: max(a, b) <= 2.1 * min(a, b)
+        """,
+        [F + "test_chr5_56bp_and_112bp_deletions_are_kept_apart"],
+    ),
+    "split_ignores_direct_match_in_sample_mode": (
+        """
+        import octopusv.merger.merge_split as m
+        original = m.GroupSplitter.__init__
+        def init(self, mode, direct_match=None):
+            original(self, mode, None)
+        m.GroupSplitter.__init__ = init
+        m.lengths_equivalent = lambda a, b: True
+        """,
+        [S + "test_same_sample_two_different_deletions_are_kept_apart"],
+    ),
+    "split_also_applied_to_tra_in_caller_mode": (
+        """
+        import octopusv.merger.merge_split as m
+        m.LENGTH_RULE_TYPES = {"DEL", "DUP", "INS", "TRA", "INV"}
+        m.lengths_equivalent = lambda a, b: a == b
+        """,
+        [F + "test_both_manta_ends_of_one_translocation_merge"],
+    ),
+    "split_forces_others_into_nearest_part": (
+        """
+        import octopusv.merger.merge_split as m
+        m.GroupSplitter._equivalent_parts = lambda self, group, parts, i: list(range(len(parts)))
+        """,
+        ["tests/test_issue_192_merge_split.py::"
+         "test_record_between_two_split_structures_is_not_forced_into_either"],
     ),
     "group_compares_with_newest_member": (
         """
@@ -146,8 +188,7 @@ MUTATIONS = {
             groups.append([new_event])
         SVMerger._add_and_merge_sorted_event = add
         """,
-        [F + "test_chr5_56bp_and_112bp_deletions_status_quo_before_192",
-         S + "test_same_sample_two_different_deletions_status_quo_before_192"],
+        [F + "test_fixture_output_is_locked[del_chr5_56_112_a]"],
     ),
 }
 

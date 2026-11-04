@@ -1,6 +1,6 @@
-"""Guard tests for sample-mode merge grouping (written before issue #192).
+"""Guard tests for sample-mode merge grouping (issue #192).
 
-These lock the CURRENT sample-mode behavior for two same-sample situations:
+Two same-sample situations:
 
 1. One sample file holds both ends of one translocation junction as two
    records.  They describe one physical structure and must stay in one merged
@@ -8,10 +8,8 @@ These lock the CURRENT sample-mode behavior for two same-sample situations:
 
 2. One sample file holds two different deletions that each match another
    sample's seed but cannot be merged with each other directly (length ratio
-   3.0).  Today they are merged into one record and one of them disappears
-   from SOURCE_IDS.  Issue #192 is expected to split them; the test for that
-   case documents the status quo and must be updated deliberately in the #192
-   change, with the reason stated.
+   3.0).  Before #192 they were merged into one record and one of them
+   disappeared from SOURCE_IDS; since #192 they are kept apart and linked.
 """
 
 from __future__ import annotations
@@ -111,9 +109,15 @@ def test_same_sample_two_ends_of_one_translocation_stay_one_record(tmp_path):
     assert [_gt(column) for column in rows[0][9:]] == ["0/1", "0/1"]
 
 
-def test_same_sample_two_different_deletions_status_quo_before_192(tmp_path):
+def test_same_sample_two_different_deletions_are_kept_apart(tmp_path):
     # B's 80 bp DEL is the seed (leftmost start).  A's 50 bp and 150 bp DELs
     # each match the seed (ratios 1.6 and 1.875) but not each other (3.0).
+    # Before #192 all three were one record, A.del150 vanished from
+    # SOURCE_IDS and A's genotype mixed two structures (1/.).
+    # Now A's two deletions are kept apart.  B's 80 bp deletion is length-
+    # equivalent to neither of them (more than max(10 bp, 10%) away), so it is
+    # not attached to either and stays its own record.  All three records
+    # share one MERGE_SPLIT value.
     sample_a = _sample_svcf(
         tmp_path,
         "A",
@@ -123,13 +127,22 @@ def test_same_sample_two_different_deletions_status_quo_before_192(tmp_path):
 
     rows = _merge_samples(tmp_path, [sample_a, sample_b], "A,B")
 
-    # STATUS QUO (issue #192): both A deletions fall into B's group; only one
-    # A record ID survives and A's genotype is a consensus of two different
-    # structures.  #192 must change this test on purpose: expect two records,
-    # A.del50 and A.del150 kept apart and linked.
-    assert len(rows) == 1
-    info = _info(rows[0])
-    assert info["SOURCES"] == "A,B"
-    assert info["SOURCE_IDS"] == "A.del50,B.del80"
-    assert "A.del150" not in rows[0][7]
-    assert [_gt(column) for column in rows[0][9:]] == ["1/.", "0/1"]
+    by_id = {row[2]: row for row in rows}
+    assert set(by_id) == {"B.del80", "A.del50", "A.del150"}
+
+    expected = {
+        "B.del80": ("B", "B.del80", ["0/0", "0/1"]),
+        "A.del50": ("A", "A.del50", ["0/1", "0/0"]),
+        "A.del150": ("A", "A.del150", ["1/1", "0/0"]),
+    }
+    for record_id, (sources, source_ids, gts) in expected.items():
+        row = by_id[record_id]
+        assert _info(row)["SOURCES"] == sources
+        assert _info(row)["SOURCE_IDS"] == source_ids
+        assert [_gt(column) for column in row[9:]] == gts
+        assert _info(row)["MERGE_SPLIT"] == "chr1:9990:DEL:B.del80"
+
+    # The sample that did not report a structure gets the no-event
+    # placeholder (UC=0, UV=0), not an evidence-backed 0/0.
+    assert by_id["A.del150"][10].split(":")[2:4] == ["0", "0"]
+    assert by_id["B.del80"][9].split(":")[2:4] == ["0", "0"]

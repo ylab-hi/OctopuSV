@@ -1,3 +1,4 @@
+from .merge_split import MODE_CALLER, GroupSplitter, select_with_split
 from .sv_selector import select_representative_sv
 from .TRA_merge_logic import _breakend_orientation_signature, should_merge_tra
 
@@ -12,7 +13,7 @@ class TRAMerger:
     strand consistency and overlap ratios.
     """
 
-    def __init__(self, delta=50, min_overlap_ratio=0.5, strand_consistency=True):
+    def __init__(self, delta=50, min_overlap_ratio=0.5, strand_consistency=True, mode=MODE_CALLER):
         """Initialize the TRA merger with configurable parameters.
 
         Args:
@@ -28,6 +29,12 @@ class TRAMerger:
         self.min_overlap_ratio = min_overlap_ratio
         self.strand_consistency = strand_consistency
         self._merged_events_cache = None
+        self.splitter = GroupSplitter(mode, direct_match=self._direct_match)
+
+    def _direct_match(self, event1, event2):
+        return should_merge_tra(
+            event1, event2, self.delta, self.min_overlap_ratio, self.strand_consistency
+        )
 
     def add_event(self, event):
         """Add a TRA event to the merger, organizing events by chromosome pairs.
@@ -202,10 +209,12 @@ class TRAMerger:
         all_chromosome_pair_events = self.merge_events()
         merged_events = []
         for _chromosome_pair, event_groups in all_chromosome_pair_events.items():
-            for event_group in event_groups:
-                representative_sv = select_representative_sv(event_group)
-                # source_file merging is handled within select_representative_sv
-                merged_events.append(representative_sv)
+            # source_file merging is handled within select_representative_sv;
+            # groups mixing different structures from one source are split
+            # first (issue #192, merge_split.py).
+            merged_events.extend(
+                select_with_split(event_groups, self.splitter, select_representative_sv)
+            )
 
         self._merged_events_cache = merged_events
         return self._merged_events_cache

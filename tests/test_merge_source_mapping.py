@@ -357,27 +357,44 @@ def test_issue_190_no_contributing_evidence_is_silently_dropped(
         ),
     ]
 
-    merger, merged_event = _merge(
-        events,
-        input_files,
+    # Issue #192: svim reports two insertions here, 75 bp and 39 bp.  They
+    # differ by more than max(10 bp, 10%), so they are different structures
+    # and are written as two records linked by INFO/MERGE_SPLIT.  The #190
+    # guarantee is unchanged: every contributing evidence record is written.
+    merger = SVMerger(
+        classified_events={"INS": {"chr1": events}},
+        all_input_files=input_files,
     )
-
-    _info, evidence = _write_one_record(
-        monkeypatch,
-        tmp_path,
-        merger,
-        merged_event,
-    )
-
-    observed_ids = {
-        block["ID"]
-        for block in evidence
+    merger.merge()
+    merged = merger.get_all_merged_events()
+    assert len(merged) == 2
+    assert {event.info["MERGE_SPLIT"] for event in merged} == {
+        "chr1:1202145:INS:svim.INS.57"
     }
 
-    assert observed_ids == {
+    observed_ids = []
+    per_record = []
+    for number, merged_event in enumerate(merged):
+        record_dir = tmp_path / f"record{number}"
+        record_dir.mkdir()
+        _info, evidence = _write_one_record(
+            monkeypatch,
+            record_dir,
+            merger,
+            merged_event,
+        )
+        observed_ids.extend(block["ID"] for block in evidence)
+        per_record.append(frozenset(block["ID"] for block in evidence))
+
+    assert set(per_record) == {
+        frozenset({"cuteSV.INS.22", "debreak.DB56", "Sniffles2.INS.33S0", "svim.INS.57"}),
+        frozenset({"svim.INS.58"}),
+    }
+
+    assert sorted(observed_ids) == sorted([
         "cuteSV.INS.22",
         "debreak.DB56",
         "Sniffles2.INS.33S0",
         "svim.INS.57",
         "svim.INS.58",
-    }
+    ])
