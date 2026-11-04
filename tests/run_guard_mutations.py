@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Mutation check for merge guard tests.
+"""Mutation check for the merge guard tests (run before and during #192).
 
 Each mutation injects one deliberate bug into OctopuSV in a fresh process and
-runs the guard tests that are supposed to catch it.  A mutation that leaves
-its tests passing means those tests are not real protection.
+runs all guard tests.  Two requirements:
+
+1. Every mutation must make each test listed for it fail (by assertion, not by
+   a crash in the patch).
+2. Every guard test must be failed by at least one mutation; a test no
+   mutation can break is not real protection.
+
+A control run first checks that all guard tests pass on unmutated code.
 
 Run from the repository root:
     python tests/run_guard_mutations.py
@@ -15,9 +21,19 @@ import subprocess
 import sys
 import textwrap
 
-# name -> (patch code executed before pytest, [test node ids that must fail])
+GUARD_TESTS = [
+    "tests/test_merge_guard_vcap_fixtures.py",
+    "tests/test_merge_guard_sample_mode.py",
+    "tests/test_issue_191_regression.py",
+]
+
+F = "tests/test_merge_guard_vcap_fixtures.py::"
+S = "tests/test_merge_guard_sample_mode.py::"
+T191 = "tests/test_issue_191_regression.py::"
+
+# name -> (patch executed before pytest, tests that must fail)
 MUTATIONS = {
-    "tra_no_reciprocal_frame": (
+    "tra_reciprocal_frame_removed": (
         """
         import octopusv.merger.TRA_merge_logic as m
         def same_frame_only(sig1, sig2, tol):
@@ -27,23 +43,111 @@ MUTATIONS = {
                     and m._same_endpoint(a_remote, b_remote, tol))
         m._same_breakend_adjacency = same_frame_only
         """,
-        ["tests/test_merge_guard_sample_mode.py::test_same_sample_two_ends_of_one_translocation_stay_one_record"],
+        [F + "test_both_manta_ends_of_one_translocation_merge",
+         F + "test_sv3_translocation_merges_eight_callers_with_same_representative",
+         S + "test_same_sample_two_ends_of_one_translocation_stay_one_record"],
     ),
     "tra_orientation_ignored": (
         """
         import octopusv.merger.TRA_merge_logic as m
-        m._breakend_orientation_signature = lambda event: None
         import octopusv.merger.tra_merger as t
+        m._breakend_orientation_signature = lambda event: None
         t._breakend_orientation_signature = lambda event: None
         """,
-        ["tests/test_issue_191_regression.py::test_default_keeps_orientation_consistency"],
+        [F + "test_both_manta_ends_of_one_translocation_merge",
+         T191 + "test_default_keeps_orientation_consistency"],
     ),
-    "del_length_ratio_tightened": (
+    "tra_strand_default_flipped_off": (
+        """
+        import inspect
+        from octopusv.cli.merge import merge
+        inspect.signature(merge).parameters["tra_strand_consistency"].default.default = False
+        """,
+        [T191 + "test_explicit_flag_is_identical_to_default"],
+    ),
+    "length_ratio_limit_1_5": (
         """
         import octopusv.merger.sv_merge_logic as m
         m._get_length_ratio_threshold = lambda sv_type: 1.5
         """,
-        ["tests/test_merge_guard_sample_mode.py::test_same_sample_two_different_deletions_status_quo_before_192"],
+        [F + "test_chr5_56bp_and_112bp_deletions_status_quo_before_192",
+         F + "test_chr5_second_56_112_site_status_quo_before_192",
+         S + "test_same_sample_two_different_deletions_status_quo_before_192"],
+    ),
+    "inv_distance_5bp": (
+        """
+        import octopusv.merger.sv_merge_logic as m
+        original = m._get_distance_threshold
+        m._get_distance_threshold = lambda t, l: 5 if t == "INV" else original(t, l)
+        """,
+        [F + "test_two_delly_halves_of_one_inversion_merge",
+         F + "test_inv_00000658_status_quo_pending_review"],
+    ),
+    "dup_length_ratio_exact": (
+        """
+        import octopusv.merger.sv_merge_logic as m
+        original = m._get_length_ratio_threshold
+        m._get_length_ratio_threshold = lambda t: 1.00001 if t == "DUP" else original(t)
+        """,
+        [F + "test_pbsv_split_dup_and_bnd_dup_merge",
+         F + "test_large_dup_with_two_records_from_one_caller_merges"],
+    ),
+    "bnd_delta_widened": (
+        """
+        from octopusv.merger.bnd_merger import BNDMerger
+        original = BNDMerger.__init__
+        def wide(self, delta=50):
+            original(self, 2000)
+        BNDMerger.__init__ = wide
+        """,
+        [F + "test_manta_single_inverted_junction_stays_two_bnd_records"],
+    ),
+    "representative_by_caller_rank_only": (
+        """
+        import functools
+        import octopusv.merger.sv_selector as s
+        import octopusv.merger.sv_merger as a
+        import octopusv.merger.tra_merger as b
+        import octopusv.merger.bnd_merger as c
+        f = functools.partial(s.select_representative_sv,
+                              weights={"support": 0, "quality": 0, "caller": 1})
+        a.select_representative_sv = b.select_representative_sv = c.select_representative_sv = f
+        """,
+        [F + "test_sv3_translocation_merges_eight_callers_with_same_representative",
+         F + "test_chr5_56bp_and_112bp_deletions_status_quo_before_192"],
+    ),
+    "evidence_order_reversed": (
+        """
+        from octopusv.merger.sv_merge_writer import MergeWriterMixin as W
+        original = W._prepare_caller_records_exact
+        def reversed_records(self, event, name_mapper=None):
+            records = original(self, event, name_mapper=name_mapper)
+            return None if records is None else list(reversed(records))
+        W._prepare_caller_records_exact = reversed_records
+        """,
+        [F + "test_both_manta_ends_of_one_translocation_merge",
+         F + "test_two_delly_halves_of_one_inversion_merge",
+         T191 + "test_no_flag_disables_orientation_consistency"],
+    ),
+    "group_compares_with_newest_member": (
+        """
+        from octopusv.merger.sv_merger import SVMerger
+        from octopusv.merger.sv_merge_logic import should_merge
+        def add(self, sv_type, chromosome, new_event):
+            self._all_merged_cache = None
+            events = self.merged_events[sv_type][chromosome]
+            groups = self.event_groups[sv_type][chromosome]
+            for idx in range(len(events)):
+                if should_merge(groups[idx][-1], new_event, self.max_distance,
+                                self.max_length_ratio, self.min_jaccard):
+                    groups[idx].append(new_event)
+                    return
+            events.append(new_event)
+            groups.append([new_event])
+        SVMerger._add_and_merge_sorted_event = add
+        """,
+        [F + "test_chr5_56bp_and_112bp_deletions_status_quo_before_192",
+         S + "test_same_sample_two_different_deletions_status_quo_before_192"],
     ),
 }
 
@@ -51,38 +155,70 @@ RUNNER = """
 import sys
 {patch}
 import pytest
-sys.exit(pytest.main(["-q", "--no-header", "-p", "no:cacheprovider", *sys.argv[1:]]))
+sys.exit(pytest.main(["-q", "--no-header", "-p", "no:cacheprovider", "-rf", *sys.argv[1:]]))
 """
 
 
-def main() -> int:
-    bad = 0
-    # Control: every guard test must pass without a mutation, otherwise a
-    # "caught" result below would mean nothing.
-    all_tests = sorted({test for _, tests in MUTATIONS.values() for test in tests})
-    control = subprocess.run(
-        [sys.executable, "-c", RUNNER.format(patch=""), *all_tests],
+def _run(patch: str):
+    proc = subprocess.run(
+        [sys.executable, "-c", RUNNER.format(patch=textwrap.dedent(patch)), *GUARD_TESTS],
         capture_output=True, text=True,
     )
-    if control.returncode != 0:
-        print(control.stdout[-2000:])
+    failed = {
+        line.split(" ", 2)[1]
+        for line in proc.stdout.splitlines()
+        if line.startswith("FAILED ")
+    }
+    crashed = proc.returncode not in (0, 1)
+    return proc, failed, crashed
+
+
+def _collect() -> list[str]:
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+         *GUARD_TESTS],
+        capture_output=True, text=True,
+    )
+    return [line for line in proc.stdout.splitlines() if "::" in line]
+
+
+def main() -> int:
+    problems = 0
+    proc, failed, crashed = _run("")
+    if crashed or failed:
+        print(proc.stdout[-3000:])
         print("CONTROL FAILED: guard tests do not pass on unmutated code")
         return 1
-    print(f"control: {len(all_tests)} guard test(s) pass on unmutated code")
-    for name, (patch, tests) in MUTATIONS.items():
-        code = RUNNER.format(patch=textwrap.dedent(patch))
-        for test in tests:
-            proc = subprocess.run(
-                [sys.executable, "-c", code, test],
-                capture_output=True, text=True,
-            )
-            # Only a failing assertion counts; a crash in the patch does not.
-            caught = proc.returncode == 1 and " failed" in proc.stdout
-            print(f"{'CAUGHT ' if caught else 'MISSED '} {name:32} {test}")
-            if not caught:
-                bad += 1
-    print("ALL MUTATIONS CAUGHT" if bad == 0 else f"{bad} MUTATION(S) MISSED")
-    return 0 if bad == 0 else 1
+    all_tests = _collect()
+    print(f"control: {len(all_tests)} guard tests pass on unmutated code\n")
+
+    caught_by = {test: [] for test in all_tests}
+    for name, (patch, expected) in MUTATIONS.items():
+        proc, failed, crashed = _run(patch)
+        if crashed:
+            print(f"ERROR   {name}: patch crashed\n{proc.stdout[-1500:]}{proc.stderr[-1500:]}")
+            problems += 1
+            continue
+        missing = [test for test in expected if test not in failed]
+        status = "CAUGHT " if not missing else "MISSED "
+        print(f"{status} {name:36} {len(failed)} test(s) failed")
+        for test in missing:
+            print(f"          expected to fail but passed: {test}")
+        problems += bool(missing)
+        for test in failed:
+            caught_by.setdefault(test, []).append(name)
+
+    uncovered = [test for test, names in caught_by.items() if not names]
+    print()
+    if uncovered:
+        print("Guard tests that no mutation breaks:")
+        for test in uncovered:
+            print(f"  {test}")
+        problems += len(uncovered)
+    else:
+        print(f"Every guard test is broken by at least one mutation ({len(all_tests)} tests).")
+    print("ALL MUTATIONS CAUGHT" if problems == 0 else f"{problems} PROBLEM(S)")
+    return 0 if problems == 0 else 1
 
 
 if __name__ == "__main__":

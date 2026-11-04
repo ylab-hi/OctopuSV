@@ -1,0 +1,17 @@
+octopusv: /gpfs/projects/b1171/qgn1237/3_mambaforge_envs/octopusv/bin/octopusv
+baseline: /gpfs/projects/b1171/qgn1237/6_SV_VCF_merger/20260326_github_issue/issue_192/results/baseline_run1.svcf
+manifest: /gpfs/projects/b1171/qgn1237/16_RamiSV_derived_genome_reconstruction_algorithm_develop/16_VCaP_longread_SV_union_rebuild/results/4_union_merge/merge_inputs.tsv
+
+tra_manta_two_ends: OK pad=2000 attempt=1 input_records=39 fixture_records=23
+bnd_manta_single_inverted_junction: OK pad=2000 attempt=1 input_records=21 fixture_records=6
+inv_delly_two_halves: OK pad=2000 attempt=1 input_records=13 fixture_records=5
+dup_pbsv_split_dup_and_bnd: OK pad=2000 attempt=1 input_records=9 fixture_records=1
+tra_sv3_zdhhc7_8_callers: OK pad=2000 attempt=1 input_records=28 fixture_records=7
+ramisv_usp10_zdhhc7_sv1_sv2_sv3: OK pad=2000 attempt=1 input_records=46 fixture_records=13
+ramisv_kpna1_inv_tra: OK pad=2000 attempt=1 input_records=28 fixture_records=7
+ramisv_chd1: OK pad=2000 attempt=1 input_records=17 fixture_records=5
+del_chr5_56_112_a: OK pad=2000 attempt=1 input_records=13 fixture_records=1
+del_chr5_56_112_b: OK pad=2000 attempt=1 input_records=22 fixture_records=3
+inv_00000658_to_check: OK pad=2000 attempt=1 input_records=13 fixture_records=4
+large_same_source_1: OK pad=2000 attempt=1 input_records=8 fixture_records=1
+large_same_source_2: OK pad=2000 attempt=1 input_records=9 fixture_records=1

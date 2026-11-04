@@ -1,0 +1,84 @@
+##fileformat=VCFv4.2
+##fileDate=2026-11-01|06:57:38PM|
+##source=OctopuSV
+##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
+##SVCFVersion=1.1
+##OctopuSV_mode=caller
+##contig=<ID=chrM,length=16569>
+##contig=<ID=chr1,length=248956422>
+##contig=<ID=chr2,length=242193529>
+##contig=<ID=chr3,length=198295559>
+##contig=<ID=chr4,length=190214555>
+##contig=<ID=chr5,length=181538259>
+##contig=<ID=chr6,length=170805979>
+##contig=<ID=chr7,length=159345973>
+##contig=<ID=chr8,length=145138636>
+##contig=<ID=chr9,length=138394717>
+##contig=<ID=chr10,length=133797422>
+##contig=<ID=chr11,length=135086622>
+##contig=<ID=chr12,length=133275309>
+##contig=<ID=chr13,length=114364328>
+##contig=<ID=chr14,length=107043718>
+##contig=<ID=chr15,length=101991189>
+##contig=<ID=chr16,length=90338345>
+##contig=<ID=chr17,length=83257441>
+##contig=<ID=chr18,length=80373285>
+##contig=<ID=chr19,length=58617616>
+##contig=<ID=chr20,length=64444167>
+##contig=<ID=chr21,length=46709983>
+##contig=<ID=chr22,length=50818468>
+##contig=<ID=chrX,length=156040895>
+##contig=<ID=chrY,length=57227415>
+##ALT=<ID=DEL,Description="Deletion">
+##ALT=<ID=INS,Description="Insertion">
+##ALT=<ID=SNP,Description="SNP">
+##ALT=<ID=INDEL,Description="Small Insertion or Deletion">
+##ALT=<ID=TRA,Description="Translocation">
+##ALT=<ID=INV,Description="Inversion">
+##ALT=<ID=BND,Description="Breakend">
+##ALT=<ID=DUP,Description="Duplication">
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
+##INFO=<ID=BND_TYPE,Number=1,Type=String,Description="Type of BND variant">
+##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Difference in length between REF and ALT alleles">
+##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
+##INFO=<ID=IMPRECISE,Number=0,Type=Flag,Description="Imprecise breakpoints or SV length">
+##INFO=<ID=VNTR,Number=0,Type=Flag,Description="SV is VNTR">
+##INFO=<ID=VNTR_DepthLow,Number=0,Type=Flag,Description="VNTR is Low Depth">
+##INFO=<ID=CONTIG,Number=1,Type=String,Description="the contig string">
+##INFO=<ID=CIGAR,Number=1,Type=String,Description="the CIGAR of contig string">
+##INFO=<ID=SIGNAL_REGION,Number=1,Type=String,Description="the signal region string">
+##INFO=<ID=CONTIG_POSITION,Number=1,Type=String,Description="the contig alignment position in the reference">
+##INFO=<ID=SOMATIC,Number=1,Type=String,Description="Somatic flag, one of TUMOR_UNIQ, NORMAL_UNIQ, TUMOR_NORMAL_SHARE or UNKNOWN">
+##INFO=<ID=CHR2,Number=1,Type=String,Description="Chromosome for end">
+##INFO=<ID=SUPPORT,Number=1,Type=Integer,Description="Number of pieces of evidence supporting the variant">
+##INFO=<ID=SVMETHOD,Number=1,Type=String,Description="The software used to identify the SV">
+##INFO=<ID=RTID,Number=1,Type=String,Description="Associated ID for reciprocal translocations if available">
+##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
+##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">
+##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">
+##INFO=<ID=SOURCES,Number=.,Type=String,Description="Source caller/sample labels supporting this merged SV record">
+##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers or samples">
+##FILTER=<ID=LOW_DEPTH,Description="Variant with genotype [0/0]">
+##FILTER=<ID=lt50bp,Description="Supported variant but smaller than 50bp">
+##FILTER=<ID=DR_not_support,Description="Long deletion (>300) without enough Discordant read pair signal support">
+##FILTER=<ID=Duplication_sv,Description="When it is true, this SV is similar with others, and will be removed">
+##FILTER=<ID=LOW_QUAL,Description="LOW QUALITY">
+##FILTER=<ID=PASS,Description="All filters passed, variant is most likely true">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype Quality">
+##FORMAT=<ID=SR,Number=.,Type=Integer,Description="[BY short reads]Reads number that supported for the reference, allele and unknown when genotyping.(set -1 when data is NA)">
+##FORMAT=<ID=LR,Number=.,Type=Integer,Description="[BY long reads]Reads number that supported for the reference, allele and unknown when genotyping.(set -1 when data is NA)">
+##FORMAT=<ID=SL,Number=.,Type=Integer,Description="Suggested SV length by the assembler.">
+##FORMAT=<ID=IF,Number=.,Type=Integer,Description="(1)RegionID, (2)Hap idx in Region, (3)total hap number in region, (4)SV idx in HAP, (5)total SV number in hap (set -1 when data is NA).">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">
+##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">
+##FORMAT=<ID=ST,Number=1,Type=String,Description="Strand orientation of SV (e.g., +, -, -+, ++)">
+##FORMAT=<ID=QV,Number=1,Type=Float,Description="Quality value">
+##FORMAT=<ID=TY,Number=1,Type=String,Description="Type of SV (e.g., TRA, DEL, INS)">
+##FORMAT=<ID=ID,Number=1,Type=String,Description="Unique identifier for the SV">
+##FORMAT=<ID=SC,Number=1,Type=String,Description="Source from which SV was identified">
+##FORMAT=<ID=REF,Number=1,Type=String,Description="Reference allele sequence">
+##FORMAT=<ID=ALT,Number=1,Type=String,Description="Alternate allele sequence">
+##FORMAT=<ID=CO,Number=1,Type=String,Description="Coordinate information of the SV">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	Sample
+chr1	6558893	403_chr1_INS_6558893_6558894_66	A	ACTTTTTTTTTTTTTTTGAGTACTAGGATTACAGGCGTGAACCACCTCGCCTGGCCAAAACCTCAGG	500	PASS	SVTYPE=INS;END=6558959;SVLEN=66;CHR2=chr1;SUPPORT=14;SVMETHOD=OctopuSV;RTID=.;AF=.;STRAND=.;RNAMES=.	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:.,.:66:.:500:INS:403_chr1_INS_6558893_6558894_66:HitSV2.0.4:A:ACTTTTTTTTTTTTTTTGAGTACTAGGATTACAGGCGTGAACCACCTCGCCTGGCCAAAACCTCAGG:chr1_6558893-chr1_6558959

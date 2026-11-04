@@ -1,0 +1,74 @@
+##fileformat=VCFv4.2
+##fileDate=2026-11-01|06:57:12PM|
+##source=OctopuSV
+##OctopuSV_WARNING=This is SVCF format. Use 'octopusv svcf2vcf' to change back to standard VCF format before bcftools/vcftools
+##SVCFVersion=1.1
+##OctopuSV_mode=caller
+##contig=<ID=chrM,length=16569>
+##contig=<ID=chr1,length=248956422>
+##contig=<ID=chr2,length=242193529>
+##contig=<ID=chr3,length=198295559>
+##contig=<ID=chr4,length=190214555>
+##contig=<ID=chr5,length=181538259>
+##contig=<ID=chr6,length=170805979>
+##contig=<ID=chr7,length=159345973>
+##contig=<ID=chr8,length=145138636>
+##contig=<ID=chr9,length=138394717>
+##contig=<ID=chr10,length=133797422>
+##contig=<ID=chr11,length=135086622>
+##contig=<ID=chr12,length=133275309>
+##contig=<ID=chr13,length=114364328>
+##contig=<ID=chr14,length=107043718>
+##contig=<ID=chr15,length=101991189>
+##contig=<ID=chr16,length=90338345>
+##contig=<ID=chr17,length=83257441>
+##contig=<ID=chr18,length=80373285>
+##contig=<ID=chr19,length=58617616>
+##contig=<ID=chr20,length=64444167>
+##contig=<ID=chr21,length=46709983>
+##contig=<ID=chr22,length=50818468>
+##contig=<ID=chrX,length=156040895>
+##contig=<ID=chrY,length=57227415>
+##ALT=<ID=INS,Description="Insertion">
+##ALT=<ID=DEL,Description="Deletion">
+##ALT=<ID=DUP,Description="Duplication">
+##ALT=<ID=INV,Description="Inversion">
+##ALT=<ID=BND,Description="Breakend">
+##ALT=<ID=TRA,Description="Translocation">
+##INFO=<ID=PRECISE,Number=0,Type=Flag,Description="Precise structural variant">
+##INFO=<ID=IMPRECISE,Number=0,Type=Flag,Description="Imprecise structural variant">
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">
+##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Difference in length between REF and ALT alleles">
+##INFO=<ID=CHR2,Number=1,Type=String,Description="Chromosome for end">
+##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant described in this record">
+##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS for imprecise variants">
+##INFO=<ID=CILEN,Number=2,Type=Integer,Description="Confidence interval around inserted/deleted material between breakends">
+##INFO=<ID=RE,Number=1,Type=Integer,Description="Number of read support this record">
+##INFO=<ID=STRAND,Number=1,Type=String,Description="Strand orientation of the SV">
+##INFO=<ID=RNAMES,Number=.,Type=String,Description="Supporting read names">
+##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
+##INFO=<ID=SUPPORT,Number=1,Type=Integer,Description="Number of pieces of evidence supporting the variant">
+##INFO=<ID=SVMETHOD,Number=1,Type=String,Description="The software used to identify the SV">
+##INFO=<ID=RTID,Number=1,Type=String,Description="Associated ID for reciprocal translocations if available">
+##INFO=<ID=SOURCES,Number=.,Type=String,Description="Source caller/sample labels supporting this merged SV record">
+##INFO=<ID=SOURCE_IDS,Number=.,Type=String,Description="Original IDs of merged SVs from different callers or samples">
+##FILTER=<ID=q5,Description="Quality below 5">
+##FILTER=<ID=PASS,Description="All filters passed, variant is most likely true">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=DR,Number=1,Type=Integer,Description="# High-quality reference reads">
+##FORMAT=<ID=DV,Number=1,Type=Integer,Description="# High-quality variant reads">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="# Phred-scaled genotype likelihoods rounded to the closest integer">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="# Genotype quality">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">
+##FORMAT=<ID=LN,Number=1,Type=Integer,Description="Length of SV">
+##FORMAT=<ID=ST,Number=1,Type=String,Description="Strand orientation of SV (e.g., +, -, -+, ++)">
+##FORMAT=<ID=QV,Number=1,Type=Float,Description="Quality value">
+##FORMAT=<ID=TY,Number=1,Type=String,Description="Type of SV (e.g., TRA, DEL, INS)">
+##FORMAT=<ID=ID,Number=1,Type=String,Description="Unique identifier for the SV">
+##FORMAT=<ID=SC,Number=1,Type=String,Description="Source from which SV was identified">
+##FORMAT=<ID=REF,Number=1,Type=String,Description="Reference allele sequence">
+##FORMAT=<ID=ALT,Number=1,Type=String,Description="Alternate allele sequence">
+##FORMAT=<ID=CO,Number=1,Type=String,Description="Coordinate information of the SV">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	NULL
+chr5	177467973	cuteSV.DEL.15481	CTTCCCCAGCCCCGGCCGCATACCCAGTTGATGAGCAGCTCTGGGCCCTCAGCCCCCTTCCCCAGCCCCGGCCGCATACCCAGTTGATGAGCAGCTCTGGGCCCTCAGCCCCC	C	3.9	q5	SVTYPE=DEL;END=177468085;SVLEN=112;CHR2=chr5;SUPPORT=9;SVMETHOD=OctopuSV;RTID=.;AF=0.2727;STRAND=+-;RNAMES=m64135_211111_213257/89786702/ccs,m64135_211111_213257/119933775/ccs,m64135_211111_213257/176293336/ccs,m64135_211111_213257/21038078/ccs,m64135_211114_192614/104333458/ccs,m64135_211114_192614/160956521/ccs,m64135_211114_192614/85132394/ccs,m64135_211111_213257/141100949/ccs,m64135_211114_192614/133955810/ccs	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:24,9:112:+-:3.9:DEL:cuteSV.DEL.15481:cuteSV-2.1.3:CTTCCCCAGCCCCGGCCGCATACCCAGTTGATGAGCAGCTCTGGGCCCTCAGCCCCCTTCCCCAGCCCCGGCCGCATACCCAGTTGATGAGCAGCTCTGGGCCCTCAGCCCCC:C:chr5_177467973-chr5_177468085
+chr5	177467978	cuteSV.DEL.15482	CCAGCCCCGGCCGCATACCCAGTTGATGAGCAGCTCTGGGCCCTCAGCCCCCTTCC	C	147.0	PASS	SVTYPE=DEL;END=177468033;SVLEN=55;CHR2=chr5;SUPPORT=24;SVMETHOD=OctopuSV;RTID=.;AF=0.7273;STRAND=+-;RNAMES=m64135_211111_213257/136185949/ccs,m64135_211113_082920/35653569/ccs,m64135_211111_213257/142672716/ccs,m64135_211113_082920/77398890/ccs,m64135_211111_213257/128190134/ccs,m64135_211111_213257/140837857/ccs,m64135_211111_213257/148898065/ccs,m64135_211111_213257/168429796/ccs,m64135_211111_213257/25758280/ccs,m64135_211111_213257/76679015/ccs,m64135_211113_082920/138739796/ccs,m64135_211113_082920/19269406/ccs,m64135_211113_082920/19595847/ccs,m64135_211113_082920/75631036/ccs,m64135_211113_082920/83888676/ccs,m64135_211113_082920/85655787/ccs,m64135_211113_082920/88804029/ccs,m64135_211113_082920/91685005/ccs,m64135_211113_082920/96405813/ccs,m64135_211114_192614/133432313/ccs,m64135_211114_192614/143524538/ccs,m64135_211114_192614/58917742/ccs,m64135_211114_192614/89456651/ccs,m64135_211113_082920/146868891/ccs	GT:AD:LN:ST:QV:TY:ID:SC:REF:ALT:CO	0/1:9,24:55:+-:147.0:DEL:cuteSV.DEL.15482:cuteSV-2.1.3:CCAGCCCCGGCCGCATACCCAGTTGATGAGCAGCTCTGGGCCCTCAGCCCCCTTCC:C:chr5_177467978-chr5_177468033

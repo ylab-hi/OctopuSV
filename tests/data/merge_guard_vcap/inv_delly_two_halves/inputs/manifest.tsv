@@ -1,0 +1,10 @@
+vcap_cutesv_supp1.svcf	cutesv
+vcap_debreak_supp2.svcf	debreak
+vcap_delly_default.svcf	delly
+vcap_hitsv_default.svcf	hitsv
+vcap_lumpy_default.svcf	lumpy
+vcap_manta_default.svcf	manta
+vcap_pbsv_default.svcf	pbsv
+vcap_sniffles2_supp2.svcf	sniffles2
+vcap_svaba_default.svcf	svaba
+vcap_svim_supp1.svcf	svim

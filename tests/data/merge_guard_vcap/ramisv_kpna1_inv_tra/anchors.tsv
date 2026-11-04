@@ -1,0 +1,5 @@
+anchor_query	baseline_record	n_members
+INV00032147	.	.
+BND00041599	.	.
+.	INV|chr2:204878529|INV00032147	7
+.	TRA|chr3:122424698|BND00041599	6
