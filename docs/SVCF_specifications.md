@@ -262,6 +262,20 @@ SOURCE_IDS
 
 `SUPPORT` may be `.` or a non-negative integer.
 
+### 5.2 Optional OctopuSV merge INFO annotations (informative)
+
+OctopuSV may add the following optional INFO annotations to merged records. They are **not required** by SVCF 1.1 and do not change the meaning of any core field, the mode-specific FORMAT schemas, or the rules for grouping SV events.
+
+| INFO field | Meaning |
+|---|---|
+| `MERGE_SPLIT` | Links records that originated from one candidate merge group but were retained as separate events because some source records were not structurally equivalent. A shared value is a link to the original candidate group, **not** evidence that the resulting records represent the same SV event. |
+| `MERGE_POS_RANGE` | Two comma-separated integer offsets (`minimum,maximum`) describing the positions reported by the final merged input members relative to the representative record's `POS`. |
+| `MERGE_END_RANGE` | Two comma-separated integer offsets (`minimum,maximum`) describing the members' second-breakpoint positions relative to the representative record's second breakpoint. Not used for `INS`, whose SVCF `END` is length-derived rather than an independent breakpoint. |
+
+The range fields summarize **observed member coordinates, not confidence intervals or physical breakpoint uncertainty**. They are distinct from caller-provided `CIPOS`/`CIEND`; those confidence intervals are not incorporated into these ranges. For `TRA`/`BND`, the two members' chromosome sides are aligned with the representative before calculating offsets, including when a member reports the breakpoints in reverse order.
+
+Ranges describe the members of the **current** merged event, after any separation of structurally incompatible records. In caller mode, members are source evidence records; in multi mode, members are the input sample-level SV records, not all underlying caller observations from earlier merges. Ranges may be omitted when there is only one member or a complete comparable set of member coordinates is unavailable. A range of `0,0` across multiple members means their reported positions coincide; it does not establish base-pair accuracy. These annotations do not alter representative coordinates or event membership.
+
 ---
 
 ## 6. Mode-specific FORMAT schemas

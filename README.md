@@ -15,15 +15,15 @@
 > *Standardize, integrate, compare, and analyze structural variants across callers, samples, and cohorts.*
 
 > [!NOTE]
-> **What's new in v1.0.0**
+> **What's new in v1.1.0**
 >
-> - **SVCF 1.1** introduces a versioned caller and multi-sample data model.
-> - Multi-caller and multi-sample workflows now use explicit source, evidence, and sample relationships.
-> - Sample-mode merging supports cohort-scale analysis while preserving stable biological sample columns.
-> - BND, TRA, GRIDSS, VCF conversion, reference metadata, and contig compatibility handling have been tightened across the workflow.
-> - `--max-distance`, `--max-length-ratio`, and `--min-jaccard` are active merge controls, with conflicting merge strategies rejected early.
+> - Fixed caller-specific support counts, BND/TRA handling, length filtering, and several caller compatibility issues.
+> - Prevented distinct DEL/DUP/INS structures from the same source from being collapsed into one event (`MERGE_SPLIT`).
+> - Reduced memory use in sample-mode merging with disk-backed partitions.
+> - Added `MERGE_POS_RANGE` and `MERGE_END_RANGE` to show the spread of member breakpoint coordinates (not confidence intervals).
+> - Fixed the `--no-tra-strand-consistency` option.
 >
-> See [`docs/RELEASE_NOTES_1.0.0.md`](docs/RELEASE_NOTES_1.0.0.md) for release details.
+> See [`docs/RELEASE_NOTES_1.1.0.md`](docs/RELEASE_NOTES_1.1.0.md) for details.
 
 > [!TIP]
 > **Genome-wide SV visualization**  
@@ -41,7 +41,7 @@
 </p>
 
 > [!IMPORTANT]
-> **Use the latest release for current SVCF 1.1 behavior.**
+> **Use the latest release for current SVCF 1.1 behavior.** To pick up the v1.1.0 normalization and caller-identity fixes, rerun `correct` and `merge` from the original VCFs, especially for DELLY inputs.
 >
 > ```bash
 > conda install bioconda::octopusv
@@ -50,6 +50,7 @@
 <details>
 <summary><b>Previous releases</b></summary>
 
+- **[v1.0.0](docs/RELEASE_NOTES_1.0.0.md)** — Introduced the versioned SVCF 1.1 format and multi-caller / multi-sample workflows.
 - **v0.4.3** — Merge-control fixes and safer SVCF coordinate handling.
 - **v0.4.2** — Major merge-performance improvements, SVIM-ASM compatibility, and TRA/BND updates.
 - **v0.4.1** — Multi-sample merging, TRA/BND integration, and Circos improvements.
@@ -86,7 +87,7 @@ OctopuSV can be used for single samples, multi-caller analyses, tumor/normal wor
 
 ## SVCF 1.1
 
-SVCF is the intermediate format used by OctopuSV. Version 1.1 is the format contract for OctopuSV 1.0.
+SVCF is the intermediate format used by OctopuSV. SVCF 1.1 was introduced with OctopuSV 1.0.0 and remains the format contract in v1.1.0.
 
 SVCF 1.1 has two explicit data models.
 
