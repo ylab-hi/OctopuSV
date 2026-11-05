@@ -301,6 +301,56 @@ def _validate_bnd_alt(event, line_number: int) -> str:
     return "paired"
 
 
+_CONTIG_ID = re.compile(r"[<,]ID=([^,>]+)")
+_CONTIG_LENGTH = re.compile(r"[<,]length=(\d+)")
+
+
+def _contig_length(line: str):
+    """(contig, length) from one ##contig line, or None without a length."""
+    contig = _CONTIG_ID.search(line)
+    length = _CONTIG_LENGTH.search(line)
+    if contig is None or length is None:
+        return None
+    return contig.group(1), int(length.group(1))
+
+
+def _is_debreak(source_info, info):
+    """DeBreak record: ##source=DeBreak or INFO/SVMETHOD=DeBreak."""
+    return (str(source_info or "").lower().startswith("debreak")
+            or str(info.get("SVMETHOD") or "").lower() == "debreak")
+
+
+def _unresolved_tra_reason(event, contig_lengths, source_info=None):
+    """Why a TRA record has no usable remote breakpoint, or None.
+
+    Called after _normalize_and_validate_tra, so CHR2/END hold the remote
+    breakpoint for both symbolic and bracket-form TRA.
+
+    * remote_beyond_contig (any caller, any form): END is outside the CHR2
+      contig length from the VCF header.
+    * remote_not_reported (DeBreak only): symbolic <TRA> on another
+      chromosome with END equal to POS.  DeBreak writes the remote position
+      in END, but for part of its TRA records END repeats POS (VCaP: 152 of
+      300, 56 of them beyond the CHR2 length): the local value is copied and
+      the remote position is not reported.  Other callers are not judged by
+      this rule; equal numbers on two chromosomes are legal in SVCF 1.1.
+    """
+    if event.info.get("SVTYPE") != "TRA":
+        return None
+    chr2 = str(event.info.get("CHR2"))
+    try:
+        end = int(str(event.info.get("END")))
+    except (TypeError, ValueError):
+        return None
+    length = contig_lengths.get(chr2)
+    if length is not None and not 1 <= end <= length:
+        return "remote_beyond_contig"
+    if (event.alt == "<TRA>" and chr2 != event.chrom and end == int(event.pos)
+            and _is_debreak(source_info, event.info)):
+        return "remote_not_reported"
+    return None
+
+
 def _validate_svcf_contig_names(event, line_number: int) -> None:
     """Reject contig names that the current SVCF evidence encoding cannot round-trip.
 
@@ -497,6 +547,8 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
     source_info = "."
     single_breakend_count = 0
     single_breakend_examples = []
+    contig_lengths = {}
+    unresolved_tra = []
     skipped_non_sv_count = 0
     skipped_non_sv_examples = []
     recognized_sv_count = 0
@@ -520,6 +572,9 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
                     is_svaba_output = True
             elif line.startswith("##contig"):
                 contig_lines.append(line.strip())
+                parsed_contig = _contig_length(line)
+                if parsed_contig is not None:
+                    contig_lengths[parsed_contig[0]] = parsed_contig[1]
             elif line.startswith("#CHROM"):
                 header_fields = line.rstrip("\r\n").split("\t")
                 svaba_header_columns = len(header_fields) if is_svaba_output else None
@@ -621,6 +676,19 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
                 _validate_svcf_contig_names(event, line_number)
 
                 recognized_sv_count += 1
+
+                # A TRA without a usable remote breakpoint cannot be an SVCF
+                # 1.1 TRA.  Skip it, but keep every one for the side report.
+                reason = _unresolved_tra_reason(event, contig_lengths, source_info)
+                if reason is not None:
+                    unresolved_tra.append(dict(
+                        input_line=line_number, ID=event.id, CHROM=event.chrom,
+                        POS=event.pos, CHR2=event.info.get("CHR2"),
+                        END=event.info.get("END"),
+                        CHR2_length=contig_lengths.get(str(event.info.get("CHR2")), "."),
+                        reason=reason,
+                    ))
+                    continue
                 if output_sample_count is None:
                     output_sample_count = len(event.samples)
 
@@ -663,6 +731,7 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
         parse_stats["explicit_missing_gt_count"] = explicit_missing_gt_count
         parse_stats["data_records"] = data_record_count
         parse_stats["svaba_extra_columns"] = svaba_extra_columns
+        parse_stats["unresolved_tra"] = unresolved_tra
 
     if single_breakend_count and not skip_single_breakends:
         examples = "; ".join(single_breakend_examples)

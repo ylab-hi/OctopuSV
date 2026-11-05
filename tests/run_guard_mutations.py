@@ -26,11 +26,13 @@ GUARD_TESTS = [
     "tests/test_merge_guard_vcap_fixtures.py",
     "tests/test_merge_guard_sample_mode.py",
     "tests/test_issue_191_regression.py",
+    "tests/test_correct_unresolved_tra.py",
 ]
 
 F = "tests/test_merge_guard_vcap_fixtures.py::"
 S = "tests/test_merge_guard_sample_mode.py::"
 T191 = "tests/test_issue_191_regression.py::"
+U = "tests/test_correct_unresolved_tra.py::"
 
 # name -> (patch executed before pytest, tests that must fail)
 MUTATIONS = {
@@ -187,6 +189,78 @@ MUTATIONS = {
         """,
         ["tests/test_issue_192_merge_split.py::"
          "test_record_between_two_split_structures_is_not_forced_into_either"],
+    ),
+    "unresolved_tra_check_removed": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        m._unresolved_tra_reason = lambda event, lengths, source=None: None
+        """,
+        [U + "test_unusable_remote_breakpoints_are_skipped_and_reported",
+         U + "test_without_contig_lengths_only_the_copied_end_rule_applies"],
+    ),
+    "unresolved_tra_copied_end_rule_applied_to_bracket_form": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        original = m._unresolved_tra_reason
+        def any_form(event, lengths, source=None):
+            reason = original(event, lengths, source)
+            if (reason is None and event.info.get("SVTYPE") == "TRA"
+                    and str(event.info.get("CHR2")) != event.chrom
+                    and str(event.info.get("END")) == str(event.pos)):
+                return "remote_not_reported"
+            return reason
+        m._unresolved_tra_reason = any_form
+        """,
+        [U + "test_unusable_remote_breakpoints_are_skipped_and_reported"],
+    ),
+    "unresolved_tra_flags_every_tra": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        m._unresolved_tra_reason = lambda event, lengths, source=None: (
+            "remote_not_reported" if event.info.get("SVTYPE") == "TRA" else None)
+        """,
+        [U + "test_no_report_when_every_tra_is_usable",
+         U + "test_same_chromosome_record_with_end_equal_pos_is_not_touched"],
+    ),
+    "unresolved_tra_copied_end_rule_ignores_chromosome": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        original = m._unresolved_tra_reason
+        def any_chromosome(event, lengths, source=None):
+            reason = original(event, lengths, source)
+            if (reason is None and event.info.get("SVTYPE") == "TRA" and event.alt == "<TRA>"
+                    and str(event.info.get("END")) == str(event.pos)):
+                return "remote_not_reported"
+            return reason
+        m._unresolved_tra_reason = any_chromosome
+        """,
+        [U + "test_same_chromosome_record_with_end_equal_pos_is_not_touched"],
+    ),
+    "unresolved_tra_copied_end_rule_for_every_caller": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        m._is_debreak = lambda source, info: True
+        """,
+        [U + "test_other_caller_with_equal_numbers_on_two_chromosomes_is_kept"],
+    ),
+    "unresolved_tra_debreak_only_by_source_header": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        m._is_debreak = lambda source, info: str(source or "").lower().startswith("debreak")
+        """,
+        [U + "test_debreak_is_recognized_by_svmethod_without_source_header"],
+    ),
+    "stale_unresolved_report_kept": (
+        """
+        import pathlib
+        original = pathlib.Path.unlink
+        def keep_report(self, missing_ok=False):
+            if self.name.endswith(".unresolved_tra.tsv"):
+                return None
+            return original(self, missing_ok=missing_ok)
+        pathlib.Path.unlink = keep_report
+        """,
+        [U + "test_stale_report_from_an_earlier_run_is_removed"],
     ),
     "group_compares_with_newest_member": (
         """

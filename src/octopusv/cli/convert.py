@@ -39,8 +39,19 @@ def _write_svaba_side_file(path, rows) -> None:
             handle.write("\t".join(str(value) for value in row) + "\n")
 
 
+UNRESOLVED_TRA_FIELDS = ["input_line", "ID", "CHROM", "POS", "CHR2", "END", "CHR2_length", "reason"]
+
+
+def _write_unresolved_tra_file(path, rows) -> None:
+    with open(path, "w") as handle:
+        handle.write("\t".join(UNRESOLVED_TRA_FIELDS) + "\n")
+        for row in rows:
+            handle.write("\t".join(str(row[key]) for key in UNRESOLVED_TRA_FIELDS) + "\n")
+
+
 def _print_correct_summary(input_records, events, mate_transformer, unmatched_pairs,
-                           skipped_single, svaba_extra, side_file) -> None:
+                           skipped_single, svaba_extra, side_file,
+                           unresolved_tra=(), unresolved_file=None) -> None:
     """One compact block that makes lost evidence or odd conversions visible."""
     from octopusv.utils.caller_evidence import source_label
 
@@ -68,6 +79,14 @@ def _print_correct_summary(input_records, events, mate_transformer, unmatched_pa
         _echo(f"  MATEID orientation conflicts:    {len(MATEID_ORIENTATION_CONFLICTS)} "
               "(MATEID not used; paired by coordinates and orientation instead)")
     _echo(f"  Single breakends skipped:        {skipped_single}")
+    if unresolved_tra:
+        beyond = sum(row["reason"] == "remote_beyond_contig" for row in unresolved_tra)
+        copied = sum(row["reason"] == "remote_not_reported" for row in unresolved_tra)
+        _echo(
+            f"  TRA without remote breakpoint:   {len(unresolved_tra)} skipped "
+            f"({beyond} beyond the CHR2 contig length, {copied} DeBreak records with END "
+            f"copied from POS on another chromosome); listed in {unresolved_file}"
+        )
     _echo(f"  SUPPORT positive / zero / missing: {positive} / {zero} / {missing}")
     _echo(f"  SUPPORT source:                  {labels}")
     if svaba_extra:
@@ -396,10 +415,22 @@ def correct(
         extra_meta_lines.append(
             f"##OctopuSV_skipped_single_breakends={skipped_single_breakends}"
         )
+    unresolved_tra = parse_stats.get("unresolved_tra") or []
+    if unresolved_tra:
+        extra_meta_lines.append(
+            f"##OctopuSV_skipped_unresolved_tra={len(unresolved_tra)}"
+        )
 
     svaba_extra = parse_stats.get("svaba_extra_columns") or []
     side_file = Path(f"{output_file}.svaba_extra_columns.tsv")
-    side_temp = side_file.with_name(f".{side_file.name}.{os.getpid()}.tmp")
+    unresolved_file = Path(f"{output_file}.unresolved_tra.tsv")
+    # (final path, rows, writer); a side file without rows is removed so a
+    # stale one from an earlier run cannot be mistaken for this run's.
+    side_files = [
+        (side_file, svaba_extra, _write_svaba_side_file),
+        (unresolved_file, unresolved_tra, _write_unresolved_tra_file),
+    ]
+    temps = {path: path.with_name(f".{path.name}.{os.getpid()}.tmp") for path, _r, _w in side_files}
     try:
         with atomic_output_path(output_file) as temp_output:
             write_sv_vcf(
@@ -411,19 +442,22 @@ def correct(
             )
             if output_sample_count == 1:
                 _validate_versioned_correct_output(temp_output)
-            # Both files are written before either is committed.
-            if svaba_extra:
-                _write_svaba_side_file(side_temp, svaba_extra)
-        if svaba_extra:
-            try:
-                os.replace(side_temp, side_file)
-            except BaseException:
-                Path(output_file).unlink(missing_ok=True)
-                raise
-        elif side_file.exists():
-            side_file.unlink()  # stale side file from an earlier run
+            # All files are written before any is committed.
+            for path, rows, writer in side_files:
+                if rows:
+                    writer(temps[path], rows)
+        try:
+            for path, rows, _writer in side_files:
+                if rows:
+                    os.replace(temps[path], path)
+                elif path.exists():
+                    path.unlink()
+        except BaseException:
+            Path(output_file).unlink(missing_ok=True)
+            raise
     finally:
-        side_temp.unlink(missing_ok=True)
+        for temp in temps.values():
+            temp.unlink(missing_ok=True)
 
     _print_correct_summary(
         input_data_records,
@@ -433,6 +467,8 @@ def correct(
         skipped_single_breakends,
         svaba_extra,
         side_file,
+        unresolved_tra,
+        unresolved_file,
     )
 
     if input_data_records == 0:
