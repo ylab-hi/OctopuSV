@@ -114,10 +114,10 @@ def test_same_sample_two_different_deletions_are_kept_apart(tmp_path):
     # each match the seed (ratios 1.6 and 1.875) but not each other (3.0).
     # Before #192 all three were one record, A.del150 vanished from
     # SOURCE_IDS and A's genotype mixed two structures (1/.).
-    # Now A's two deletions are kept apart.  B's 80 bp deletion is length-
-    # equivalent to neither of them (more than max(10 bp, 10%) away), so it is
-    # not attached to either and stays its own record.  All three records
-    # share one MERGE_SPLIT value.
+    # Now A's two deletions are kept apart.  B's 80 bp deletion merges with
+    # both under the normal rule but is clearly nearer to 50 bp (30 bp away)
+    # than to 150 bp (70 bp away), so it joins A.del50.  Both records share
+    # one MERGE_SPLIT value.
     sample_a = _sample_svcf(
         tmp_path,
         "A",
@@ -128,11 +128,10 @@ def test_same_sample_two_different_deletions_are_kept_apart(tmp_path):
     rows = _merge_samples(tmp_path, [sample_a, sample_b], "A,B")
 
     by_id = {row[2]: row for row in rows}
-    assert set(by_id) == {"B.del80", "A.del50", "A.del150"}
+    assert set(by_id) == {"B.del80", "A.del150"}
 
     expected = {
-        "B.del80": ("B", "B.del80", ["0/0", "0/1"]),
-        "A.del50": ("A", "A.del50", ["0/1", "0/0"]),
+        "B.del80": ("A,B", "A.del50,B.del80", ["0/1", "0/1"]),
         "A.del150": ("A", "A.del150", ["1/1", "0/0"]),
     }
     for record_id, (sources, source_ids, gts) in expected.items():
@@ -145,4 +144,3 @@ def test_same_sample_two_different_deletions_are_kept_apart(tmp_path):
     # The sample that did not report a structure gets the no-event
     # placeholder (UC=0, UV=0), not an evidence-backed 0/0.
     assert by_id["A.del150"][10].split(":")[2:4] == ["0", "0"]
-    assert by_id["B.del80"][9].split(":")[2:4] == ["0", "0"]

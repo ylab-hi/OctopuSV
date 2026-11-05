@@ -171,6 +171,23 @@ MUTATIONS = {
         ["tests/test_issue_192_merge_split.py::"
          "test_record_between_two_split_structures_is_not_forced_into_either"],
     ),
+    "split_never_joins_by_normal_rule": (
+        """
+        import octopusv.merger.merge_split as m
+        m.GroupSplitter._clearly_nearest_part = lambda self, group, parts, i, limit: None
+        """,
+        ["tests/test_issue_192_merge_split.py::"
+         "test_other_caller_joins_the_one_part_it_normally_merges_with"],
+    ),
+    "split_forces_indistinguishable_record_into_nearest": (
+        """
+        import octopusv.merger.merge_split as m
+        m.GroupSplitter._clearly_nearest_part = lambda self, group, parts, i, limit: min(
+            range(limit), key=lambda p: (self._distance(group[i], group[parts[p][0]])[1:], p))
+        """,
+        ["tests/test_issue_192_merge_split.py::"
+         "test_record_between_two_split_structures_is_not_forced_into_either"],
+    ),
     "group_compares_with_newest_member": (
         """
         from octopusv.merger.sv_merger import SVMerger

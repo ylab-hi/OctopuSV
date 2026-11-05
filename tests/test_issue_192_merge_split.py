@@ -126,6 +126,24 @@ def test_split_membership_does_not_depend_on_input_order(tmp_path):
     assert {record["ids"] for record in reverse} == expected
 
 
+def test_other_caller_joins_the_one_part_it_normally_merges_with(tmp_path):
+    # SVIM reports 204 and 521 bp, so the group is split.  cuteSV's 455 bp is
+    # 13% from 521 (not length-equivalent) but merges normally only with 521
+    # (204 is more than 2x away), so it joins that part instead of being left
+    # alone.
+    a = _caller_svcf(tmp_path, "A", "SVIM", [_sv("INS", 1000, "a.204", 204),
+                                             _sv("INS", 1005, "a.521", 521)])
+    b = _caller_svcf(tmp_path, "B", "cuteSV", [_sv("INS", 1003, "b.455", 455)])
+
+    records = _merge(tmp_path, [a, b], "A,B")
+
+    assert {record["ids"] for record in records} == {
+        frozenset({"a.204"}),
+        frozenset({"a.521", "b.455"}),
+    }
+    assert len({record["info"]["MERGE_SPLIT"] for record in records}) == 1
+
+
 def test_record_between_two_split_structures_is_not_forced_into_either(tmp_path):
     # A reports 100 and 200 bp; B's 150 bp is equivalent to neither, so it is
     # kept as its own record rather than attached to the nearer one.  C's

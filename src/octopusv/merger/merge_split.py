@@ -8,9 +8,10 @@ and one of them then disappears behind a single representative.
 This module runs after core grouping and before representative selection.  It
 leaves every group without such a conflict exactly as it is.  A conflicting
 group is partitioned so that no part holds two non-equivalent records from one
-source, and every other record joins only a part it is equivalent to (or
-starts its own); all parts carry the same INFO/MERGE_SPLIT value so the link
-is kept.
+source.  Every other record joins the part it is equivalent to or, failing
+that, the part it merges with under the normal matching rule and is clearly
+nearest to in length; when it cannot be told apart it starts its own part.  All parts carry the same
+INFO/MERGE_SPLIT value so the link is kept.
 
 Equivalence of two records from the same source:
 
@@ -124,6 +125,38 @@ class GroupSplitter:
             if self.equivalent(group[part[0]], group[index])
         ]
 
+    def _clearly_nearest_part(self, group, parts, index, limit):
+        """Part among parts[:limit] that group[index] clearly belongs to, or None.
+
+        Only parts whose first record merges with group[index] under the
+        normal matching rule count.  With one such part, that part.  With
+        several, the one nearest in length, but only when the next one is
+        farther by more than max(10 bp, 10%) of the record's length; otherwise
+        the record cannot be told apart between them and None is returned.
+        """
+        if self.direct_match is None:
+            return None
+        record = group[index]
+        matching = []
+        for number, part in enumerate(parts[:limit]):
+            first = group[part[0]]
+            try:
+                if not (self.direct_match(first, record) and self.direct_match(record, first)):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            matching.append((self._distance(record, first)[1:], number))
+        if not matching:
+            return None
+        matching.sort()
+        if len(matching) == 1:
+            return matching[0][1]
+        nearest_gap, second_gap = matching[0][0][0], matching[1][0][0]
+        tolerance = max(LENGTH_ABS_BP, LENGTH_REL * event_length(record))
+        if event_svtype(record) in LENGTH_RULE_TYPES and second_gap - nearest_gap > tolerance:
+            return matching[0][1]
+        return None
+
     def split(self, group):
         """Return [group] when there is no conflict, else the list of parts."""
         if len(group) < 2:
@@ -163,11 +196,16 @@ class GroupSplitter:
             else:
                 parts.append([i])
 
-        # Every other record has no same-source conflict anywhere in the group.
-        # It joins the nearest part it is equivalent to.  If it is equivalent
-        # to none (for example 150 bp between parts of 100 and 200 bp), it is
-        # not forced into one: it starts its own part, which later records
-        # equivalent to it may join, and keeps the shared MERGE_SPLIT link.
+        # Every other record has no same-source conflict anywhere in the group,
+        # so the strict length rule alone is not a reason to separate it.
+        # 1. It joins the nearest part it is equivalent to.
+        # 2. Otherwise it joins the conflict part it merges with under the
+        #    normal matching rule and is clearly nearest to (e.g. 455 bp beside
+        #    parts of 204 and 521 bp joins 521).
+        # 3. Otherwise (e.g. 150 bp exactly between 100 and 200 bp) it is not
+        #    forced into one: it starts its own part, which later records
+        #    equivalent to it may join, and keeps the shared MERGE_SPLIT link.
+        conflict_parts = len(parts)
         for i in range(len(group)):
             if i in anchors:
                 continue
@@ -178,8 +216,12 @@ class GroupSplitter:
                     key=lambda p: (self._distance(group[i], group[parts[p][0]]), p),
                 )
                 parts[best].append(i)
-            else:
+                continue
+            best = self._clearly_nearest_part(group, parts, i, conflict_parts)
+            if best is None:
                 parts.append([i])
+            else:
+                parts[best].append(i)
 
         ordered = sorted((sorted(part) for part in parts), key=lambda part: part[0])
         return [[group[i] for i in part] for part in ordered]
