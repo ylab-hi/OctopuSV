@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from .member_breakpoint_range import add_member_breakpoint_ranges
+
 from octopusv.utils.source_path import normalize_source_path
 
 LENGTH_RULE_TYPES = {"DEL", "DUP", "INS"}
@@ -233,11 +235,14 @@ def select_with_split(groups, splitter, select):
     for group in groups:
         parts = splitter.split(group) if splitter is not None else [group]
         if len(parts) == 1:
-            representatives.append(select(parts[0]))
+            representative = select(parts[0])
+            add_member_breakpoint_ranges(representative, parts[0])
+            representatives.append(representative)
             continue
         key = split_key(group[0])
         for part in parts:
             representative = select(part)
+            add_member_breakpoint_ranges(representative, part)
             representative.info["MERGE_SPLIT"] = key
             representatives.append(representative)
     return representatives

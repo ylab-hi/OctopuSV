@@ -28,6 +28,7 @@ GUARD_TESTS = [
     "tests/test_issue_191_regression.py",
     "tests/test_correct_unresolved_tra.py",
     "tests/test_issue_194_sample_merge_equivalence.py",
+    "tests/test_caller_identity_delly_manta.py",
 ]
 
 F = "tests/test_merge_guard_vcap_fixtures.py::"
@@ -35,6 +36,7 @@ S = "tests/test_merge_guard_sample_mode.py::"
 T191 = "tests/test_issue_191_regression.py::"
 U = "tests/test_correct_unresolved_tra.py::"
 P = "tests/test_issue_194_sample_merge_equivalence.py::"
+C = "tests/test_caller_identity_delly_manta.py::"
 
 # name -> (patch executed before pytest, tests that must fail)
 MUTATIONS = {
@@ -337,6 +339,31 @@ MUTATIONS = {
         m.tempfile.TemporaryDirectory = Keep
         """,
         [P + "test_sample_merge_matches_legacy_for_every_strategy[union]"],
+    ),
+    "delly_name_not_filled": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        m._record_source = lambda source_info, info: source_info
+        """,
+        [C + "test_delly_without_source_line_gets_its_svmethod_as_sc",
+         C + "test_delly_correct_output_now_works_in_sample_merge"],
+    ),
+    "delly_name_overrides_explicit_source": (
+        """
+        import octopusv.utils.normal_vcf_parser as m
+        m._record_source = lambda source_info, info: str(info.get("SVMETHOD") or source_info)
+        """,
+        [C + "test_explicit_source_line_is_never_overridden",
+         C + "test_unknown_caller_without_source_line_is_not_guessed"],
+    ),
+    "delly_ranked_by_name": (
+        """
+        import octopusv.merger.sv_selector as s
+        s.get_caller_name = lambda sample: (
+            "delly" if "delly" in str(sample.get("SC", "")).lower() else str(sample.get("SC", "unknown")))
+        """,
+        [C + "test_named_delly_scores_exactly_as_unnamed_delly",
+         "tests/test_merge_guard_vcap_fixtures.py::test_ramisv_truth_sv_group_and_representative[ramisv_chd1-DB16961]"],
     ),
     "group_compares_with_newest_member": (
         """

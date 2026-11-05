@@ -35,6 +35,7 @@ from pathlib import Path
 import tempfile
 
 from octopusv.merger.multi_sample_writer import MultiSampleWriter
+from octopusv.merger.member_breakpoint_range import needs_member_range_headers
 from octopusv.merger.sv_merge_writer import warn_legacy_sample_inference
 from octopusv.merger.sv_merger import SVMerger
 from octopusv.utils.SV_classifier_by_chromosome import SVClassifiedByChromosome
@@ -143,14 +144,16 @@ def _read_bucket(path, input_files, sample_names):
 def _write_run(path, events, writer, rank, contig_order):
     """Records in output order, each line prefixed by its JSON sort key."""
     has_split = False
+    range_headers = set()
     with open(path, "w", encoding="utf-8") as handle:
         for event in sort_events_for_output(events, contig_order):
             has_split = has_split or "MERGE_SPLIT" in getattr(event, "info", {})
+            range_headers.update(needs_member_range_headers((event,)))
             buffer = io.StringIO()
             writer.write_record(buffer, event)
             key = json.dumps(output_sort_key(event, rank), separators=(",", ":"))
             handle.write(key + "\t" + buffer.getvalue())
-    return has_split
+    return has_split, range_headers
 
 
 def _run_lines(handle):
@@ -203,6 +206,7 @@ def merge_samples_partitioned(*, input_files, output_file, contigs, name_mapper,
     summary = {"legacy_sample_events": 0, "legacy_sample_unresolved_evidence_blocks": 0}
     record_count = 0
     has_split = False
+    member_headers = set()
 
     parent = Path(output_file).parent
     with tempfile.TemporaryDirectory(prefix=".octopusv_merge_", dir=parent) as temp:
@@ -225,13 +229,17 @@ def merge_samples_partitioned(*, input_files, output_file, contigs, name_mapper,
                 summary[key] += bucket_summary.get(key, 0)
             record_count += len(prepared)
             run = temp / f"run_{number:05d}.txt"
-            has_split = _write_run(run, prepared, writer, rank, contig_order) or has_split
+            bucket_has_split, bucket_headers = _write_run(run, prepared, writer, rank, contig_order)
+            has_split = bucket_has_split or has_split
+            member_headers.update(bucket_headers)
             runs.append(run)
             del events, by_type, by_chrom, merger, prepared
             gc.collect()
 
         with open(output_file, "w") as target:
-            writer.write_header(target, contigs, merge_split=has_split)
+            writer.write_header(target, contigs, merge_split=has_split,
+                                member_ranges=tuple(key for key in ("MERGE_POS_RANGE", "MERGE_END_RANGE")
+                                                    if key in member_headers))
             _merge_runs_bounded(runs, target, temp)
 
     warn_legacy_sample_inference(summary)

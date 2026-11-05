@@ -90,7 +90,19 @@ def compare_files(
             line,
         )
 
-        return line.rstrip("\r\n")
+        line = line.rstrip("\r\n")
+        # #6.5 adds observed member coordinate spread without changing the
+        # previously locked representative, grouping, evidence, or sample call.
+        # The historical golden files predate these two optional INFO keys.
+        if line and not line.startswith("#"):
+            parts = line.split("\t")
+            if len(parts) >= 8:
+                parts[7] = ";".join(
+                    item for item in parts[7].split(";")
+                    if not item.startswith(("MERGE_POS_RANGE=", "MERGE_END_RANGE="))
+                )
+                line = "\t".join(parts)
+        return line
 
     def read_file(filename):
         with open(

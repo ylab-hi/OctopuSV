@@ -2,6 +2,9 @@ import logging
 import os
 
 from octopusv.merger.merge_split import MERGE_SPLIT_HEADER, needs_split_header
+from octopusv.merger.member_breakpoint_range import (
+    MEMBER_RANGE_KEYS, MEMBER_RANGE_HEADERS, needs_member_range_headers,
+)
 from octopusv.merger.name_mapper import default_label_from_path
 from octopusv.utils.sample_consensus import resolve_sample_consensus
 from octopusv.utils.source_path import normalize_source_path
@@ -727,6 +730,7 @@ class MergeWriterMixin:
             ordered_events = sort_events_for_output(events, contigs.keys())
             with open(output_file, "w") as f:
                 self._merge_split_header = needs_split_header(ordered_events)
+                self._member_range_headers = needs_member_range_headers(ordered_events)
                 self._write_vcf_header(
                     f,
                     contigs,
@@ -880,11 +884,13 @@ class MergeWriterMixin:
         # SOURCES / SOURCE_IDS are defined exactly once below.
         for info_line in merged_definitions["info_lines"]:
             info_id = self._extract_id_from_line(info_line, "INFO")
-            if info_id in {"SOURCES", "SOURCE_IDS", "MERGE_SPLIT"}:
+            if info_id in {"SOURCES", "SOURCE_IDS", "MERGE_SPLIT"} | MEMBER_RANGE_KEYS:
                 continue
             file_handle.write(info_line + "\n")
         if getattr(self, "_merge_split_header", False):
             file_handle.write(MERGE_SPLIT_HEADER + "\n")
+        for key in getattr(self, "_member_range_headers", ()):
+            file_handle.write(MEMBER_RANGE_HEADERS[key] + "\n")
 
         for filter_line in merged_definitions["filter_lines"]:
             file_handle.write(filter_line + "\n")

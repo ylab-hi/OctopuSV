@@ -39,11 +39,22 @@ _cache: dict[str, str] = {}
 
 
 def _normalise(text: str) -> list[str]:
-    return [
-        SOURCE_PATH_RE.sub(r'Source="\1"', line)
-        for line in text.splitlines()
-        if not line.startswith("##fileDate=")
-    ]
+    """Keep the existing VCaP golden, allowing ONLY the new #6.5 INFO fields."""
+    output = []
+    for line in text.splitlines():
+        if line.startswith("##fileDate=") or line.startswith((
+            "##INFO=<ID=MERGE_POS_RANGE,", "##INFO=<ID=MERGE_END_RANGE,",
+        )):
+            continue
+        if line and not line.startswith("#"):
+            parts = line.split("\t")
+            parts[7] = ";".join(
+                item for item in parts[7].split(";")
+                if not item.startswith(("MERGE_POS_RANGE=", "MERGE_END_RANGE="))
+            )
+            line = "\t".join(parts)
+        output.append(SOURCE_PATH_RE.sub(r'Source="\1"', line))
+    return output
 
 
 def _merged_text(case: str, tmp_path_factory) -> str:

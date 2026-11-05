@@ -2,6 +2,9 @@ import datetime
 from typing import List, Optional
 
 from .merge_split import MERGE_SPLIT_HEADER, needs_split_header
+from .member_breakpoint_range import (
+    MEMBER_RANGE_KEYS, MEMBER_RANGE_HEADERS, needs_member_range_headers,
+)
 from .name_mapper import NameMapper
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 from octopusv.utils.svcf_sort import sort_events_for_output
@@ -46,20 +49,22 @@ class MultiSampleWriter:
         ordered_events = sort_events_for_output(events, contigs.keys())
 
         with open(output_file, "w") as f:
-            self._write_header(f, contigs, merge_split=needs_split_header(ordered_events))
+            self._write_header(f, contigs, merge_split=needs_split_header(ordered_events),
+                               member_ranges=needs_member_range_headers(ordered_events))
 
             for event in ordered_events:
                 self._write_event(f, event)
 
-    def write_header(self, file_handle, contigs, merge_split=False):
+    def write_header(self, file_handle, contigs, merge_split=False, member_ranges=()):
         """Write the sample-mode header; merge_split adds the MERGE_SPLIT definition."""
-        self._write_header(file_handle, contigs, merge_split=merge_split)
+        self._write_header(file_handle, contigs, merge_split=merge_split,
+                           member_ranges=member_ranges)
 
     def write_record(self, file_handle, event):
         """Write one prepared sample-mode record (ordered_samples attached)."""
         self._write_event(file_handle, event)
 
-    def _write_header(self, file_handle, contigs, merge_split=False):
+    def _write_header(self, file_handle, contigs, merge_split=False, member_ranges=()):
         """Write SVCF header for sample mode."""
         # Extract passthrough definitions before writing any bytes so a header
         # read failure cannot leave a plausible partial header when this writer
@@ -88,9 +93,13 @@ class MultiSampleWriter:
         self._write_standard_definitions(file_handle)
         if merge_split:
             file_handle.write(MERGE_SPLIT_HEADER + "\n")
+        for key in member_ranges:
+            file_handle.write(MEMBER_RANGE_HEADERS[key] + "\n")
         for category in ("alt_lines", "info_lines", "filter_lines"):
             for line in passthrough[category]:
-                if category == "info_lines" and "<ID=MERGE_SPLIT," in line:
+                if category == "info_lines" and ("<ID=MERGE_SPLIT," in line or any(
+                    f"<ID={key}," in line for key in MEMBER_RANGE_KEYS
+                )):
                     continue
                 file_handle.write(line + "\n")
 

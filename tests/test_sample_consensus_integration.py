@@ -153,7 +153,7 @@ def test_sample_consensus_changes_only_sample_representation_not_core_event(tmp_
 
         old_info = _parse_info(old[7])
         new_info = _parse_info(new[7])
-        for source_key in ("SOURCES", "SOURCE_IDS"):
+        for source_key in ("SOURCES", "SOURCE_IDS", "MERGE_POS_RANGE", "MERGE_END_RANGE"):
             old_info.pop(source_key, None)
             new_info.pop(source_key, None)
         assert new_info == old_info, key

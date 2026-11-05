@@ -3,6 +3,13 @@ def get_caller_name(sample_dict):
     Handles different formats of caller names.
     """
     caller = sample_dict.get("SC", "unknown")
+    # DELLY writes no ##source; `correct` names it from INFO/SVMETHOD
+    # (EMBL.DELLY...).  Its evidence used to carry SC=".", so DELLY was never
+    # ranked in representative scoring.  It stays unranked: ranking it would
+    # change representatives, and the scoring needs its own review first
+    # (QUAL is not comparable between callers).
+    if str(caller).upper().startswith("EMBL.DELLY"):
+        return caller
     # Standardize caller names
     if "svim" in caller.lower():
         return "SVIM"

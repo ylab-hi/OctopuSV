@@ -5,7 +5,7 @@ import sys
 from octopusv.converter.base import get_bnd_pattern
 from octopusv.sv import SVEvent
 from octopusv.utils.text_io import open_text_auto
-from octopusv.utils.caller_evidence import apply_caller_support
+from octopusv.utils.caller_evidence import apply_caller_support, detect_caller
 from octopusv.utils.svcf_schema import validate_source_label
 
 
@@ -351,6 +351,25 @@ def _unresolved_tra_reason(event, contig_lengths, source_info=None):
     return None
 
 
+def _record_source(source_info, info):
+    """Caller identity written to FORMAT/SC for one record.
+
+    The ##source value when the VCF has one.  DELLY writes no ##source line
+    but names itself in every record (INFO/SVMETHOD=EMBL.DELLY...); that exact
+    value is used, so the record keeps an explicit caller identity.  Anything
+    else stays "." -- no guessing from file names or record IDs.
+    """
+    if source_info not in {"", "."}:
+        return source_info
+    method = info.get("SVMETHOD")
+    if detect_caller(source_info, info) == "delly" and isinstance(method, str) and method:
+        try:
+            return validate_source_label(method)
+        except ValueError:
+            return source_info
+    return source_info
+
+
 def _validate_svcf_contig_names(event, line_number: int) -> None:
     """Reject contig names that the current SVCF evidence encoding cannot round-trip.
 
@@ -623,7 +642,7 @@ def parse_vcf(vcf_file_path, *, skip_single_breakends=False, parse_stats=None):
                     sample=sample_fields[0],
                     samples=sample_fields,
                 )
-                event.source = source_info
+                event.source = _record_source(source_info, event.info)
                 apply_caller_support(event, source_info)
 
                 # Preserve compatibility with mixed gVCF/reference-block and
