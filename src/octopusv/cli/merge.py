@@ -777,6 +777,36 @@ def get_contigs_from_svcf(filenames):
 
 
 
+def _select_events(sv_merger, *, all_input_files, expression, intersect, union,
+                   specific, exact_support, min_support, max_support):
+    """Apply the requested merge strategy to merged events."""
+    if expression:
+        return sv_merger.get_events_by_expression(expression)
+    if intersect:
+        return sv_merger.get_events_by_source(
+            [str(file) for file in all_input_files],
+            operation="intersection",
+        )
+    if union:
+        return sv_merger.get_events_by_source(
+            [str(file) for file in all_input_files],
+            operation="union",
+        )
+    if specific:
+        return sv_merger.get_events_by_source(
+            [str(file) for file in specific],
+            operation="specific",
+        )
+    if exact_support is not None:
+        return sv_merger.get_events_by_exact_support(exact_support)
+    if min_support is not None or max_support is not None:
+        return sv_merger.get_events_by_support_range(min_support, max_support)
+    raise ValueError(
+        "No merge strategy specified. Please use --intersect, --union, --specific, "
+        "--min-support, --exact-support, --max-support, or --expression."
+    )
+
+
 def merge(
         input_files: list[Path] = typer.Argument(None, help="List of input SVCF files to merge."),
         input_option: list[Path] = typer.Option(None, "--input-file", "-i", help="Input SVCF files to merge."),
@@ -1079,6 +1109,72 @@ def merge(
 
     _print_initial_configuration(mode=mode, labels=labels, input_files=all_input_files)
 
+    # Issue #194: sample mode merges one partition at a time (disk-backed)
+    # instead of holding every input record in memory.  Grouping, selection,
+    # sample synthesis and the written records are the same code as below,
+    # and the output is byte-identical.  --upsetr needs every merged event at
+    # once and keeps the in-memory path, as does caller mode.
+    if mode == "sample" and not upsetr:
+        from octopusv.merger.partitioned_sample_merge import merge_samples_partitioned
+
+        merge_options = dict(
+            tra_delta=tra_delta,
+            tra_min_overlap_ratio=tra_min_overlap_ratio,
+            tra_strand_consistency=tra_strand_consistency,
+            max_distance=max_distance,
+            max_length_ratio=max_length_ratio,
+            min_jaccard=min_jaccard,
+            bnd_delta=bnd_delta,
+        )
+
+        def select(merger):
+            return _select_events(
+                merger,
+                all_input_files=all_input_files,
+                expression=expression,
+                intersect=intersect,
+                union=union,
+                specific=specific,
+                exact_support=exact_support,
+                min_support=min_support,
+                max_support=max_support,
+            )
+
+        try:
+            with atomic_output_path(output_file) as temp_output:
+                result_count = merge_samples_partitioned(
+                    input_files=all_input_files,
+                    output_file=temp_output,
+                    contigs=contigs,
+                    name_mapper=name_mapper,
+                    prepare_inputs=_preserve_sample_input_evidence,
+                    merge_options=merge_options,
+                    select=select,
+                )
+        except (OSError, ValueError) as exc:
+            _echo(f"Error: {exc}")
+            raise typer.Exit(code=1)
+
+        _print_success_message(
+            output_file=output_file,
+            result_count=result_count,
+            input_count=len(all_input_files),
+            mode=mode,
+            labels=labels,
+            input_files=all_input_files,
+            caller_names=caller_names,
+            sample_names=sample_names,
+            labels_from_input_list=list_labels is not None,
+            expression=expression,
+            intersect=intersect,
+            union=union,
+            specific=specific,
+            min_support=min_support,
+            exact_support=exact_support,
+            max_support=max_support,
+        )
+        return
+
     # Process SV events. Header contigs were already collected during preflight.
     input_filenames = [str(file) for file in all_input_files]
 
@@ -1114,33 +1210,17 @@ def merge(
     # preflight before parsing/merging; this guard also covers evaluation-time
     # expression errors.
     try:
-        if expression:
-            results = sv_merger.get_events_by_expression(expression)
-        elif intersect:
-            results = sv_merger.get_events_by_source(
-                [str(file) for file in all_input_files],
-                operation="intersection",
-            )
-        elif union:
-            results = sv_merger.get_events_by_source(
-                [str(file) for file in all_input_files],
-                operation="union",
-            )
-        elif specific:
-            specific_files = [str(file) for file in specific]
-            results = sv_merger.get_events_by_source(
-                specific_files,
-                operation="specific",
-            )
-        elif exact_support is not None:
-            results = sv_merger.get_events_by_exact_support(exact_support)
-        elif min_support is not None or max_support is not None:
-            results = sv_merger.get_events_by_support_range(min_support, max_support)
-        else:
-            raise ValueError(
-                "No merge strategy specified. Please use --intersect, --union, --specific, "
-                "--min-support, --exact-support, --max-support, or --expression."
-            )
+        results = _select_events(
+            sv_merger,
+            all_input_files=all_input_files,
+            expression=expression,
+            intersect=intersect,
+            union=union,
+            specific=specific,
+            exact_support=exact_support,
+            min_support=min_support,
+            max_support=max_support,
+        )
     except ValueError as exc:
         _echo(f"Error: {exc}")
         raise typer.Exit(code=1)

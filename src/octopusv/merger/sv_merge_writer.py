@@ -17,7 +17,27 @@ from octopusv.utils.svcf_schema import (
 )
 
 
+def warn_legacy_sample_inference(summary):
+    """Report sample-mode records whose sources had to be inferred."""
+    legacy_events = summary.get("legacy_sample_events", 0)
+    legacy_unresolved = summary.get(
+        "legacy_sample_unresolved_evidence_blocks",
+        0,
+    )
+    if legacy_events:
+        logging.warning(
+            "Sample-mode writer used legacy source inference for %d "
+            "event(s); %d evidence block(s) could not be mapped.",
+            legacy_events,
+            legacy_unresolved,
+        )
+
+
 class MergeWriterMixin:
+    def prepare_sample_mode_events(self, events, name_mapper):
+        """Attach ordered sample blocks to merged events; returns (events, summary)."""
+        return self._prepare_events_for_sample_mode(events, name_mapper)
+
     def format_sample_values(self, format_keys, sample_dict):
         """Format sample values according to the FORMAT field."""
         values = []
@@ -697,18 +717,7 @@ class MergeWriterMixin:
             writer = MultiSampleWriter(name_mapper, input_files=input_files)
             writer.write_results(output_file, processed_events, contigs)
 
-            legacy_events = summary.get("legacy_sample_events", 0)
-            legacy_unresolved = summary.get(
-                "legacy_sample_unresolved_evidence_blocks",
-                0,
-            )
-            if legacy_events:
-                logging.warning(
-                    "Sample-mode writer used legacy source inference for %d "
-                    "event(s); %d evidence block(s) could not be mapped.",
-                    legacy_events,
-                    legacy_unresolved,
-                )
+            warn_legacy_sample_inference(summary)
 
             return summary
 

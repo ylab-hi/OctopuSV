@@ -27,12 +27,14 @@ GUARD_TESTS = [
     "tests/test_merge_guard_sample_mode.py",
     "tests/test_issue_191_regression.py",
     "tests/test_correct_unresolved_tra.py",
+    "tests/test_issue_194_sample_merge_equivalence.py",
 ]
 
 F = "tests/test_merge_guard_vcap_fixtures.py::"
 S = "tests/test_merge_guard_sample_mode.py::"
 T191 = "tests/test_issue_191_regression.py::"
 U = "tests/test_correct_unresolved_tra.py::"
+P = "tests/test_issue_194_sample_merge_equivalence.py::"
 
 # name -> (patch executed before pytest, tests that must fail)
 MUTATIONS = {
@@ -261,6 +263,80 @@ MUTATIONS = {
         pathlib.Path.unlink = keep_report
         """,
         [U + "test_stale_report_from_an_earlier_run_is_removed"],
+    ),
+    "partition_tra_by_chromosome": (
+        """
+        import octopusv.merger.partitioned_sample_merge as m
+        original = m.partition_key
+        m.partition_key = lambda parts: (original(parts)[0], parts[0])
+        """,
+        [P + "test_sample_merge_matches_legacy_for_every_strategy[union]"],
+    ),
+    "partition_runs_concatenated_not_merged": (
+        """
+        import octopusv.merger.partitioned_sample_merge as m
+        def concatenate(paths, target, keep_keys):
+            for path in paths:
+                for stored in open(path):
+                    target.write(stored if keep_keys else stored.split("\\t", 1)[1])
+        m._merge_runs = concatenate
+        """,
+        [P + "test_sample_merge_matches_legacy_for_every_strategy[union]"],
+    ),
+    "partition_merge_split_header_dropped": (
+        """
+        import octopusv.merger.partitioned_sample_merge as m
+        original = m._write_run
+        def no_split(*args):
+            original(*args)
+            return False
+        m._write_run = no_split
+        """,
+        [P + "test_sample_merge_matches_legacy_for_every_strategy[union]"],
+    ),
+    "partition_lines_split_without_shared_parser": (
+        """
+        import octopusv.merger.partitioned_sample_merge as m
+        import octopusv.utils.svcf_parser as p
+        def read_bucket(path, files, names):
+            events = []
+            for stored in open(path):
+                index, _number, line = stored.rstrip("\\n").split("\\t", 2)
+                parts = line.rstrip("\\r\\n").split("\\t")
+                events.append(p.event_from_parts(parts, files[int(index)], names[int(index)]))
+            return events
+        m._read_bucket = read_bucket
+        """,
+        [P + "test_undeclared_contig_gzip_empty_input_and_trailing_whitespace"],
+    ),
+    "partition_input_order_reversed": (
+        """
+        import octopusv.merger.partitioned_sample_merge as m
+        original = m._spool_inputs
+        def reversed_spool(files, directory):
+            paths, names = original(files, directory)
+            for path in paths:
+                lines = open(path).readlines()
+                open(path, "w").writelines(lines[::-1])
+            return paths, names
+        m._spool_inputs = reversed_spool
+        """,
+        [P + "test_input_order_dependent_tra_grouping_is_kept"],
+    ),
+    "partition_temp_files_left_behind": (
+        """
+        import tempfile
+        import octopusv.merger.partitioned_sample_merge as m
+        class Keep:
+            def __init__(self, **kwargs):
+                self.name = tempfile.mkdtemp(**kwargs)
+            def __enter__(self):
+                return self.name
+            def __exit__(self, *args):
+                return False
+        m.tempfile.TemporaryDirectory = Keep
+        """,
+        [P + "test_sample_merge_matches_legacy_for_every_strategy[union]"],
     ),
     "group_compares_with_newest_member": (
         """

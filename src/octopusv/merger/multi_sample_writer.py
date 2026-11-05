@@ -51,6 +51,14 @@ class MultiSampleWriter:
             for event in ordered_events:
                 self._write_event(f, event)
 
+    def write_header(self, file_handle, contigs, merge_split=False):
+        """Write the sample-mode header; merge_split adds the MERGE_SPLIT definition."""
+        self._write_header(file_handle, contigs, merge_split=merge_split)
+
+    def write_record(self, file_handle, event):
+        """Write one prepared sample-mode record (ordered_samples attached)."""
+        self._write_event(file_handle, event)
+
     def _write_header(self, file_handle, contigs, merge_split=False):
         """Write SVCF header for sample mode."""
         # Extract passthrough definitions before writing any bytes so a header

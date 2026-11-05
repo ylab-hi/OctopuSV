@@ -7,6 +7,46 @@ from .svcf_coordinate_parser import parse_svcf_co
 from .text_io import open_text_auto
 
 
+def parse_info_field(info_str):
+    """Parse a raw INFO string; flags become True, the last duplicate key wins."""
+    info = {}
+    for item in info_str.split(";"):
+        if "=" in item:
+            key, value = item.split("=", 1)  # Only split at the first '='
+            info[key] = value
+        else:
+            info[item] = True  # Flags without a value are stored as True
+    return info
+
+
+def sample_names_from_header(line, filename):
+    """Sample names of one input from its #CHROM line (file basename if none)."""
+    header_parts = line.strip().split("\t")
+    if len(header_parts) > 9:
+        return header_parts[9:]
+    return [os.path.basename(filename)]
+
+
+def split_record_line(line, filename, line_number):
+    """Columns of one SVCF data line, validated as merge input."""
+    parts = line.strip().split("\t")
+    if len(parts) < 10:
+        raise ValueError(
+            f"Malformed SVCF record in {filename!r} on line "
+            f"{line_number}: expected at least 10 tab-separated "
+            f"columns, got {len(parts)}."
+        )
+    return parts
+
+
+def event_from_parts(parts, filename, sample_names):
+    """The SVCFEvent for one split data line of one input file."""
+    return SVCFEvent(
+        *parts[:10], source_file=filename, sample_name=sample_names[0],
+        raw_sample_columns=parts[9:], sample_names=sample_names,
+    )
+
+
 class SVCFEvent:
     """Represents a structural variant (SV) event parsed from an SVCF file.
 
@@ -105,14 +145,7 @@ class SVCFEvent:
         Returns:
             dict: A dictionary where each key is an info field name and the value is the field value.
         """
-        info = {}
-        for item in info_str.split(";"):
-            if "=" in item:
-                key, value = item.split("=", 1)  # Only split at the first '='
-                info[key] = value
-            else:
-                info[item] = True  # Flags without a value are stored as True
-        return info
+        return parse_info_field(info_str)
 
     def _parse_sample(self, sample):
         """Parse one SVCF evidence block using the shared SVCF parser."""
@@ -232,24 +265,13 @@ class SVCFFileEventCreator:
                 sample_names = None
                 for line_number, line in enumerate(file, 1):
                     if line.startswith("#CHROM"):
-                        header_parts = line.strip().split("\t")
-                        if len(header_parts) > 9:
-                            sample_names = header_parts[9:]
-                            sample_name = sample_names[0]
-                        else:
-                            sample_name = os.path.basename(filename)
-                            sample_names = [sample_name]
+                        sample_names = sample_names_from_header(line, filename)
+                        sample_name = sample_names[0]
                         continue
                     if line.startswith("#") or not line.strip():
                         continue
 
-                    parts = line.strip().split("\t")
-                    if len(parts) < 10:
-                        raise ValueError(
-                            f"Malformed SVCF record in {filename!r} on line "
-                            f"{line_number}: expected at least 10 tab-separated "
-                            f"columns, got {len(parts)}."
-                        )
+                    parts = split_record_line(line, filename, line_number)
 
                     if sample_name is None:
                         raise ValueError(
@@ -257,8 +279,4 @@ class SVCFFileEventCreator:
                             f"{line_number} appears before a #CHROM header."
                         )
 
-                    sv_event = SVCFEvent(
-                        *parts[:10], source_file=filename, sample_name=sample_name,
-                        raw_sample_columns=parts[9:], sample_names=sample_names,
-                    )
-                    self.events.append(sv_event)
+                    self.events.append(event_from_parts(parts, filename, sample_names))
