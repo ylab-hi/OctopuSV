@@ -22,6 +22,7 @@
 > - Reduced memory use in sample-mode merging with disk-backed partitions.
 > - Added `MERGE_POS_RANGE` and `MERGE_END_RANGE` to show the spread of member breakpoint coordinates (not confidence intervals).
 > - Fixed the `--no-tra-strand-consistency` option.
+> - New caller support for HitSV. 
 >
 > See [`docs/RELEASE_NOTES_1.1.0.md`](docs/RELEASE_NOTES_1.1.0.md) for details.
 
@@ -198,9 +199,9 @@ octopusv svcf2bedpe -i merged.svcf -o final_results.bedpe
 
 ## Supported SV callers
 
-**Long-read callers:** Sniffles, Severus, SVDSS, DeBreak, SVIM, SVIM-ASM, CuteSV, PBSV, nanomonsv
+**Long-read callers:** Sniffles, Severus, SVDSS, DeBreak, SVIM, SVIM-ASM, CuteSV, PBSV, nanomonsv, HitSV
 
-**Short-read callers:** Manta, Delly, GRIDSS, Lumpy, SvABA, Octopus, CLEVER
+**Short-read callers:** Manta, Delly, GRIDSS, Lumpy, SvABA, Octopus, CLEVER, HitSV
 
 **CNV callers:** DRAGEN CNV, with automatic conversion of supported CNV records to DEL/DUP
 
