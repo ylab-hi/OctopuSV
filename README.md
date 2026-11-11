@@ -370,27 +370,27 @@ Sample mode keeps one fixed output column per biological sample.
 
 ### Merge controls
 
-For DEL, DUP, and INV, matching can be adjusted with:
+By default, OctopuSV uses breakpoint distance thresholds based on SV type and size.
+
+To set a maximum matching distance of 500 bp for DEL, DUP, INS, and INV:
 
 ```bash
---max-distance
---max-length-ratio
---min-jaccard
+octopusv merge \
+  -i caller1.svcf caller2.svcf \
+  --union \
+  --max-distance 500 \
+  -o merged.svcf
 ```
 
-`--min-jaccard` is disabled by default (`0`).
+`--max-distance` sets the maximum allowed breakpoint difference in bp (not a minimum). For DEL, DUP, and INV, both breakpoints are checked; for INS, the insertion position is used. SV length compatibility also applies.
 
-Merge strategies are mutually exclusive. For example, use either:
+Other matching options:
 
-```bash
---intersect
-```
+- `--max-length-ratio`: controls SV length similarity.
+- `--min-jaccard`: controls reciprocal overlap for DEL, DUP, and INV (default: `0`, disabled).
+- `--tra-delta` / `--bnd-delta`: control TRA and BND breakpoint matching separately. The effective TRA tolerance is twice the specified `--tra-delta`.
 
-or:
-
-```bash
---min-support 3
-```
+Merge strategies are mutually exclusive. For example, use either `--intersect` or `--min-support 3`, not both.
 
 rather than supplying both.
 
