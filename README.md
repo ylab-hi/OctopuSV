@@ -392,8 +392,6 @@ Other matching options:
 
 Merge strategies are mutually exclusive. For example, use either `--intersect` or `--min-support 3`, not both.
 
-rather than supplying both.
-
 ### UpSet plot
 
 ```bash
