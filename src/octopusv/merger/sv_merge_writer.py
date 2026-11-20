@@ -749,6 +749,122 @@ class MergeWriterMixin:
 
         return processed_events, stats
 
+    def _build_caller_source_lookup(self):
+        """Build one exact source-to-input lookup for a caller output run."""
+        if not hasattr(self, "all_input_files"):
+            return None
+        caller_input_files = [str(path) for path in self.all_input_files]
+        caller_indices_by_path = {}
+        for index, input_file in enumerate(caller_input_files):
+            normalized = self._normalize_source_path(input_file)
+            caller_indices_by_path.setdefault(normalized, []).append(index)
+        return (caller_input_files, caller_indices_by_path, {})
+
+    def write_caller_record(self, f, event, name_mapper=None, source_lookup=None):
+        """Write one caller-mode SV record, shared by full and partitioned merge.
+
+        Always use the same serializer so SOURCES, SOURCE_IDS, evidence blocks,
+        INFO ordering and SVCF 1.1 fields cannot diverge between pathways.
+        """
+        ordered_records = self._prepare_caller_records(
+            event,
+            name_mapper=name_mapper,
+            source_lookup=source_lookup,
+        )
+
+        sources_in_order = [
+            record["source_name"]
+            for record in ordered_records
+        ]
+        source_ids_in_order = [
+            record["source_id"]
+            for record in ordered_records
+        ]
+
+        # SVCF 1.1 positional INFO lists deliberately have no
+        # escaping layer.  Reject source labels/IDs that would
+        # make SOURCES or SOURCE_IDS ambiguous or syntactically
+        # invalid rather than silently emitting a corrupt file.
+        sources_in_order = [
+            validate_source_label(value)
+            for value in sources_in_order
+        ]
+        source_ids_in_order = [
+            validate_source_id(value)
+            for value in source_ids_in_order
+        ]
+
+        display_sources = (
+            ",".join(sources_in_order)
+            if sources_in_order
+            else "."
+        )
+        display_source_ids = (
+            ",".join(source_ids_in_order)
+            if source_ids_in_order
+            else "."
+        )
+
+        # Do not inherit stale merged source fields from the
+        # representative record. Rebuild them from this output's
+        # ordered evidence records.
+        info_items = []
+        for key, value in event.info.items():
+            if key in {"SOURCES", "SOURCE_IDS"}:
+                continue
+            info_items.append(format_vcf_info_item(key, value))
+
+        info_items.append(
+            f"SOURCES={display_sources}"
+        )
+        info_items.append(
+            f"SOURCE_IDS={display_source_ids}"
+        )
+        info_field = ";".join(info_items)
+
+        format_field = event.format
+        format_keys = format_field.split(":")
+
+        if ordered_records:
+            sample_strings = []
+            for record in ordered_records:
+                sample_data = record["sample_data"]
+
+                if isinstance(sample_data, dict):
+                    sample_str = self.format_sample_values(
+                        format_keys,
+                        sample_data,
+                    )
+                else:
+                    sample_str = str(sample_data)
+
+                sample_strings.append(sample_str)
+
+            sample_part = "\t".join(sample_strings)
+        elif hasattr(event, "sample"):
+            sample_part = self.format_sample_values(
+                format_keys,
+                event.sample,
+            )
+        else:
+            sample_part = "./."
+
+        record_part1 = (
+            f"{event.chrom}\t{event.pos}\t{event.sv_id}\t"
+            f"{event.ref}\t{event.alt}\t"
+        )
+        record_part2 = (
+            f"{event.quality}\t{event.filter}\t{info_field}\t"
+            f"{format_field}\t"
+        )
+        f.write(
+            record_part1
+            + record_part2
+            + sample_part
+            + "\n"
+        )
+
+
     def write_results(self, output_file, events, contigs, mode="caller", name_mapper=None, input_files=None):
         """Write merged results to output file with proper VCF header definitions.
 
@@ -786,14 +902,7 @@ class MergeWriterMixin:
             # Input identities do not change between output records. Build
             # their real-path lookup once per write, and memoize evidence
             # source paths for this write only (no stale cross-run cache).
-            source_lookup = None
-            if hasattr(self, "all_input_files"):
-                caller_input_files = [str(path) for path in self.all_input_files]
-                caller_indices_by_path = {}
-                for index, input_file in enumerate(caller_input_files):
-                    normalized = self._normalize_source_path(input_file)
-                    caller_indices_by_path.setdefault(normalized, []).append(index)
-                source_lookup = (caller_input_files, caller_indices_by_path, {})
+            source_lookup = self._build_caller_source_lookup()
 
             with open(output_file, "w") as f:
                 self._merge_split_header = needs_split_header(ordered_events)
@@ -805,103 +914,7 @@ class MergeWriterMixin:
                 )
 
                 for event in ordered_events:
-                    ordered_records = self._prepare_caller_records(
-                        event,
-                        name_mapper=name_mapper,
-                        source_lookup=source_lookup,
-                    )
-
-                    sources_in_order = [
-                        record["source_name"]
-                        for record in ordered_records
-                    ]
-                    source_ids_in_order = [
-                        record["source_id"]
-                        for record in ordered_records
-                    ]
-
-                    # SVCF 1.1 positional INFO lists deliberately have no
-                    # escaping layer.  Reject source labels/IDs that would
-                    # make SOURCES or SOURCE_IDS ambiguous or syntactically
-                    # invalid rather than silently emitting a corrupt file.
-                    sources_in_order = [
-                        validate_source_label(value)
-                        for value in sources_in_order
-                    ]
-                    source_ids_in_order = [
-                        validate_source_id(value)
-                        for value in source_ids_in_order
-                    ]
-
-                    display_sources = (
-                        ",".join(sources_in_order)
-                        if sources_in_order
-                        else "."
-                    )
-                    display_source_ids = (
-                        ",".join(source_ids_in_order)
-                        if source_ids_in_order
-                        else "."
-                    )
-
-                    # Do not inherit stale merged source fields from the
-                    # representative record. Rebuild them from this output's
-                    # ordered evidence records.
-                    info_items = []
-                    for key, value in event.info.items():
-                        if key in {"SOURCES", "SOURCE_IDS"}:
-                            continue
-                        info_items.append(format_vcf_info_item(key, value))
-
-                    info_items.append(
-                        f"SOURCES={display_sources}"
-                    )
-                    info_items.append(
-                        f"SOURCE_IDS={display_source_ids}"
-                    )
-                    info_field = ";".join(info_items)
-
-                    format_field = event.format
-                    format_keys = format_field.split(":")
-
-                    if ordered_records:
-                        sample_strings = []
-                        for record in ordered_records:
-                            sample_data = record["sample_data"]
-
-                            if isinstance(sample_data, dict):
-                                sample_str = self.format_sample_values(
-                                    format_keys,
-                                    sample_data,
-                                )
-                            else:
-                                sample_str = str(sample_data)
-
-                            sample_strings.append(sample_str)
-
-                        sample_part = "\t".join(sample_strings)
-                    elif hasattr(event, "sample"):
-                        sample_part = self.format_sample_values(
-                            format_keys,
-                            event.sample,
-                        )
-                    else:
-                        sample_part = "./."
-
-                    record_part1 = (
-                        f"{event.chrom}\t{event.pos}\t{event.sv_id}\t"
-                        f"{event.ref}\t{event.alt}\t"
-                    )
-                    record_part2 = (
-                        f"{event.quality}\t{event.filter}\t{info_field}\t"
-                        f"{format_field}\t"
-                    )
-                    f.write(
-                        record_part1
-                        + record_part2
-                        + sample_part
-                        + "\n"
-                    )
+                    self.write_caller_record(f, event, name_mapper, source_lookup)
 
             if self._legacy_caller_event_count:
                 logging.warning(
