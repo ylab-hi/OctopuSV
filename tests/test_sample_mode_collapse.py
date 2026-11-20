@@ -227,12 +227,16 @@ def test_sample_mode_synthesized_fields_use_record_level_payload(tmp_path):
 
 
 def test_sample_mode_refuses_to_guess_missing_caller_identity(tmp_path):
+    # Several evidence blocks without SOURCES or SC: which caller voted what
+    # is unknown, so this is still rejected.  (A record whose only evidence
+    # block names no caller is accepted; see
+    # test_sample_mode_anonymous_evidence.py.)
     sample_a = tmp_path / "sampleA.svcf"
     writer = DummyWriter([sample_a])
     mapper = NameMapper([str(sample_a)], mode="sample", custom_names=["A"])
 
-    block = _block("0/1", "unknown.1", ".")
-    data = _sample_payload("A.record", ["."], [block])
+    blocks = [_block("0/1", "unknown.1", "."), _block("0/0", "unknown.2", ".")]
+    data = _sample_payload("A.record", [".", "."], blocks)
     event = _event([(str(sample_a), "SAMPLE", FORMAT, data)])
 
     import pytest

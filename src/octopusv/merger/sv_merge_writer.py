@@ -20,6 +20,23 @@ from octopusv.utils.svcf_schema import (
 )
 
 
+# Voter identity for an evidence block that names no caller (no SOURCES, no
+# SC) and is the only block of its record: a single-caller input such as a
+# `correct` output of a caller that writes no ##source (e.g. SVDSS).  A
+# private object, so it can never equal a real caller label.
+_ANONYMOUS_SINGLE_EVIDENCE = object()
+
+
+def _describe_records(payloads):
+    ids = []
+    for payload in payloads:
+        record = payload.get("record")
+        record_id = record.get("id", ".") if isinstance(record, dict) else "."
+        if record_id not in ids:
+            ids.append(str(record_id))
+    return ", ".join(ids)
+
+
 def warn_legacy_sample_inference(summary):
     """Report sample-mode records whose sources had to be inferred."""
     legacy_events = summary.get("legacy_sample_events", 0)
@@ -452,7 +469,7 @@ class MergeWriterMixin:
             return []
         return [token.strip() for token in str(source_value).split(",")]
 
-    def _caller_genotypes_from_payload(self, payload):
+    def _caller_genotypes_from_payload(self, payload, input_file=None):
         """Return exact ``(caller, GT)`` pairs from one caller-mode payload.
 
         Source identity comes only from explicit SVCF data: INFO/SOURCES when
@@ -485,13 +502,24 @@ class MergeWriterMixin:
             if source in (None, "", "."):
                 source = parsed.get("SC")
 
+            if source in (None, "", ".") and len(parsed_blocks) == 1:
+                # The record's only evidence block names no caller.  It is
+                # one voter; see _ANONYMOUS_SINGLE_EVIDENCE and the mixed-
+                # identity check in _synthesize_sample_data.
+                source = _ANONYMOUS_SINGLE_EVIDENCE
+
             if source in (None, "", ".", "OctopuSV"):
                 raise ValueError(
                     "Cannot synthesize sample consensus because one caller "
-                    "evidence block has no explicit caller identity."
+                    "evidence block has no explicit caller identity "
+                    f"(input {input_file!r}, record "
+                    f"{_describe_records([payload])}: "
+                    f"{len(parsed_blocks)} evidence blocks without SOURCES)."
                 )
 
-            caller_genotypes.append((str(source), parsed.get("GT", ".")))
+            if source is not _ANONYMOUS_SINGLE_EVIDENCE:
+                source = str(source)
+            caller_genotypes.append((source, parsed.get("GT", ".")))
 
         return caller_genotypes
 
@@ -515,7 +543,7 @@ class MergeWriterMixin:
             return "."
         return f"{chrom}_{pos}-{end_chrom}_{end_pos}"
 
-    def _synthesize_sample_data(self, sample_records):
+    def _synthesize_sample_data(self, sample_records, input_file=None):
         """Synthesize one sample-mode column from exact caller evidence.
 
         ``sample_records`` contains one or more source records from the same
@@ -540,7 +568,23 @@ class MergeWriterMixin:
                 )
             payloads.append(payload)
             caller_genotypes.extend(
-                self._caller_genotypes_from_payload(payload)
+                self._caller_genotypes_from_payload(payload, input_file)
+            )
+
+        voters = {source for source, _genotype in caller_genotypes}
+        if _ANONYMOUS_SINGLE_EVIDENCE in voters and len(voters) > 1:
+            # Evidence with and without a caller name in one sample of one
+            # merged event: the unnamed record may come from a named caller,
+            # so counting it as another voter could double-count.  Refuse
+            # instead of guessing.
+            raise ValueError(
+                "Cannot synthesize sample consensus: in input "
+                f"{input_file!r}, merged records {_describe_records(payloads)} "
+                "mix evidence that names its caller (SOURCES or SC) with "
+                "evidence that does not, so OctopuSV cannot tell whether they "
+                "come from the same caller. A sample-mode input should be "
+                "either an OctopuSV caller-mode merge (with SOURCES) or the "
+                "`correct` output of one caller."
             )
 
         consensus = resolve_sample_consensus(caller_genotypes)
@@ -636,7 +680,9 @@ class MergeWriterMixin:
                 unresolved_samples.extend(merged_samples)
 
             source_to_sample = {
-                target_index: self._synthesize_sample_data(sample_records)
+                target_index: self._synthesize_sample_data(
+                    sample_records, input_files[target_index]
+                )
                 for target_index, sample_records in source_to_records.items()
             }
 
