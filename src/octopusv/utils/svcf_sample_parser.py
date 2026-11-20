@@ -18,6 +18,7 @@ full FORMAT/evidence structure.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from collections.abc import Sequence
 
 
@@ -35,11 +36,15 @@ _BND_ALT_PATTERN = re.compile(
 _SYMBOLIC_ALT_PATTERN = re.compile(r"^<[^<>]+>$")
 
 
-def _format_keys(format_field_or_keys: str | Sequence[str]) -> list[str]:
+@lru_cache(maxsize=128)
+def _cached_format_keys(format_field: str) -> tuple[str, ...]:
+    """Share immutable FORMAT field names across records with the same schema."""
+    return tuple(format_field.split(":")) if format_field else ()
+
+
+def _format_keys(format_field_or_keys: str | Sequence[str]) -> Sequence[str]:
     if isinstance(format_field_or_keys, str):
-        if not format_field_or_keys:
-            return []
-        return format_field_or_keys.split(":")
+        return _cached_format_keys(format_field_or_keys)
 
     return [str(key) for key in format_field_or_keys]
 

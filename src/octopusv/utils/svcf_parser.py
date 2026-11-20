@@ -7,15 +7,28 @@ from .svcf_coordinate_parser import parse_svcf_co
 from .text_io import open_text_auto
 
 
+# Fixed SVCF INFO names recur on essentially every event. Reuse these string
+# objects as dict keys instead of allocating a new copy per record. Unrecognized
+# keys stay untouched so caller-specific metadata keeps its exact spelling.
+_COMMON_INFO_KEYS = {
+    name: name
+    for name in (
+        "SVTYPE", "END", "SVLEN", "CHR2", "SUPPORT", "SVMETHOD", "RTID",
+        "AF", "STRAND", "RNAMES", "SOURCES", "SOURCE_IDS", "MERGE_SPLIT",
+        "MERGE_POS_RANGE", "MERGE_END_RANGE",
+    )
+}
+
+
 def parse_info_field(info_str):
     """Parse a raw INFO string; flags become True, the last duplicate key wins."""
     info = {}
     for item in info_str.split(";"):
         if "=" in item:
             key, value = item.split("=", 1)  # Only split at the first '='
-            info[key] = value
+            info[_COMMON_INFO_KEYS.get(key, key)] = value
         else:
-            info[item] = True  # Flags without a value are stored as True
+            info[_COMMON_INFO_KEYS.get(item, item)] = True  # Flags without a value are stored as True
     return info
 
 
