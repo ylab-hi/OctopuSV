@@ -96,6 +96,16 @@ class GroupSplitter:
             raise ValueError(f"Unknown merge mode {mode!r}")
         self.mode = mode
         self.direct_match = direct_match
+        # One merger only has a small, fixed set of input source paths.
+        # Resolve each distinct spelling once, not once for every SV member.
+        self._source_path_cache = {}
+
+    def _source_key(self, event):
+        original = getattr(event, "_original_source_file", None)
+        source = str(original if original is not None else event.source_file)
+        if source not in self._source_path_cache:
+            self._source_path_cache[source] = normalize_source_path(source)
+        return self._source_path_cache[source]
 
     def equivalent(self, a, b):
         svtype = event_svtype(a)
@@ -166,7 +176,7 @@ class GroupSplitter:
         if self.mode == MODE_CALLER and event_svtype(group[0]) not in LENGTH_RULE_TYPES:
             return [group]
 
-        sources = [source_key(event) for event in group]
+        sources = [self._source_key(event) for event in group]
         by_source = defaultdict(list)
         for index, source in enumerate(sources):
             by_source[source].append(index)
