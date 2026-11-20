@@ -223,7 +223,7 @@ class MergeWriterMixin:
 
         return str(source_id)
 
-    def _prepare_caller_records_exact(self, event, name_mapper=None):
+    def _prepare_caller_records_exact(self, event, name_mapper=None, source_lookup=None):
         """Build caller-mode records from exact source-to-evidence bindings.
 
         Fresh merge events carry ``merged_sample_records`` entries shaped as:
@@ -255,18 +255,25 @@ class MergeWriterMixin:
                 "(source_file, sample_name, sample_format, sample_data) entries"
             )
 
-        input_files = [str(path) for path in self.all_input_files]
-        input_indices_by_path = {}
-
-        for index, input_file in enumerate(input_files):
-            normalized = self._normalize_source_path(input_file)
-            input_indices_by_path.setdefault(normalized, []).append(index)
+        if source_lookup is None:
+            # Preserve direct-call behavior for legacy callers and tests.
+            input_files = [str(path) for path in self.all_input_files]
+            input_indices_by_path = {}
+            for index, input_file in enumerate(input_files):
+                normalized = self._normalize_source_path(input_file)
+                input_indices_by_path.setdefault(normalized, []).append(index)
+            normalized_sources = {}
+        else:
+            input_files, input_indices_by_path, normalized_sources = source_lookup
 
         ordered_records = []
 
         for record_order, record in enumerate(records):
             source_file, sample_name, sample_format, sample_data = record
-            normalized_source = self._normalize_source_path(source_file)
+            source_key = str(source_file)
+            if source_key not in normalized_sources:
+                normalized_sources[source_key] = self._normalize_source_path(source_file)
+            normalized_source = normalized_sources[source_key]
             candidate_indices = input_indices_by_path.get(
                 normalized_source,
                 [],
@@ -415,11 +422,12 @@ class MergeWriterMixin:
 
         return legacy_records
 
-    def _prepare_caller_records(self, event, name_mapper=None):
+    def _prepare_caller_records(self, event, name_mapper=None, source_lookup=None):
         """Return caller evidence in deterministic input-file order."""
         exact_records = self._prepare_caller_records_exact(
             event,
             name_mapper=name_mapper,
+            source_lookup=source_lookup,
         )
 
         if exact_records is not None:
@@ -728,6 +736,19 @@ class MergeWriterMixin:
             # Caller mode. SOURCES, SOURCE_IDS, and evidence blocks are all
             # generated from the same ordered source-to-record mapping.
             ordered_events = sort_events_for_output(events, contigs.keys())
+
+            # Input identities do not change between output records. Build
+            # their real-path lookup once per write, and memoize evidence
+            # source paths for this write only (no stale cross-run cache).
+            source_lookup = None
+            if hasattr(self, "all_input_files"):
+                caller_input_files = [str(path) for path in self.all_input_files]
+                caller_indices_by_path = {}
+                for index, input_file in enumerate(caller_input_files):
+                    normalized = self._normalize_source_path(input_file)
+                    caller_indices_by_path.setdefault(normalized, []).append(index)
+                source_lookup = (caller_input_files, caller_indices_by_path, {})
+
             with open(output_file, "w") as f:
                 self._merge_split_header = needs_split_header(ordered_events)
                 self._member_range_headers = needs_member_range_headers(ordered_events)
@@ -741,6 +762,7 @@ class MergeWriterMixin:
                     ordered_records = self._prepare_caller_records(
                         event,
                         name_mapper=name_mapper,
+                        source_lookup=source_lookup,
                     )
 
                     sources_in_order = [
