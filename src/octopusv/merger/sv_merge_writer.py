@@ -214,6 +214,24 @@ class MergeWriterMixin:
         """Return a stable key for exact input-file matching."""
         return normalize_source_path(source_file)
 
+    def _cached_source_identity(self, source_file):
+        """_normalize_source_path once per distinct source string in a run.
+
+        Shares the merger's _source_identity_cache (MergeSelectionMixin),
+        which holds the same normalize_source_path identities.  The
+        partitioned merges hand one cache to every bucket of a run.
+        """
+        source_text = str(source_file)
+        cache = getattr(self, "_source_identity_cache", None)
+        if cache is None:
+            cache = {}
+            self._source_identity_cache = cache
+        identity = cache.get(source_text)
+        if identity is None:
+            identity = self._normalize_source_path(source_text)
+            cache[source_text] = identity
+        return identity
+
     def _display_name_for_input(self, input_file, name_mapper=None):
         """Return the output label for one input file."""
         if name_mapper is not None:
@@ -630,7 +648,7 @@ class MergeWriterMixin:
 
         input_indices_by_path = {}
         for index, input_file in enumerate(input_files):
-            normalized_path = self._normalize_source_path(input_file)
+            normalized_path = self._cached_source_identity(input_file)
             input_indices_by_path.setdefault(normalized_path, []).append(index)
 
         stats = {
@@ -657,7 +675,7 @@ class MergeWriterMixin:
             if records_are_valid:
                 for record in merged_sample_records:
                     source_file, sample_name, sample_format, sample_data = record
-                    normalized_source = self._normalize_source_path(source_file)
+                    normalized_source = self._cached_source_identity(source_file)
                     candidate_indices = input_indices_by_path.get(
                         normalized_source,
                         [],

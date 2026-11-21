@@ -207,6 +207,9 @@ def merge_samples_partitioned(*, input_files, output_file, contigs, name_mapper,
     record_count = 0
     has_split = False
     member_headers = set()
+    # Input paths do not change during one run: resolve each once, not once
+    # per bucket and evidence record.
+    source_identity_cache = {}
 
     parent = Path(output_file).parent
     with tempfile.TemporaryDirectory(prefix=".octopusv_merge_", dir=parent) as temp:
@@ -223,6 +226,7 @@ def merge_samples_partitioned(*, input_files, output_file, contigs, name_mapper,
             by_chrom.classify()
             merger = SVMerger(by_chrom.get_classified_events(), all_input_files=filenames,
                               mode="sample", **merge_options)
+            merger._source_identity_cache = source_identity_cache
             merger.merge()
             prepared, bucket_summary = merger.prepare_sample_mode_events(select(merger), name_mapper)
             for key in summary:

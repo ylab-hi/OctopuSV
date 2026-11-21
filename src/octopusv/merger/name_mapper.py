@@ -28,6 +28,12 @@ class NameMapper:
         self.mode = mode
         self.custom_names = custom_names
         self._validate_custom_names()
+        # Built once: sample mode looks a label up for every sample column of
+        # every record.  First occurrence wins, as with list.index().
+        self._index_by_path = {}
+        for index, path in enumerate(self.input_files):
+            self._index_by_path.setdefault(path, index)
+        self._all_display_names = [self.get_display_name(f) for f in self.input_files]
 
     def _validate_custom_names(self):
         if self.custom_names and len(self.custom_names) != len(self.input_files):
@@ -37,18 +43,17 @@ class NameMapper:
 
     def get_display_name(self, file_path: str) -> str:
         if self.custom_names:
-            try:
-                file_index = self.input_files.index(str(file_path))
-            except ValueError as exc:
+            file_index = self._index_by_path.get(str(file_path))
+            if file_index is None:
                 raise ValueError(
                     f"Input path {str(file_path)!r} is not present in the NameMapper input list; "
                     "refusing to fall back to a filename-derived label while custom names are active."
-                ) from exc
+                )
             return self.custom_names[file_index]
         return default_label_from_path(file_path)
 
     def get_all_display_names(self) -> List[str]:
-        return [self.get_display_name(f) for f in self.input_files]
+        return list(self._all_display_names)
 
     def convert_source_string(self, source_file_str: str) -> str:
         source_files = source_file_str.split(",")
