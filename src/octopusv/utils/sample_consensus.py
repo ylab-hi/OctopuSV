@@ -98,6 +98,20 @@ def _classify_single_genotype(genotype: object) -> CallerState:
     return CallerState.NO_VOTE
 
 
+def genotype_carries_alt(genotype: object) -> bool:
+    """True when one GT states ALT presence under the consensus GT rules.
+
+    The same classification as sample consensus: 0/0, 0|0 and haploid 0 are
+    absence; ./., .|. and malformed or multiallelic GTs are no vote; 0/1,
+    1/1, haploid 1 and half calls such as 1/. are carriers.
+    """
+    return _classify_single_genotype(genotype) in (
+        CallerState.CARRIER_HET,
+        CallerState.CARRIER_HOM,
+        CallerState.CARRIER_UNKNOWN,
+    )
+
+
 def _informative_supported_gts(genotypes: Iterable[object]) -> List[str]:
     """Return supported, non-missing GT strings used by one caller."""
 

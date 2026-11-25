@@ -22,7 +22,9 @@ interprets already-synthesized sample-mode blocks.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+
+from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 
 UNOBSERVED_SAMPLE_GT_POLICIES = frozenset({"missing", "ref"})
@@ -90,6 +92,48 @@ def is_unobserved_sample(parsed_sample: Mapping[str, object]) -> bool:
         return False
 
     return True
+
+
+# GT values that the pre-1.1 (no UC/UV) reading treats as "no support".
+_LEGACY_NON_SUPPORT_GT = frozenset({"0/0", "0|0", "./.", ".|.", "."})
+
+
+def sample_column_has_evidence(
+    format_field_or_keys: str | Sequence[str],
+    block: str | None,
+) -> bool:
+    """Return True when one sample-mode column carries evidence for the record.
+
+    Evidence is a fact about the column, not about its genotype.  For SVCF 1.1
+    synthesized blocks (UC/UV present) a column has evidence unless it is the
+    writer's no-event placeholder (``is_unobserved_sample``) or a block with
+    no source/event identity at all (column padding).  An evidence-backed
+    ``GT=0/0`` (a caller's reference call) or ``GT=./.`` (no valid vote) is
+    therefore evidence.
+
+    Legacy layouts without UC/UV keep the historical GT-based reading, since
+    they cannot distinguish a placeholder from a reference call.
+    """
+    if block is None:
+        return False
+    text = str(block).strip()
+    if not text or text == ".":
+        return False
+
+    keys = (
+        format_field_or_keys.split(":")
+        if isinstance(format_field_or_keys, str)
+        else list(format_field_or_keys)
+    )
+    if "UC" in keys and "UV" in keys:
+        parsed = parse_svcf_sample_block(keys, text)
+        if is_unobserved_sample(parsed):
+            return False
+        if _is_missing_token(parsed.get("ID")) and _is_missing_token(parsed.get("SC")):
+            return False
+        return True
+
+    return text.split(":", 1)[0] not in _LEGACY_NON_SUPPORT_GT
 
 
 def downstream_sample_gt(

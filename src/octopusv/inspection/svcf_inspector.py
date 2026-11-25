@@ -35,6 +35,8 @@ from typing import Optional
 
 from octopusv.utils.svcf_parser import SVCFFileEventCreator
 from octopusv.utils.text_io import open_text_auto
+from octopusv.utils.sample_consensus import genotype_carries_alt
+from octopusv.utils.sample_mode_semantics import sample_column_has_evidence
 from octopusv.utils.svcf_sample_parser import parse_svcf_sample_block
 
 
@@ -128,17 +130,21 @@ class RecordInspector:
 
         # --- evidence -------------------------------------------------------
         if record_mode == "sample":
-            evidence, carrier_samples = self._sample_evidence(format_keys)
-            # carrier columns should equal INFO/SOURCES.
-            if sources and sorted(carrier_samples) != sorted(sources):
+            evidence, carrier_samples, evidence_samples = self._sample_evidence(format_keys)
+            # INFO/SOURCES lists the samples with evidence, not the carriers:
+            # a caller's GT=0/0 is evidence for a sample that is not a carrier.
+            if sources and sorted(evidence_samples) != sorted(sources):
                 warnings.append({
-                    "code": "W_SAMPLE_SOURCES_CARRIER_MISMATCH",
+                    "code": "W_SAMPLE_SOURCES_EVIDENCE_MISMATCH",
                     "message": (
-                        "Carrier sample columns do not match INFO/SOURCES "
-                        f"(carriers={carrier_samples}, sources={sources})."
+                        "Sample columns with evidence do not match INFO/SOURCES "
+                        f"(evidence={evidence_samples}, sources={sources})."
                     ),
                 })
-            evidence_extra = {"carrier_samples": carrier_samples}
+            evidence_extra = {
+                "carrier_samples": carrier_samples,
+                "evidence_samples": evidence_samples,
+            }
         else:
             evidence, ev_warnings = self._caller_evidence(
                 format_keys, sources, source_ids
@@ -246,9 +252,11 @@ class RecordInspector:
     def _sample_evidence(self, format_keys):
         """Sample-mode: align each trailing column to its header sample name.
 
-        Identity comes from header sample_names (NOT from SOURCES). Placeholder
-        columns (GT 0/0) are kept but flagged; carriers are listed for a
-        consistency check against INFO/SOURCES.
+        Identity comes from header sample_names (NOT from SOURCES).  A column
+        is a placeholder when it has no evidence (sample_column_has_evidence);
+        a carrier when it has evidence and its GT carries ALT under the
+        sample-consensus GT rules (genotype_carries_alt).  Columns with
+        evidence are checked against INFO/SOURCES.
         """
         ev = self.event
         sample_names = ev.sample_names or []
@@ -256,22 +264,27 @@ class RecordInspector:
 
         evidence = []
         carrier_samples = []
+        evidence_samples = []
         n = max(len(sample_names), len(blocks))
         for i in range(n):
             name = sample_names[i] if i < len(sample_names) else f"col{i}"
             block = blocks[i] if i < len(blocks) else None
-            placeholder = block is None or _is_placeholder_block(block)
+            has_evidence = sample_column_has_evidence(format_keys, block)
             fields = parse_format_block(format_keys, block) if block is not None else {}
-            if not placeholder:
+            carrier = has_evidence and genotype_carries_alt(fields.get("GT"))
+            if has_evidence:
+                evidence_samples.append(name)
+            if carrier:
                 carrier_samples.append(name)
             evidence.append({
                 "index": i,
                 "sample": name,
-                "is_carrier": not placeholder,
-                "is_placeholder": placeholder,
+                "is_carrier": carrier,
+                "has_evidence": has_evidence,
+                "is_placeholder": not has_evidence,
                 "fields": fields,
             })
-        return evidence, carrier_samples
+        return evidence, carrier_samples, evidence_samples
 
 
 class SVCFInspector:

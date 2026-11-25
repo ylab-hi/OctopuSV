@@ -54,6 +54,7 @@ from octopusv.utils.source_identity import (
     explicit_record_sources,
     format_case_only_source_error,
 )
+from octopusv.utils.sample_mode_semantics import sample_column_has_evidence
 from octopusv.utils.svcf_validator import validate_versioned_svcf_for_downstream
 
 
@@ -573,9 +574,11 @@ class SVCFSubset:
 
         selected_evidence = [padded_evidence[index] for index in selected_indices]
 
+        # A sample stays in SOURCES when its column has evidence; a caller's
+        # GT=0/0 or an unresolved ./. is still evidence (SVCF 1.1 UC/UV).
         retained_sources = []
         for sample, evidence in zip(self.retained_samples, selected_evidence):
-            if evidence_is_supported(evidence):
+            if sample_column_has_evidence(format_field, evidence):
                 retained_sources.append(sample)
 
         if not retained_sources and not self.config.keep_empty:
