@@ -1,3 +1,6 @@
+import logging
+
+
 def get_caller_name(sample_dict):
     """Get standardized caller name from sample dictionary.
     Handles different formats of caller names.
@@ -30,6 +33,36 @@ def get_caller_name(sample_dict):
     if "svdss" in caller.lower():
         return "svdss"
     return caller
+
+
+_warned_support_sources = set()
+
+
+def _support_count(sv):
+    """SUPPORT as an int for scoring; missing, "." or invalid scores as 0.
+
+    SVCF 1.1 requires SUPPORT to be "." or a non-negative integer.  An invalid
+    value (12.5, NA, -3, a bare flag) is a non-blocking validator error
+    (E_SUPPORT_001), so such files still merge: the value is treated as
+    unknown, exactly like ".", never reinterpreted, and one warning per
+    source names the first offending record.
+    """
+    value = sv.info.get("SUPPORT", "0")
+    if value in (None, ".", ""):
+        return 0
+    text = "" if value is True else str(value).strip()
+    if text.isascii() and text.isdigit():
+        return int(text)
+    source = getattr(sv, "_original_source_file", None) or getattr(sv, "source_file", "?")
+    if source not in _warned_support_sources:
+        _warned_support_sources.add(source)
+        logging.warning(
+            "Invalid SUPPORT=%r (record %r, %s): SVCF 1.1 expects '.' or a non-negative "
+            "integer; treated as unknown for representative selection. Further invalid "
+            "SUPPORT values from this input are not reported.",
+            value, getattr(sv, "sv_id", "?"), source,
+        )
+    return 0
 
 
 def get_caller_score(caller_name, caller_priority_list):
@@ -65,6 +98,8 @@ def select_representative_sv(sv_group, weights=None, max_support=30, max_qual=10
 
     max_score = -1
     representative_sv = None
+    representative_support = 0
+    representative_qual = 50.0
     all_source_files = set()
     merged_samples_list = []
     merged_sample_records = []
@@ -100,14 +135,7 @@ def select_representative_sv(sv_group, weights=None, max_support=30, max_qual=10
         )
 
         # Calculate support score
-        support_value = sv.info.get("SUPPORT", "0")
-        if support_value in [None, ".", ""]:
-            support = 0
-        else:
-            try:
-                support = int(support_value)
-            except ValueError:
-                support = 0
+        support = _support_count(sv)
         support_score = min(support / max_support, 1.0) * 10
 
         # Calculate quality score
@@ -131,21 +159,22 @@ def select_representative_sv(sv_group, weights=None, max_support=30, max_qual=10
         )
 
         # Update representative SV if current SV has higher score
+        # Tiebreakers reuse the values already scored for the current
+        # representative instead of converting its fields a second time.
         if total_score > max_score:
+            take = True
+        elif total_score == max_score:
+            # Tiebreaker 1: higher read support; 2: higher quality
+            take = support > representative_support or (
+                support == representative_support and qual > representative_qual
+            )
+        else:
+            take = False
+        if take:
             max_score = total_score
             representative_sv = sv
-        elif total_score == max_score:
-            # Tiebreaker 1: Higher read support
-            curr_support_value = representative_sv.info.get("SUPPORT", "0")
-            current_support = 0 if curr_support_value in [None, ".", ""] else int(curr_support_value)
-            if support > current_support:
-                representative_sv = sv
-            elif support == current_support:
-                # Tiebreaker 2: Higher quality score
-                curr_qual_value = representative_sv.quality
-                current_qual = 50 if curr_qual_value in [None, ".", ""] else float(curr_qual_value)
-                if qual > current_qual:
-                    representative_sv = sv
+            representative_support = support
+            representative_qual = qual
 
     if representative_sv:
         representative_sv.source_file = ",".join(sorted(all_source_files))
